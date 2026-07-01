@@ -1,0 +1,65 @@
+:root {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: #f5f4f1;
+  color: #1a1b1a;
+  font-family: "Hanken Grotesk", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+input {
+  font-family: "Hanken Grotesk", system-ui;
+  outline: none;
+}
+
+/* Rendu du texte de présentation riche (sortie Tiptap) sur le site public. */
+.rich-text p {
+  margin: 0 0 0.85em;
+}
+.rich-text h2 {
+  font-family: "Marcellus", serif;
+  font-weight: 400;
+  font-size: 1.4em;
+  margin: 0.6em 0 0.3em;
+}
+.rich-text h3 {
+  font-family: "Marcellus", serif;
+  font-weight: 400;
+  font-size: 1.15em;
+  margin: 0.6em 0 0.3em;
+}
+.rich-text ul {
+  list-style: disc;
+  padding-left: 1.2em;
+  margin: 0 0 0.85em;
+}
+.rich-text ol {
+  list-style: decimal;
+  padding-left: 1.2em;
+  margin: 0 0 0.85em;
+}
+.rich-text li {
+  margin: 0.15em 0;
+}
+.rich-text a {
+  color: #4e6e8c;
+  text-decoration: underline;
+}
+.rich-text strong {
+  font-weight: 600;
+}
+.rich-text > *:last-child {
+  margin-bottom: 0;
+}

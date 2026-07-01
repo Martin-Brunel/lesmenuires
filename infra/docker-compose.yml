@@ -1,0 +1,25 @@
+name: lesmenuires
+
+# Postgres dédié au projet, isolé des autres bases de l'hôte.
+# Port hôte 5544 -> 5432 conteneur (5432/5433 déjà pris sur cette machine).
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: lesmenuires-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lesmenuires
+      POSTGRES_PASSWORD: lesmenuires
+      POSTGRES_DB: lesmenuires
+    ports:
+      - "5544:5432"
+    volumes:
+      - lesmenuires_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lesmenuires -d lesmenuires"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  lesmenuires_pgdata:

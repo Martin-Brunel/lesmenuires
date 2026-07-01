@@ -1,0 +1,36 @@
+# --- Secrets / env ---------------------------------------------------------
+# Never commit real secrets. Only *.example files are tracked.
+.env
+.env.*
+!.env.example
+!*.env.example
+
+# --- Rust (apps/api) -------------------------------------------------------
+/apps/api/target
+target/
+
+# Uploaded media (self-hosted on disk, not versioned)
+/apps/api/media
+
+# --- Node / Next (apps/web) ------------------------------------------------
+node_modules/
+/apps/web/.next
+/apps/web/out
+/apps/web/build
+/apps/web/.vercel
+*.tsbuildinfo
+next-env.d.ts.bak
+npm-debug.log*
+yarn-error.log*
+
+# --- Docker / infra --------------------------------------------------------
+# Caddy runtime data (certs, config) when bind-mounted
+/infra/caddy_data
+/infra/caddy_config
+
+# --- Editors / OS ----------------------------------------------------------
+.DS_Store
+*.pem
+*.swp
+.idea/
+.vscode/
