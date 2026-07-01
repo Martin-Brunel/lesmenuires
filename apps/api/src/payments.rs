@@ -37,26 +37,36 @@ pub trait PaymentProvider: Send + Sync {
     /// Read the deposit intent status + saved card (after the buyer paid).
     async fn retrieve_deposit(&self, intent_id: &str) -> Result<DepositResult, AppError>;
 
-    /// Off-session charge on the saved card (balance).
+    /// Off-session charge on the saved card (balance). `idem` is a stable
+    /// idempotency key so a retried tick never double-charges.
     async fn charge_off_session(
         &self,
         customer_ref: &str,
         payment_method_ref: &str,
         amount_cents: i64,
+        idem: &str,
     ) -> Result<String, AppError>;
 
-    /// Manual-capture authorization (caution hold).
+    /// Manual-capture authorization (caution hold). `idem` = stable key.
     async fn authorize_hold(
         &self,
         customer_ref: &str,
         payment_method_ref: &str,
         amount_cents: i64,
+        idem: &str,
     ) -> Result<String, AppError>;
 
-    async fn capture(&self, intent_id: &str, amount_cents: i64) -> Result<(), AppError>;
-    async fn release(&self, intent_id: &str) -> Result<(), AppError>;
+    async fn capture(&self, intent_id: &str, amount_cents: i64, idem: &str)
+        -> Result<(), AppError>;
+    async fn release(&self, intent_id: &str, idem: &str) -> Result<(), AppError>;
     /// Refund (partial or full) a captured PaymentIntent. Returns the refund id.
-    async fn refund(&self, intent_id: &str, amount_cents: i64) -> Result<String, AppError>;
+    /// `idem` is a stable key so a retried refund never double-refunds.
+    async fn refund(
+        &self,
+        intent_id: &str,
+        amount_cents: i64,
+        idem: &str,
+    ) -> Result<String, AppError>;
 }
 
 fn fake(prefix: &str) -> String {
@@ -101,6 +111,7 @@ impl PaymentProvider for MockProvider {
         _customer_ref: &str,
         _payment_method_ref: &str,
         _amount_cents: i64,
+        _idem: &str,
     ) -> Result<String, AppError> {
         Ok(fake("mock_pi"))
     }
@@ -109,16 +120,27 @@ impl PaymentProvider for MockProvider {
         _customer_ref: &str,
         _payment_method_ref: &str,
         _amount_cents: i64,
+        _idem: &str,
     ) -> Result<String, AppError> {
         Ok(fake("mock_auth"))
     }
-    async fn capture(&self, _intent_id: &str, _amount_cents: i64) -> Result<(), AppError> {
+    async fn capture(
+        &self,
+        _intent_id: &str,
+        _amount_cents: i64,
+        _idem: &str,
+    ) -> Result<(), AppError> {
         Ok(())
     }
-    async fn release(&self, _intent_id: &str) -> Result<(), AppError> {
+    async fn release(&self, _intent_id: &str, _idem: &str) -> Result<(), AppError> {
         Ok(())
     }
-    async fn refund(&self, _intent_id: &str, _amount_cents: i64) -> Result<String, AppError> {
+    async fn refund(
+        &self,
+        _intent_id: &str,
+        _amount_cents: i64,
+        _idem: &str,
+    ) -> Result<String, AppError> {
         Ok("re_mock".to_string())
     }
 }
@@ -158,15 +180,23 @@ impl StripeProvider {
         Ok(body)
     }
 
-    async fn post(
+    /// POST with an optional Stripe `Idempotency-Key`. Passing a stable key makes
+    /// a retried request return the original result instead of creating a new
+    /// charge/refund — essential for the scheduler's automatic retries.
+    async fn post_idem(
         &self,
         path: &str,
         form: &[(&str, String)],
+        idem: Option<&str>,
     ) -> Result<serde_json::Value, AppError> {
-        let res = self
+        let mut req = self
             .http
             .post(format!("https://api.stripe.com/v1{path}"))
-            .bearer_auth(&self.secret_key)
+            .bearer_auth(&self.secret_key);
+        if let Some(key) = idem {
+            req = req.header("Idempotency-Key", key);
+        }
+        let res = req
             .form(form)
             .send()
             .await
@@ -207,16 +237,21 @@ impl PaymentProvider for StripeProvider {
         reference: &str,
         amount_cents: i64,
     ) -> Result<DepositIntent, AppError> {
+        // Stable keys per booking reference: a retried pay-deposit (double click,
+        // lost response) reuses the same customer + PaymentIntent instead of
+        // spawning orphans. The reference is invalidated on any cart change, so
+        // the amount tied to a reference never varies.
         let customer = self
-            .post(
+            .post_idem(
                 "/customers",
                 &[("metadata[reference]", reference.to_string())],
+                Some(&format!("cus-{reference}")),
             )
             .await?;
         let customer_id = jstr(&customer, "id");
 
         let pi = self
-            .post(
+            .post_idem(
                 "/payment_intents",
                 &[
                     ("amount", amount_cents.to_string()),
@@ -226,6 +261,7 @@ impl PaymentProvider for StripeProvider {
                     ("automatic_payment_methods[enabled]", "true".to_string()),
                     ("metadata[reference]", reference.to_string()),
                 ],
+                Some(&format!("pi-deposit-{reference}")),
             )
             .await?;
 
@@ -256,9 +292,10 @@ impl PaymentProvider for StripeProvider {
         customer_ref: &str,
         payment_method_ref: &str,
         amount_cents: i64,
+        idem: &str,
     ) -> Result<String, AppError> {
         let pi = self
-            .post(
+            .post_idem(
                 "/payment_intents",
                 &[
                     ("amount", amount_cents.to_string()),
@@ -268,6 +305,7 @@ impl PaymentProvider for StripeProvider {
                     ("off_session", "true".to_string()),
                     ("confirm", "true".to_string()),
                 ],
+                Some(idem),
             )
             .await?;
         Ok(jstr(&pi, "id"))
@@ -278,9 +316,10 @@ impl PaymentProvider for StripeProvider {
         customer_ref: &str,
         payment_method_ref: &str,
         amount_cents: i64,
+        idem: &str,
     ) -> Result<String, AppError> {
         let pi = self
-            .post(
+            .post_idem(
                 "/payment_intents",
                 &[
                     ("amount", amount_cents.to_string()),
@@ -291,34 +330,51 @@ impl PaymentProvider for StripeProvider {
                     ("confirm", "true".to_string()),
                     ("capture_method", "manual".to_string()),
                 ],
+                Some(idem),
             )
             .await?;
         Ok(jstr(&pi, "id"))
     }
 
-    async fn capture(&self, intent_id: &str, amount_cents: i64) -> Result<(), AppError> {
-        self.post(
+    async fn capture(
+        &self,
+        intent_id: &str,
+        amount_cents: i64,
+        idem: &str,
+    ) -> Result<(), AppError> {
+        self.post_idem(
             &format!("/payment_intents/{intent_id}/capture"),
             &[("amount_to_capture", amount_cents.to_string())],
+            Some(idem),
         )
         .await?;
         Ok(())
     }
 
-    async fn release(&self, intent_id: &str) -> Result<(), AppError> {
-        self.post(&format!("/payment_intents/{intent_id}/cancel"), &[])
-            .await?;
+    async fn release(&self, intent_id: &str, idem: &str) -> Result<(), AppError> {
+        self.post_idem(
+            &format!("/payment_intents/{intent_id}/cancel"),
+            &[],
+            Some(idem),
+        )
+        .await?;
         Ok(())
     }
 
-    async fn refund(&self, intent_id: &str, amount_cents: i64) -> Result<String, AppError> {
+    async fn refund(
+        &self,
+        intent_id: &str,
+        amount_cents: i64,
+        idem: &str,
+    ) -> Result<String, AppError> {
         let r = self
-            .post(
+            .post_idem(
                 "/refunds",
                 &[
                     ("payment_intent", intent_id.to_string()),
                     ("amount", amount_cents.to_string()),
                 ],
+                Some(idem),
             )
             .await?;
         Ok(jstr(&r, "id"))

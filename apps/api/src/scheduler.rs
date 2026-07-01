@@ -97,6 +97,7 @@ async fn charge_due_balances(
                 &d.provider_customer_id,
                 &d.provider_payment_method_id,
                 d.balance_cents,
+                &format!("balance-{}", d.id),
             )
             .await
         {
@@ -168,6 +169,7 @@ async fn authorize_due_cautions(
                 &d.provider_customer_id,
                 &d.provider_payment_method_id,
                 d.caution_cents,
+                &format!("caution-{}", d.id),
             )
             .await
         {

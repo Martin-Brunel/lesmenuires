@@ -704,7 +704,9 @@ async fn cancel_booking(
     // Release any active caution imprint — no reason to hold it on a cancellation.
     if b.caution_authorized_at.is_some() && b.caution_released_at.is_none() {
         if let Some(intent) = &b.caution_intent_id {
-            st.payments.release(intent).await?;
+            st.payments
+                .release(intent, &format!("release-{}", b.id))
+                .await?;
             sqlx::query(
                 "update booking set caution_captured_cents = 0, caution_released_at = now() \
                  where id = $1",
@@ -793,7 +795,9 @@ async fn capture_caution(
         ));
     }
     let intent = b.caution_intent_id.clone().unwrap();
-    st.payments.capture(&intent, body.amount_cents).await?;
+    st.payments
+        .capture(&intent, body.amount_cents, &format!("capture-{}", b.id))
+        .await?;
     sqlx::query(
         "update booking set caution_captured_cents = $2, caution_released_at = now(), \
             updated_at = now() where id = $1",
@@ -821,7 +825,9 @@ async fn release_caution(
 ) -> Result<StatusCode, AppError> {
     let b = load_caution(&st, &reference).await?;
     let intent = b.caution_intent_id.clone().unwrap();
-    st.payments.release(&intent).await?;
+    st.payments
+        .release(&intent, &format!("release-{}", b.id))
+        .await?;
     sqlx::query(
         "update booking set caution_captured_cents = 0, caution_released_at = now(), \
             updated_at = now() where id = $1",
@@ -895,7 +901,16 @@ async fn do_refund(
         )));
     }
 
-    let refund_id = st.payments.refund(&intent, amount_cents).await?;
+    // Key on the prior-refunds total: a retried (lost-response) refund reuses the
+    // same key and replays; a genuinely new refund has a higher `already` → new key.
+    let refund_id = st
+        .payments
+        .refund(
+            &intent,
+            amount_cents,
+            &format!("refund-{booking_id}-{ptype}-{already}"),
+        )
+        .await?;
     sqlx::query(
         "insert into payment (booking_id, type, provider, provider_intent_id, amount_cents, status, raw) \
          values ($1, 'refund', $2, $3, $4, 'refunded', jsonb_build_object('source', $5::text))",

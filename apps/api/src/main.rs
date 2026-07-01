@@ -595,6 +595,40 @@ struct ConfirmRow {
 /// Confirm the deposit once the buyer has paid: reads the intent from the
 /// provider (Stripe status, or always-paid for mock), marks the booking, and
 /// opens a customer session (cookie) for the espace client.
+/// Try to claim a booking's week atomically, inside `tx`.
+/// - `Ok(true)`  → the week is now held by this booking (safe to confirm). Also
+///   returned when the week is unclaimable for a reason *other* than a rival
+///   confirmed booking (idempotent re-confirm, admin-blocked week).
+/// - `Ok(false)` → a *different* confirmed/balance_paid booking already holds the
+///   week: the caller must NOT confirm and should refund the deposit.
+///
+/// Shared by the synchronous confirm and the Stripe webhook so both enforce the
+/// same anti-double-booking guard.
+async fn try_claim_week(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    booking_id: Uuid,
+) -> Result<bool, AppError> {
+    let claimed = sqlx::query(
+        "update availability_week set status = 'booked' \
+         where id = (select week_id from booking where id = $1) and status = 'available'",
+    )
+    .bind(booking_id)
+    .execute(&mut **tx)
+    .await?;
+    if claimed.rows_affected() > 0 {
+        return Ok(true);
+    }
+    let taken: Option<i32> = sqlx::query_scalar(
+        "select 1 from booking b2 \
+         where b2.week_id = (select week_id from booking where id = $1) \
+           and b2.id <> $1 and b2.status in ('confirmed', 'balance_paid') limit 1",
+    )
+    .bind(booking_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(taken.is_none())
+}
+
 async fn confirm_deposit(
     State(st): State<AppState>,
     Path(reference): Path<String>,
@@ -618,27 +652,10 @@ async fn confirm_deposit(
 
     let mut tx = st.pool.begin().await?;
     // Atomically claim the week; refuse if another confirmed booking already holds it.
-    let claimed = sqlx::query(
-        "update availability_week set status = 'booked' \
-         where id = (select week_id from booking where id = $1) and status = 'available'",
-    )
-    .bind(b.id)
-    .execute(&mut *tx)
-    .await?;
-    if claimed.rows_affected() == 0 {
-        let taken: Option<i32> = sqlx::query_scalar(
-            "select 1 from booking b2 \
-             where b2.week_id = (select week_id from booking where id = $1) \
-               and b2.id <> $1 and b2.status in ('confirmed', 'balance_paid') limit 1",
-        )
-        .bind(b.id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        if taken.is_some() {
-            return Err(AppError::BadRequest(
-                "Cette semaine vient d'être réservée par un autre client. Votre acompte vous sera remboursé.".into(),
-            ));
-        }
+    if !try_claim_week(&mut tx, b.id).await? {
+        return Err(AppError::BadRequest(
+            "Cette semaine vient d'être réservée par un autre client. Votre acompte vous sera remboursé.".into(),
+        ));
     }
     sqlx::query(
         "update payment set status = 'succeeded', updated_at = now() \
@@ -1050,19 +1067,7 @@ async fn stripe_webhook(
         let pm = pi.get("payment_method").and_then(|v| v.as_str());
 
         let mut tx = st.pool.begin().await?;
-        let updated = sqlx::query(
-            "update booking set status = 'confirmed', \
-                deposit_paid_at = coalesce(deposit_paid_at, now()), \
-                provider_customer_id = coalesce(provider_customer_id, $2), \
-                provider_payment_method_id = coalesce(provider_payment_method_id, $3), \
-                updated_at = now() \
-             where deposit_intent_id = $1 and status = 'cart'",
-        )
-        .bind(intent_id)
-        .bind(customer)
-        .bind(pm)
-        .execute(&mut *tx)
-        .await?;
+        // Payment is genuinely succeeded — record it regardless (idempotent).
         sqlx::query(
             "update payment set status = 'succeeded', updated_at = now() \
              where provider_intent_id = $1",
@@ -1070,18 +1075,38 @@ async fn stripe_webhook(
         .bind(intent_id)
         .execute(&mut *tx)
         .await?;
-        sqlx::query(
-            "update availability_week set status = 'booked' \
-             where id in (select week_id from booking where deposit_intent_id = $1) \
-               and status <> 'booked'",
+        // Only a still-pending cart needs confirming (idempotent on re-delivery).
+        let bid: Option<Uuid> = sqlx::query_scalar(
+            "select id from booking where deposit_intent_id = $1 and status = 'cart'",
         )
         .bind(intent_id)
-        .execute(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
-        tx.commit().await?;
-        if updated.rows_affected() > 0 {
-            tracing::info!("webhook: acompte confirmé (intent {intent_id})");
+        if let Some(bid) = bid {
+            // Same anti-double-booking guard as the synchronous confirm path.
+            if try_claim_week(&mut tx, bid).await? {
+                sqlx::query(
+                    "update booking set status = 'confirmed', \
+                        deposit_paid_at = coalesce(deposit_paid_at, now()), \
+                        provider_customer_id = coalesce(provider_customer_id, $2), \
+                        provider_payment_method_id = coalesce(provider_payment_method_id, $3), \
+                        updated_at = now() \
+                     where id = $1",
+                )
+                .bind(bid)
+                .bind(customer)
+                .bind(pm)
+                .execute(&mut *tx)
+                .await?;
+                tracing::info!("webhook: acompte confirmé (intent {intent_id})");
+            } else {
+                tracing::error!(
+                    "webhook: double-réservation évitée — acompte à rembourser \
+                     (intent {intent_id}, booking {bid})"
+                );
+            }
         }
+        tx.commit().await?;
     }
 
     Ok(StatusCode::OK)
