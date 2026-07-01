@@ -7,7 +7,8 @@
 
 import { useRef, useState } from "react";
 import type { BookingContext } from "@/lib/api";
-import { confirmDeposit, createBooking, payDeposit } from "@/lib/api";
+import { confirmDeposit, createBooking, payDeposit, saveContract } from "@/lib/api";
+import { CONTRACT_VERSION } from "@/lib/site";
 import {
   computeTotals,
   defaultExtras,
@@ -140,6 +141,33 @@ export function useBookingFlow(ctx: BookingContext) {
     }
   };
 
+  /** Persist the signed contract before payment. Returns success; manages
+   *  submitting/error so the funnel can block the step on failure. */
+  const saveSignedContract = async (): Promise<boolean> => {
+    if (submitting) return false;
+    const signaturePng = sigRef.current?.toDataURL() ?? null;
+    if (!accepted || !signaturePng) {
+      setError("Merci d'accepter le contrat et de signer.");
+      return false;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const ref = await ensureBooking();
+      await saveContract(ref, {
+        contractVersion: CONTRACT_VERSION,
+        signaturePng,
+        accepted,
+      });
+      return true;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Une erreur est survenue.");
+      return false;
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   /** Pay the deposit. If Stripe, opens the Payment Element (sets stripeSession)
    *  and calls nothing else; otherwise (mock) confirms and runs `onDone`. */
   const pay = async (onDone: () => void): Promise<void> => {
@@ -201,6 +229,6 @@ export function useBookingFlow(ctx: BookingContext) {
     reference, submitting, error, setError,
     stripeSession, setStripeSession,
     week, months, totals, infoComplete,
-    ensureBooking, ensureCart, pay, finishStripe, resetFlow,
+    ensureBooking, ensureCart, saveSignedContract, pay, finishStripe, resetFlow,
   };
 }

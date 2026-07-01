@@ -110,6 +110,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/espace/request-link", post(request_link))
         .route("/api/espace/login", get(espace_login))
         .route("/api/espace/logout", post(espace_logout))
+        .route("/api/bookings/:reference/contract", post(sign_contract))
         .route("/api/bookings/:reference/pay-deposit", post(pay_deposit))
         .route(
             "/api/bookings/:reference/confirm-deposit",
@@ -533,6 +534,53 @@ struct PayRow {
     deposit_cents: i64,
     status: String,
     week_status: String,
+    contract_accepted_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ContractInput {
+    contract_version: String,
+    signature_png: String,
+    accepted: bool,
+}
+
+/// Store the signed contract (version + drawn signature + acceptance timestamp)
+/// as legal evidence, before payment. Only a pending cart can be signed.
+async fn sign_contract(
+    State(st): State<AppState>,
+    Path(reference): Path<String>,
+    Json(body): Json<ContractInput>,
+) -> Result<StatusCode, AppError> {
+    if !body.accepted {
+        return Err(AppError::BadRequest("Le contrat doit être accepté.".into()));
+    }
+    // Basic shape check on the signature image (PNG data URL, non-trivial size).
+    if !body.signature_png.starts_with("data:image/") || body.signature_png.len() < 200 {
+        return Err(AppError::BadRequest(
+            "Signature manquante ou invalide.".into(),
+        ));
+    }
+    // Guard against absurdly large payloads (data URLs are ~a few KB normally).
+    if body.signature_png.len() > 1_000_000 {
+        return Err(AppError::BadRequest("Signature trop volumineuse.".into()));
+    }
+    let updated = sqlx::query(
+        "update booking set contract_version = $2, signature_png = $3, \
+            contract_accepted_at = now(), updated_at = now() \
+         where reference = $1 and status = 'cart'",
+    )
+    .bind(&reference)
+    .bind(&body.contract_version)
+    .bind(&body.signature_png)
+    .execute(&st.pool)
+    .await?;
+    if updated.rows_affected() == 0 {
+        return Err(AppError::BadRequest(
+            "Réservation introuvable ou déjà réglée.".into(),
+        ));
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Serialize)]
@@ -549,7 +597,8 @@ async fn pay_deposit(
     Path(reference): Path<String>,
 ) -> Result<Json<PayDepositResponse>, AppError> {
     let b = sqlx::query_as::<_, PayRow>(
-        "select b.id, b.deposit_cents, b.status, aw.status as week_status \
+        "select b.id, b.deposit_cents, b.status, aw.status as week_status, \
+                b.contract_accepted_at \
          from booking b join availability_week aw on aw.id = b.week_id \
          where b.reference = $1",
     )
@@ -564,6 +613,12 @@ async fn pay_deposit(
     if b.week_status != "available" {
         return Err(AppError::BadRequest(
             "Cette semaine n'est plus disponible.".into(),
+        ));
+    }
+    // Legal gate: no deposit without a signed contract on record.
+    if b.contract_accepted_at.is_none() {
+        return Err(AppError::BadRequest(
+            "Le contrat doit être signé avant le paiement.".into(),
         ));
     }
 

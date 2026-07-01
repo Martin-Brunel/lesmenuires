@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { adminApi, fmtEur, type AdminBooking } from "@/lib/admin-api";
+import { adminApi, fmtEur, type AdminBooking, type SignatureInfo } from "@/lib/admin-api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -46,8 +46,18 @@ const FLAG_LABEL: Record<string, string> = {
 export default function ReservationsPage() {
   const [bookings, setBookings] = useState<AdminBooking[] | null>(null);
   const [cancelTarget, setCancelTarget] = useState<AdminBooking | null>(null);
+  const [sigTarget, setSigTarget] = useState<{ ref: string; info: SignatureInfo | null }>();
   const confirm = useConfirm();
   const prompt = usePrompt();
+
+  const viewSignature = async (ref: string) => {
+    setSigTarget({ ref, info: null });
+    try {
+      setSigTarget({ ref, info: await adminApi.getSignature(ref) });
+    } catch {
+      setSigTarget({ ref, info: { signaturePng: null, contractVersion: null, signedAt: null } });
+    }
+  };
 
   const reload = () => adminApi.listBookings().then(setBookings).catch(() => setBookings([]));
   useEffect(() => {
@@ -213,6 +223,15 @@ export default function ReservationsPage() {
                           {b.cautionAttempts > 0 ? ` caution ×${b.cautionAttempts}` : ""}
                         </span>
                       )}
+                    {b.contractSignedAt && (
+                      <button
+                        onClick={() => viewSignature(b.reference)}
+                        className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                        title={`Contrat signé le ${new Date(b.contractSignedAt).toLocaleString("fr-FR")}`}
+                      >
+                        ✓ Contrat signé · voir
+                      </button>
+                    )}
                   </div>
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
@@ -269,6 +288,33 @@ export default function ReservationsPage() {
             reload();
           }}
         />
+      )}
+      {sigTarget && (
+        <Modal
+          open
+          onClose={() => setSigTarget(undefined)}
+          title={`Signature — ${sigTarget.ref}`}
+        >
+          {!sigTarget.info ? (
+            <p className="text-sm text-muted-foreground">Chargement…</p>
+          ) : sigTarget.info.signaturePng ? (
+            <div className="space-y-3">
+              <img
+                src={sigTarget.info.signaturePng}
+                alt="Signature du contrat"
+                className="w-full rounded-md border bg-white"
+              />
+              <p className="text-xs text-muted-foreground">
+                Contrat v{sigTarget.info.contractVersion ?? "—"}
+                {sigTarget.info.signedAt
+                  ? ` · signé le ${new Date(sigTarget.info.signedAt).toLocaleString("fr-FR")}`
+                  : ""}
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Aucune signature enregistrée.</p>
+          )}
+        </Modal>
       )}
     </div>
   );

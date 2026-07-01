@@ -368,9 +368,10 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
                   <div style={css("margin-top:10px")}>
                     <SignaturePad ref={sigRef} width={476} height={150} placeholder="Signez ici à la souris" onEmptyChange={setSigEmpty} />
                   </div>
+                  {error && <div style={css("margin-top:14px;font:400 12px 'Hanken Grotesk';color:#B23B3B")}>{error}</div>}
                   <div style={css("margin-top:22px;display:flex;align-items:center;gap:12px")}>
                     <div onClick={() => setCheckoutStep("infos")} style={css("padding:15px 22px;border-radius:13px;font:500 14px 'Hanken Grotesk';color:#6B6E6B;border:1px solid rgba(0,0,0,.14);cursor:pointer")}>‹ Retour</div>
-                    <div onClick={() => { if (accepted && !sigEmpty) setCheckoutStep("paiement"); }} style={css(`flex:1;max-width:280px;padding:15px;border-radius:13px;text-align:center;font:600 14px 'Hanken Grotesk';${accepted && !sigEmpty ? "background:#1A1B1A;color:#fff;cursor:pointer;" : "background:#D8D7D2;color:#fff;cursor:default;opacity:.7;"}`)}>{accepted && !sigEmpty ? "Continuer" : "Acceptez et signez"}</div>
+                    <div onClick={async () => { if (accepted && !sigEmpty && !submitting && (await flow.saveSignedContract())) setCheckoutStep("paiement"); }} style={css(`flex:1;max-width:280px;padding:15px;border-radius:13px;text-align:center;font:600 14px 'Hanken Grotesk';${accepted && !sigEmpty && !submitting ? "background:#1A1B1A;color:#fff;cursor:pointer;" : "background:#D8D7D2;color:#fff;cursor:default;opacity:.7;"}`)}>{submitting ? "…" : accepted && !sigEmpty ? "Continuer" : "Acceptez et signez"}</div>
                   </div>
                 </>
               )}

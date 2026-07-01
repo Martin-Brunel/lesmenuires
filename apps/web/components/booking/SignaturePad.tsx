@@ -8,7 +8,11 @@ import React, {
 } from "react";
 import { css } from "./css";
 
-export type SignaturePadHandle = { clear: () => void };
+export type SignaturePadHandle = {
+  clear: () => void;
+  /** Serialize the drawn signature as a PNG data URL, or null if empty. */
+  toDataURL: () => string | null;
+};
 
 type Props = {
   width: number;
@@ -40,6 +44,10 @@ export const SignaturePad = forwardRef<SignaturePadHandle, Props>(
         if (c) c.getContext("2d")?.clearRect(0, 0, c.width, c.height);
         setEmpty(true);
         onEmptyChange?.(true);
+      },
+      toDataURL() {
+        if (empty || !canvasRef.current) return null;
+        return canvasRef.current.toDataURL("image/png");
       },
     }));
 

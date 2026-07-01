@@ -83,9 +83,17 @@ export type AdminBooking = {
   cautionLastError: string | null;
   balanceOverdue: boolean;
   paymentFlag: string | null;
+  contractSignedAt: string | null;
+  contractVersion: string | null;
   customerEmail: string | null;
   customerName: string | null;
   createdAt: string;
+};
+
+export type SignatureInfo = {
+  signaturePng: string | null;
+  contractVersion: string | null;
+  signedAt: string | null;
 };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
@@ -165,6 +173,8 @@ export const adminApi = {
   deleteProduct: (id: string) => req<void>(`/products/${id}`, { method: "DELETE" }),
 
   listBookings: () => req<AdminBooking[]>("/bookings"),
+  getSignature: (reference: string) =>
+    req<SignatureInfo>(`/bookings/${reference}/signature`),
   cancelBooking: (
     reference: string,
     data: { reason: string; refundDepositCents: number; refundBalanceCents: number },

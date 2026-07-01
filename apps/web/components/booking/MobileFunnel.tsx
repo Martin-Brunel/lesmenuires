@@ -85,8 +85,8 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
     "width:100%;background:#FFF;border:1px solid rgba(0,0,0,.1);border-radius:12px;padding:14px;font-size:15px;color:#1A1B1A";
   const contractReady = accepted && !sigEmpty;
 
-  const goPayment = () => {
-    if (contractReady) setScreen("payment");
+  const goPayment = async () => {
+    if (contractReady && (await flow.saveSignedContract())) setScreen("payment");
   };
   const goToContract = async () => {
     if (await flow.ensureCart()) setScreen("contract");
@@ -397,7 +397,8 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
             </div>
           </div>
           <div style={css("padding:13px 22px 30px;background:#FFF;border-top:1px solid rgba(0,0,0,.08)")}>
-            <div onClick={goPayment} style={css(`padding:16px;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';transition:opacity .15s;${contractReady ? "background:#1A1B1A;color:#fff;cursor:pointer;opacity:1;" : "background:#D8D7D2;color:#fff;cursor:default;opacity:.7;"}`)}>{contractReady ? "Signer & payer l’acompte" : "Acceptez et signez pour continuer"}</div>
+            {error && <div style={css("margin-bottom:10px;text-align:center;font:400 12px 'Hanken Grotesk';color:#B23B3B")}>{error}</div>}
+            <div onClick={goPayment} style={css(`padding:16px;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';transition:opacity .15s;${contractReady && !submitting ? "background:#1A1B1A;color:#fff;cursor:pointer;opacity:1;" : "background:#D8D7D2;color:#fff;cursor:default;opacity:.7;"}`)}>{submitting ? "…" : contractReady ? "Signer & payer l’acompte" : "Acceptez et signez pour continuer"}</div>
           </div>
         </div>
       )}

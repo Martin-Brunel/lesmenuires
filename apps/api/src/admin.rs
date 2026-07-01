@@ -37,6 +37,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/products", get(list_products).post(create_product))
         .route("/products/:id", put(update_product).delete(delete_product))
         .route("/bookings", get(list_bookings))
+        .route("/bookings/:reference/signature", get(get_signature))
         .route("/bookings/:reference/cancel", post(cancel_booking))
         .route(
             "/bookings/:reference/caution/capture",
@@ -594,6 +595,8 @@ struct AdminBookingDto {
     /// Set by webhook events raised from the Stripe dashboard ('refunded_externally'
     /// or 'disputed'); the scheduler skips flagged bookings.
     payment_flag: Option<String>,
+    contract_signed_at: Option<DateTime<Utc>>,
+    contract_version: Option<String>,
     customer_email: Option<String>,
     customer_name: Option<String>,
     created_at: DateTime<Utc>,
@@ -612,7 +615,7 @@ async fn list_bookings(State(st): State<AppState>) -> Result<Json<Vec<AdminBooki
                 b.balance_attempts, b.balance_last_error, b.caution_attempts, b.caution_last_error, \
                 (b.status = 'confirmed' and b.balance_paid_at is null and b.balance_cents > 0 \
                     and aw.start_date <= current_date) as balance_overdue, \
-                b.payment_flag, \
+                b.payment_flag, b.contract_accepted_at as contract_signed_at, b.contract_version, \
                 c.email as customer_email, \
                 nullif(trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')), '') as customer_name, \
                 b.created_at \
@@ -624,6 +627,30 @@ async fn list_bookings(State(st): State<AppState>) -> Result<Json<Vec<AdminBooki
     .fetch_all(&st.pool)
     .await?;
     Ok(Json(rows))
+}
+
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct SignatureDto {
+    signature_png: Option<String>,
+    contract_version: Option<String>,
+    signed_at: Option<DateTime<Utc>>,
+}
+
+/// Signature du contrat (preuve) pour une réservation.
+async fn get_signature(
+    State(st): State<AppState>,
+    Path(reference): Path<String>,
+) -> Result<Json<SignatureDto>, AppError> {
+    let row = sqlx::query_as::<_, SignatureDto>(
+        "select signature_png, contract_version, contract_accepted_at as signed_at \
+         from booking where reference = $1",
+    )
+    .bind(&reference)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("réservation".into()))?;
+    Ok(Json(row))
 }
 
 /// Déclenche un tick du planificateur à la demande (test / ops).

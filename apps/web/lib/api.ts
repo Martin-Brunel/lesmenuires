@@ -117,6 +117,22 @@ export async function createBooking(
   return res.json();
 }
 
+/** Persist the signed contract (version + drawn signature) before payment. */
+export async function saveContract(
+  reference: string,
+  input: { contractVersion: string; signaturePng: string; accepted: boolean },
+): Promise<void> {
+  const res = await fetch(`${API_URL}/api/bookings/${reference}/contract`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? `contract: HTTP ${res.status}`);
+  }
+}
+
 export type PayDepositResult = {
   provider: string;
   clientSecret: string;
