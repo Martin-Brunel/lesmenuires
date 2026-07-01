@@ -38,6 +38,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/products/:id", put(update_product).delete(delete_product))
         .route("/bookings", get(list_bookings))
         .route("/finances", get(finances))
+        .route("/contacts", get(list_contacts))
         .route("/bookings/:reference/signature", get(get_signature))
         .route("/bookings/:reference/cancel", post(cancel_booking))
         .route(
@@ -764,6 +765,52 @@ async fn finances(State(st): State<AppState>) -> Result<Json<FinancesResponse>, 
         },
         tax_declaration,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// CRM : contacts (clients ayant réservé + prospects restés au panier)
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct ContactDto {
+    id: Uuid,
+    email: String,
+    name: Option<String>,
+    phone: String,
+    city: String,
+    /// Nombre total de réservations (tous statuts).
+    bookings_count: i64,
+    /// Réservations confirmées ou soldées.
+    confirmed_count: i64,
+    /// Paniers en cours / abandonnés (prospect).
+    cart_count: i64,
+    total_paid_cents: i64,
+    last_activity: DateTime<Utc>,
+    created_at: DateTime<Utc>,
+}
+
+/// Tous les contacts (clients + prospects), avec agrégats et dernière activité.
+async fn list_contacts(State(st): State<AppState>) -> Result<Json<Vec<ContactDto>>, AppError> {
+    let rows = sqlx::query_as::<_, ContactDto>(
+        "select c.id, c.email, \
+                nullif(trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')), '') as name, \
+                c.phone, c.city, \
+                count(b.id) as bookings_count, \
+                count(b.id) filter (where b.status in ('confirmed','balance_paid')) as confirmed_count, \
+                count(b.id) filter (where b.status in ('cart','expired')) as cart_count, \
+                (coalesce(sum(b.deposit_cents) filter (where b.deposit_paid_at is not null),0) \
+                 + coalesce(sum(b.balance_cents) filter (where b.balance_paid_at is not null),0))::bigint as total_paid_cents, \
+                coalesce(max(b.updated_at), c.created_at) as last_activity, \
+                c.created_at \
+         from customer c \
+         left join booking b on b.customer_id = c.id \
+         group by c.id \
+         order by last_activity desc",
+    )
+    .fetch_all(&st.pool)
+    .await?;
+    Ok(Json(rows))
 }
 
 #[derive(Serialize, FromRow)]

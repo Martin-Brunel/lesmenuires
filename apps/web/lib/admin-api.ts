@@ -125,6 +125,20 @@ export type FinancesResponse = {
   taxDeclaration: TaxDeclarationRow[];
 };
 
+export type Contact = {
+  id: string;
+  email: string;
+  name: string | null;
+  phone: string;
+  city: string;
+  bookingsCount: number;
+  confirmedCount: number;
+  cartCount: number;
+  totalPaidCents: number;
+  lastActivity: string;
+  createdAt: string;
+};
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -203,6 +217,7 @@ export const adminApi = {
 
   listBookings: () => req<AdminBooking[]>("/bookings"),
   finances: () => req<FinancesResponse>("/finances"),
+  listContacts: () => req<Contact[]>("/contacts"),
   getSignature: (reference: string) =>
     req<SignatureInfo>(`/bookings/${reference}/signature`),
   cancelBooking: (
