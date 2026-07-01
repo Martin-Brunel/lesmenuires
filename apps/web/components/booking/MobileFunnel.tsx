@@ -61,7 +61,11 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
 
   const pct = property.depositPct;
   const name = property.name;
+  const location = property.locationLabel;
   const caution = property.cautionCents;
+  const partyLabel =
+    `${adults} adulte${adults > 1 ? "s" : ""}` +
+    (children > 0 ? ` · ${children} enfant${children > 1 ? "s" : ""}` : "");
 
   if (!week) {
     return (
@@ -293,6 +297,7 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
             </div>
           </div>
           <div style={css("padding:13px 22px 30px;background:#FFF;border-top:1px solid rgba(0,0,0,.08)")}>
+            {error && <div style={css("margin-bottom:10px;text-align:center;font:400 12px 'Hanken Grotesk';color:#B23B3B")}>{error}</div>}
             <div
               onClick={goToContract}
               style={css(`padding:16px;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';${infoComplete && !submitting ? "background:#1A1B1A;color:#fff;cursor:pointer;" : "background:#D8D7D2;color:#fff;cursor:default;opacity:.7;"}`)}
@@ -318,12 +323,12 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
                 <div style={css("display:flex;justify-content:space-between;padding-bottom:12px;border-bottom:1px solid rgba(0,0,0,.08)")}>
                   <div>
                     <div style={css("font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>SÉJOUR</div>
-                    <div style={css("margin-top:3px;font:500 15px 'Hanken Grotesk'")}>{week.range} 2026</div>
+                    <div style={css("margin-top:3px;font:500 15px 'Hanken Grotesk'")}>{week.range} {week.startDate.slice(0, 4)}</div>
                     <div style={css("margin-top:1px;font:400 11.5px 'Hanken Grotesk';color:#9A9C97")}>Arrivée {week.arrival}</div>
                   </div>
                   <div style={css("text-align:right")}>
                     <div style={css("font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>VOYAGEURS</div>
-                    <div style={css("margin-top:3px;font:500 15px 'Hanken Grotesk'")}>4 adultes</div>
+                    <div style={css("margin-top:3px;font:500 15px 'Hanken Grotesk'")}>{partyLabel}</div>
                   </div>
                 </div>
                 <div style={css("padding:12px 0 4px")}>
@@ -361,10 +366,10 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
               {/* contract text */}
               <div style={css("margin-top:16px;font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>CONTRAT DE LOCATION SAISONNIÈRE</div>
               <div style={css("margin-top:8px;max-height:120px;overflow:auto;background:#FFF;border:1px solid rgba(0,0,0,.07);border-radius:12px;padding:14px;font:400 11.5px/1.6 'Hanken Grotesk';color:#6B6E6B")}>
-                Entre le propriétaire de {name}, ci-après « le Bailleur », et le signataire, ci-après « le Preneur ». Le présent contrat a pour objet la location meublée à usage saisonnier du chalet situé au Grand-Bornand, pour la période indiquée ci-dessus.
+                Entre le propriétaire de {name}, ci-après « le Bailleur », et le signataire, ci-après « le Preneur ». Le présent contrat a pour objet la location meublée à usage saisonnier du logement situé à {location}, pour la période indiquée ci-dessus.
                 <br />
                 <br />
-                Le Preneur s&apos;engage à occuper les lieux paisiblement, à hauteur de 6 personnes maximum, et à restituer le logement en bon état. L&apos;acompte versé à la signature vaut réservation ferme. Le solde est prélevé deux semaines avant l&apos;arrivée. Une empreinte de caution est réalisée à titre de garantie et libérée après l&apos;état des lieux de sortie. Toute annulation est régie par les conditions générales annexées.
+                Le Preneur s&apos;engage à occuper les lieux paisiblement, à hauteur de {capacity} personnes maximum, et à restituer le logement en bon état. L&apos;acompte versé à la signature vaut réservation ferme. Le solde est prélevé deux semaines avant l&apos;arrivée. Une empreinte de caution est réalisée à titre de garantie et libérée après l&apos;état des lieux de sortie. Toute annulation est régie par les conditions générales annexées.
               </div>
 
               {/* accept */}

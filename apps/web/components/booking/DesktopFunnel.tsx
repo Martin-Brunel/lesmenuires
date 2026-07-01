@@ -335,6 +335,7 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
                       <GuestPicker adults={adults} children={children} capacity={capacity} setAdults={setAdults} setChildren={setChildren} />
                     </div>
                   </div>
+                  {error && <div style={css("margin-top:14px;max-width:280px;font:400 12px 'Hanken Grotesk';color:#B23B3B")}>{error}</div>}
                   <div onClick={goToContract} style={css(`margin-top:24px;max-width:280px;padding:15px;border-radius:13px;text-align:center;font:600 14px 'Hanken Grotesk';${infoComplete && !submitting ? "background:#1A1B1A;color:#fff;cursor:pointer;" : "background:#D8D7D2;color:#fff;cursor:default;opacity:.7;"}`)}>{submitting ? "…" : infoComplete ? "Continuer" : "Complétez vos informations"}</div>
                 </>
               )}

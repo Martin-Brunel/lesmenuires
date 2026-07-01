@@ -94,7 +94,14 @@ function PayForm({
       return;
     }
     if (paymentIntent && paymentIntent.status === "succeeded") {
-      await onPaid();
+      // onPaid handles confirmation; it must not throw, but guard anyway so the
+      // button never stays frozen on "Paiement en cours…".
+      try {
+        await onPaid();
+      } catch {
+        setError("Paiement accepté. Finalisation en cours…");
+        setBusy(false);
+      }
       return;
     }
     setError("Paiement non finalisé. Réessayez.");

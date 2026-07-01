@@ -162,11 +162,23 @@ export function useBookingFlow(ctx: BookingContext) {
     }
   };
 
-  /** Called by StripeCheckout once the card is confirmed. */
+  /** Called by StripeCheckout once the card is confirmed. Must never throw: the
+   *  card is already charged, so a failing confirm-deposit call must not trap the
+   *  buyer on a dead spinner. The Stripe webhook confirms the booking server-side,
+   *  so on failure we close the modal and show a reassuring message instead. */
   const finishStripe = async (onDone: () => void): Promise<void> => {
     if (!stripeSession) return;
-    await confirmDeposit(stripeSession.reference);
-    onDone();
+    try {
+      await confirmDeposit(stripeSession.reference);
+      onDone();
+    } catch {
+      setStripeSession(null);
+      setError(
+        "Votre paiement a bien été accepté. La confirmation finale est en cours " +
+          "et vous recevrez un e-mail ; vous pourrez suivre votre réservation " +
+          "dans votre espace client.",
+      );
+    }
   };
 
   const resetFlow = () => {
