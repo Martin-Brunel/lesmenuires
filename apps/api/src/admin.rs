@@ -585,6 +585,12 @@ struct AdminBookingDto {
     caution_captured_cents: Option<i64>,
     deposit_refunded_cents: i64,
     balance_refunded_cents: i64,
+    balance_attempts: i32,
+    balance_last_error: Option<String>,
+    caution_attempts: i32,
+    caution_last_error: Option<String>,
+    /// Confirmed, balance still unpaid, and arrival is today or past → needs attention.
+    balance_overdue: bool,
     customer_email: Option<String>,
     customer_name: Option<String>,
     created_at: DateTime<Utc>,
@@ -600,6 +606,9 @@ async fn list_bookings(State(st): State<AppState>) -> Result<Json<Vec<AdminBooki
                     and p.type = 'refund' and p.raw->>'source' = 'deposit'), 0)::bigint as deposit_refunded_cents, \
                 coalesce((select sum(p.amount_cents) from payment p where p.booking_id = b.id \
                     and p.type = 'refund' and p.raw->>'source' = 'balance'), 0)::bigint as balance_refunded_cents, \
+                b.balance_attempts, b.balance_last_error, b.caution_attempts, b.caution_last_error, \
+                (b.status = 'confirmed' and b.balance_paid_at is null and b.balance_cents > 0 \
+                    and aw.start_date <= current_date) as balance_overdue, \
                 c.email as customer_email, \
                 nullif(trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')), '') as customer_name, \
                 b.created_at \
@@ -694,53 +703,69 @@ async fn cancel_booking(
         ));
     }
 
+    // 1) External side-effects first — all idempotent (stable Stripe keys), so a
+    //    full retry after a mid-way failure never double-refunds/double-releases.
+    let mut refunds = Vec::new();
     if body.refund_deposit_cents > 0 {
-        do_refund(&st, b.id, "deposit", body.refund_deposit_cents).await?;
+        refunds.push(perform_refund(&st, b.id, "deposit", body.refund_deposit_cents).await?);
     }
     if body.refund_balance_cents > 0 {
-        do_refund(&st, b.id, "balance", body.refund_balance_cents).await?;
+        refunds.push(perform_refund(&st, b.id, "balance", body.refund_balance_cents).await?);
     }
-
     // Release any active caution imprint — no reason to hold it on a cancellation.
-    if b.caution_authorized_at.is_some() && b.caution_released_at.is_none() {
-        if let Some(intent) = &b.caution_intent_id {
+    let release_intent = match (
+        &b.caution_intent_id,
+        b.caution_authorized_at,
+        b.caution_released_at,
+    ) {
+        (Some(intent), Some(_), None) => {
             st.payments
                 .release(intent, &format!("release-{}", b.id))
                 .await?;
-            sqlx::query(
-                "update booking set caution_captured_cents = 0, caution_released_at = now() \
-                 where id = $1",
-            )
-            .bind(b.id)
-            .execute(&st.pool)
-            .await?;
-            sqlx::query(
-                "insert into payment (booking_id, type, provider, provider_intent_id, amount_cents, status) \
-                 values ($1, 'caution_release', $2, $3, 0, 'released')",
-            )
-            .bind(b.id)
-            .bind(st.payments.name())
-            .bind(intent)
-            .execute(&st.pool)
-            .await?;
+            Some(intent.clone())
         }
-    }
+        _ => None,
+    };
 
+    // 2) Persist everything atomically: refunds, caution release, cancel, free week.
+    let mut tx = st.pool.begin().await?;
+    for rr in &refunds {
+        insert_refund_row(&mut tx, b.id, st.payments.name(), rr).await?;
+    }
+    if let Some(intent) = &release_intent {
+        sqlx::query(
+            "update booking set caution_captured_cents = 0, caution_released_at = now() \
+             where id = $1",
+        )
+        .bind(b.id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "insert into payment (booking_id, type, provider, provider_intent_id, amount_cents, status) \
+             values ($1, 'caution_release', $2, $3, 0, 'released')",
+        )
+        .bind(b.id)
+        .bind(st.payments.name())
+        .bind(intent)
+        .execute(&mut *tx)
+        .await?;
+    }
     sqlx::query(
         "update booking set status = 'cancelled', cancelled_at = now(), \
             cancel_reason = $2, updated_at = now() where id = $1",
     )
     .bind(b.id)
     .bind(&body.reason)
-    .execute(&st.pool)
+    .execute(&mut *tx)
     .await?;
     sqlx::query(
         "update availability_week set status = 'available' \
          where id = (select week_id from booking where id = $1) and status = 'booked'",
     )
     .bind(b.id)
-    .execute(&st.pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -855,16 +880,24 @@ struct RefundInput {
     payment_type: Option<String>,
 }
 
-/// Refund `amount_cents` from the latest succeeded payment of `ptype`
-/// (deposit/balance) for a booking, capped at the net already-charged amount
-/// (charged minus prior refunds of the same type). Logs a 'refund' payment row
-/// tagged with its source type so future refunds account for it.
-async fn do_refund(
+/// A Stripe refund that succeeded but has not yet been recorded in the DB.
+struct RefundRow {
+    refund_id: String,
+    amount_cents: i64,
+    source: String,
+}
+
+/// Validate and execute the Stripe refund for `amount_cents` from the latest
+/// succeeded payment of `ptype` (deposit/balance), capped at the net already-charged
+/// amount (charged minus prior refunds of the same type). Returns the row to record
+/// — the caller persists it, so the DB write can be batched into an atomic tx and a
+/// full retry stays idempotent (the Stripe key is stable until a row is committed).
+async fn perform_refund(
     st: &AppState,
     booking_id: Uuid,
     ptype: &str,
     amount_cents: i64,
-) -> Result<(), AppError> {
+) -> Result<RefundRow, AppError> {
     if amount_cents <= 0 {
         return Err(AppError::BadRequest(
             "Montant à rembourser invalide.".into(),
@@ -911,16 +944,30 @@ async fn do_refund(
             &format!("refund-{booking_id}-{ptype}-{already}"),
         )
         .await?;
+    Ok(RefundRow {
+        refund_id,
+        amount_cents,
+        source: ptype.to_string(),
+    })
+}
+
+/// Record a completed Stripe refund inside the caller's transaction.
+async fn insert_refund_row(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    booking_id: Uuid,
+    provider: &str,
+    rr: &RefundRow,
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         "insert into payment (booking_id, type, provider, provider_intent_id, amount_cents, status, raw) \
          values ($1, 'refund', $2, $3, $4, 'refunded', jsonb_build_object('source', $5::text))",
     )
     .bind(booking_id)
-    .bind(st.payments.name())
-    .bind(&refund_id)
-    .bind(amount_cents)
-    .bind(ptype)
-    .execute(&st.pool)
+    .bind(provider)
+    .bind(&rr.refund_id)
+    .bind(rr.amount_cents)
+    .bind(&rr.source)
+    .execute(&mut **tx)
     .await?;
     Ok(())
 }
@@ -941,7 +988,10 @@ async fn refund_payment(
         .fetch_optional(&st.pool)
         .await?
         .ok_or_else(|| AppError::NotFound("réservation".into()))?;
-    do_refund(&st, bid, &ptype, body.amount_cents).await?;
+    let rr = perform_refund(&st, bid, &ptype, body.amount_cents).await?;
+    let mut tx = st.pool.begin().await?;
+    insert_refund_row(&mut tx, bid, st.payments.name(), &rr).await?;
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

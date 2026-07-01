@@ -15,6 +15,16 @@ pub enum AppError {
     Db(sqlx::Error),
 }
 
+impl AppError {
+    /// A definitive provider rejection (Stripe returned an error body), as opposed
+    /// to a transient network/timeout (`Internal`) where the request may or may not
+    /// have been applied. The scheduler uses this to decide whether to advance the
+    /// idempotency key (real retry) or replay it (safe re-send).
+    pub fn is_definitive(&self) -> bool {
+        matches!(self, AppError::BadRequest(_))
+    }
+}
+
 impl From<sqlx::Error> for AppError {
     fn from(e: sqlx::Error) -> Self {
         AppError::Db(e)
