@@ -11,6 +11,7 @@ pub enum AppError {
     NotFound(String),
     BadRequest(String),
     Unauthorized,
+    TooManyRequests,
     Internal(String),
     Db(sqlx::Error),
 }
@@ -40,6 +41,10 @@ impl IntoResponse for AppError {
             ),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Non authentifié".to_string()),
+            AppError::TooManyRequests => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "Trop de tentatives. Réessayez dans quelques minutes.".to_string(),
+            ),
             AppError::Internal(detail) => {
                 tracing::error!("internal error: {detail}");
                 (

@@ -6,7 +6,7 @@ use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, Salt
 use argon2::Argon2;
 use axum::{
     extract::{DefaultBodyLimit, Extension, Multipart, Path, Query, Request, State},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post, put},
@@ -171,8 +171,17 @@ struct MeDto {
 
 async fn login(
     State(st): State<AppState>,
+    headers: HeaderMap,
     Json(input): Json<LoginInput>,
 ) -> Result<Response, AppError> {
+    // Anti-brute-force: cap login attempts per client IP.
+    st.rate.check(
+        "admin-login",
+        &crate::rate::client_ip(&headers),
+        10,
+        std::time::Duration::from_secs(300),
+    )?;
+
     let admin = sqlx::query_as::<_, AdminRow>(
         "select id, password_hash, email, display_name from admin_user where email = $1",
     )

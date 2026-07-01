@@ -3,6 +3,7 @@ mod email;
 mod error;
 mod payments;
 mod pricing;
+mod rate;
 mod scheduler;
 
 use axum::{
@@ -28,6 +29,7 @@ pub(crate) struct AppState {
     pub(crate) pool: PgPool,
     pub(crate) media_dir: std::sync::Arc<std::path::PathBuf>,
     pub(crate) payments: std::sync::Arc<dyn payments::PaymentProvider>,
+    pub(crate) rate: std::sync::Arc<rate::RateLimiter>,
 }
 
 #[tokio::main]
@@ -89,6 +91,7 @@ async fn main() -> anyhow::Result<()> {
         pool,
         media_dir: std::sync::Arc::new(media_dir.clone()),
         payments: payments::from_env(),
+        rate: std::sync::Arc::new(rate::RateLimiter::new()),
     };
 
     let scheduler_interval = env::var("SCHEDULER_INTERVAL_SECS")
@@ -364,8 +367,17 @@ struct BookingDto {
 
 async fn create_booking(
     State(st): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<CreateBooking>,
 ) -> Result<Json<BookingDto>, AppError> {
+    // Anti-spam: cap cart creation per client IP.
+    st.rate.check(
+        "bookings",
+        &rate::client_ip(&headers),
+        20,
+        std::time::Duration::from_secs(600),
+    )?;
+
     let prop = sqlx::query_as::<_, PropRow>(
         "select id, deposit_pct, caution_cents from property where slug = $1",
     )
@@ -879,8 +891,17 @@ struct RequestLinkBody {
 /// Ask for a magic login link. Always 204 (never leaks whether the e-mail exists).
 async fn request_link(
     State(st): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<RequestLinkBody>,
 ) -> Result<StatusCode, AppError> {
+    // Anti-abuse: cap magic-link e-mails per client IP (prevents mail-bombing).
+    st.rate.check(
+        "request-link",
+        &rate::client_ip(&headers),
+        5,
+        std::time::Duration::from_secs(600),
+    )?;
+
     let email_in = body.email.trim().to_string();
     if !email_in.is_empty() {
         let cid: Option<Uuid> = sqlx::query_scalar(
