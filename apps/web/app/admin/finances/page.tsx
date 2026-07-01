@@ -107,6 +107,7 @@ export default function FinancesPage() {
           </select>
         </div>
 
+        <Card className="overflow-hidden">
         <Table>
           <TableHeader>
             <TableRow>
@@ -147,6 +148,7 @@ export default function FinancesPage() {
             )}
           </TableBody>
         </Table>
+        </Card>
       </div>
     </div>
   );

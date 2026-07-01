@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { adminApi, fmtEur, type Contact } from "@/lib/admin-api";
 import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -85,6 +86,7 @@ export default function ContactsPage() {
         </div>
       </div>
 
+      <Card className="overflow-hidden">
       <Table>
         <TableHeader>
           <TableRow>
@@ -144,6 +146,7 @@ export default function ContactsPage() {
           )}
         </TableBody>
       </Table>
+      </Card>
     </div>
   );
 }

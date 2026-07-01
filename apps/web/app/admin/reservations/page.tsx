@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
+import { ActionsMenu, type Action } from "@/components/ui/actions-menu";
 import {
   Table,
   TableBody,
@@ -193,6 +194,27 @@ export default function ReservationsPage() {
     }
   };
 
+  const rowActions = (b: AdminBooking): Action[] => {
+    const acts: Action[] = [];
+    const busy = pending === b.reference;
+    const active = b.status !== "cancelled";
+    if (b.channel === "manual" && !b.depositPaidAt && active)
+      acts.push({ label: "Pointer l'acompte", onClick: () => markPaid(b, "deposit"), disabled: busy });
+    if (b.channel === "manual" && b.depositPaidAt && !b.balancePaidAt && active)
+      acts.push({ label: "Pointer le solde", onClick: () => markPaid(b, "balance"), disabled: busy });
+    if ((b.status === "confirmed" || b.status === "balance_paid") && b.cautionCents > 0 && !b.cautionReleasedAt) {
+      acts.push({ label: "Débiter des dégâts", onClick: () => captureCaution(b), disabled: busy });
+      acts.push({ label: "Clôturer la caution", onClick: () => releaseCaution(b.reference), disabled: busy });
+    }
+    if (b.depositPaidAt && active)
+      acts.push({ label: "Rembourser", onClick: () => refund(b), disabled: busy });
+    if (b.contractSignedAt)
+      acts.push({ label: "Voir la signature", onClick: () => viewSignature(b.reference) });
+    if (active && b.status !== "cart")
+      acts.push({ label: "Annuler la réservation", onClick: () => setCancelTarget(b), danger: true });
+    return acts;
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
@@ -204,7 +226,7 @@ export default function ReservationsPage() {
         </div>
         <Button onClick={() => setShowManual(true)}>Nouvelle réservation</Button>
       </div>
-      <Card>
+      <Card className="overflow-hidden">
         <Table>
           <TableHeader>
             <TableRow>
@@ -285,46 +307,13 @@ export default function ReservationsPage() {
                         </span>
                       )}
                     {b.contractSignedAt && (
-                      <button
-                        onClick={() => viewSignature(b.reference)}
-                        className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                      <span
+                        className="text-xs text-muted-foreground"
                         title={`Contrat signé le ${new Date(b.contractSignedAt).toLocaleString("fr-FR")}`}
                       >
-                        ✓ Contrat signé · voir
-                      </button>
+                        ✓ Contrat signé
+                      </span>
                     )}
-                  </div>
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                  {new Date(b.createdAt).toLocaleDateString("fr-FR")}
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex items-center justify-end gap-1">
-                    {b.channel === "manual" && !b.depositPaidAt && b.status !== "cancelled" && (
-                      <Button size="sm" variant="ghost" disabled={pending === b.reference} onClick={() => markPaid(b, "deposit")}>
-                        Pointer acompte
-                      </Button>
-                    )}
-                    {b.channel === "manual" &&
-                      b.depositPaidAt &&
-                      !b.balancePaidAt &&
-                      b.status !== "cancelled" && (
-                        <Button size="sm" variant="ghost" disabled={pending === b.reference} onClick={() => markPaid(b, "balance")}>
-                          Pointer solde
-                        </Button>
-                      )}
-                    {(b.status === "confirmed" || b.status === "balance_paid") &&
-                      b.cautionCents > 0 &&
-                      !b.cautionReleasedAt && (
-                        <>
-                          <Button size="sm" variant="ghost" disabled={pending === b.reference} onClick={() => captureCaution(b)}>
-                            Débiter dégâts
-                          </Button>
-                          <Button size="sm" variant="ghost" disabled={pending === b.reference} onClick={() => releaseCaution(b.reference)}>
-                            Clôturer caution
-                          </Button>
-                        </>
-                      )}
                     {b.cautionReleasedAt && (
                       <span className="text-xs text-muted-foreground">
                         {b.cautionCapturedCents && b.cautionCapturedCents > 0
@@ -332,22 +321,13 @@ export default function ReservationsPage() {
                           : "Caution clôturée"}
                       </span>
                     )}
-                    {b.depositPaidAt && b.status !== "cancelled" && (
-                      <Button size="sm" variant="ghost" disabled={pending === b.reference} onClick={() => refund(b)}>
-                        Rembourser
-                      </Button>
-                    )}
-                    {b.status !== "cancelled" && b.status !== "cart" && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => setCancelTarget(b)}
-                      >
-                        Annuler
-                      </Button>
-                    )}
                   </div>
+                </TableCell>
+                <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                  {new Date(b.createdAt).toLocaleDateString("fr-FR")}
+                </TableCell>
+                <TableCell className="text-right">
+                  <ActionsMenu actions={rowActions(b)} />
                 </TableCell>
               </TableRow>
             ))}
