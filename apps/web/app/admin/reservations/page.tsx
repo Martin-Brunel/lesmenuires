@@ -178,9 +178,27 @@ export default function ReservationsPage() {
                 <TableCell className="text-right font-medium">{fmtEur(b.totalCents)}</TableCell>
                 <TableCell className="text-right">{fmtEur(b.depositCents)}</TableCell>
                 <TableCell>
-                  <Badge variant={STATUS_VARIANT[b.status] ?? "muted"}>
-                    {STATUS_LABEL[b.status] ?? b.status}
-                  </Badge>
+                  <div className="flex flex-col items-start gap-1">
+                    <Badge variant={STATUS_VARIANT[b.status] ?? "muted"}>
+                      {STATUS_LABEL[b.status] ?? b.status}
+                    </Badge>
+                    {b.balanceOverdue && (
+                      <Badge variant="destructive" title="Solde impayé alors que l'arrivée est passée">
+                        Solde en retard
+                      </Badge>
+                    )}
+                    {(b.balanceAttempts > 0 || b.cautionAttempts > 0) &&
+                      b.status !== "cancelled" && (
+                        <span
+                          className="text-xs text-destructive"
+                          title={b.balanceLastError ?? b.cautionLastError ?? ""}
+                        >
+                          ⚠ Échec prélèvement
+                          {b.balanceAttempts > 0 ? ` solde ×${b.balanceAttempts}` : ""}
+                          {b.cautionAttempts > 0 ? ` caution ×${b.cautionAttempts}` : ""}
+                        </span>
+                      )}
+                  </div>
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                   {new Date(b.createdAt).toLocaleDateString("fr-FR")}

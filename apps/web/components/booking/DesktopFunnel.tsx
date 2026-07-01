@@ -3,7 +3,9 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { BookingContext } from "@/lib/api";
-import { confirmDeposit, createBooking, mediaUrl, payDeposit } from "@/lib/api";
+import { mediaUrl } from "@/lib/api";
+import { useBookingFlow } from "./useBookingFlow";
+import { GuestPicker } from "./GuestPicker";
 import {
   ACCENT,
   balanceDueLabel,
@@ -39,45 +41,23 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
   const [screen, setScreen] = useState<Screen>("booking");
   const [lightbox, setLightbox] = useState<number | null>(null);
   const [weekPickerOpen, setWeekPickerOpen] = useState(false);
-  const [info, setInfo] = useState({
-    firstName: "",
-    lastName: "",
-    email: "",
-    phone: "",
-    addressLine: "",
-    postalCode: "",
-    city: "",
-  });
-  const setField =
-    (k: keyof typeof info) => (e: React.ChangeEvent<HTMLInputElement>) =>
-      setInfo((s) => ({ ...s, [k]: e.target.value }));
   const router = useRouter();
   const [checkoutStep, setCheckoutStep] = useState<"infos" | "contrat" | "paiement">("infos");
-  const [monthIdx, setMonthIdx] = useState(() => {
-    const ms = monthsOf(weeks);
-    const w = weeks[pickDefaultWeek(weeks)];
-    const i = w ? ms.indexOf(monthKey(w.startDate)) : 0;
-    return i < 0 ? 0 : i;
-  });
-  const [weekIdx, setWeekIdx] = useState(() => pickDefaultWeek(weeks));
-  const [extras, setExtras] = useState<ExtrasState>(() => defaultExtras(products));
-  const [accepted, setAccepted] = useState(false);
-  const [sigEmpty, setSigEmpty] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [reference, setReference] = useState<string | null>(null);
-  const [stripeSession, setStripeSession] = useState<{
-    clientSecret: string;
-    pk: string;
-    reference: string;
-  } | null>(null);
-  const sigRef = useRef<SignaturePadHandle>(null);
+
+  // Shared flow orchestration (cart/payment) — single source of truth with the
+  // mobile funnel, see useBookingFlow.
+  const flow = useBookingFlow(ctx);
+  const {
+    info, setField, adults, setAdults, children, setChildren, capacity,
+    monthIdx, setMonthIdx, weekIdx, selectWeek, extras, toggleExtra, selectedExtras,
+    accepted, setAccepted, sigEmpty, setSigEmpty, sigRef,
+    reference, submitting, error, setError, stripeSession, setStripeSession,
+    week, months, totals, infoComplete,
+  } = flow;
 
   const pct = property.depositPct;
   const name = property.name;
   const caution = property.cautionCents;
-  const week = weeks[weekIdx];
-  const months = monthsOf(weeks);
 
   if (!week) {
     return (
@@ -91,89 +71,22 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
     );
   }
 
-  const { total, deposit, balance } = computeTotals(week.priceCents, products, extras, pct);
-  const selectedExtras = products.filter((x) => extras[x.key]);
+  const { total, deposit, balance } = totals;
   const inputCss =
     "background:#FFF;border:1px solid rgba(0,0,0,.1);border-radius:12px;padding:14px;font-size:14.5px;color:#1A1B1A";
-  const infoComplete =
-    info.firstName.trim() !== "" &&
-    info.lastName.trim() !== "" &&
-    /.+@.+\..+/.test(info.email) &&
-    info.phone.trim() !== "" &&
-    info.addressLine.trim() !== "" &&
-    info.postalCode.trim() !== "" &&
-    info.city.trim() !== "";
   const checkoutReady = infoComplete && accepted && !sigEmpty && !submitting;
 
-  const selectWeek = (i: number) => {
-    if (!weeks[i].booked) {
-      setWeekIdx(i);
-      setReference(null); // selection changed → drop the pending cart booking
-    }
-  };
-  const toggleExtra = (k: string) => {
-    setExtras((s) => ({ ...s, [k]: !s[k] }));
-    setReference(null);
-  };
-
-  // Create the cart booking as soon as we have the contact info, so an
-  // abandoned cart keeps the coordonnées for the relance.
-  const ensureBooking = async (): Promise<string> => {
-    if (reference) return reference;
-    const res = await createBooking({
-      propertySlug: property.slug,
-      weekId: week.id,
-      extras: selectedExtras.map((p) => p.key),
-      adults: 4,
-      customer: { ...info, country: "France" },
-    });
-    setReference(res.reference);
-    return res.reference;
-  };
-
   const goToContract = async () => {
-    if (!infoComplete || submitting) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      await ensureBooking();
-      setCheckoutStep("contrat");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Une erreur est survenue.");
-    } finally {
-      setSubmitting(false);
-    }
+    if (await flow.ensureCart()) setCheckoutStep("contrat");
   };
-
-  const payNow = async () => {
+  const payNow = () => {
     if (!checkoutReady) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      const ref = await ensureBooking();
-      const pay = await payDeposit(ref);
-      if (pay.provider === "stripe" && pay.publishableKey) {
-        setStripeSession({ clientSecret: pay.clientSecret, pk: pay.publishableKey, reference: ref });
-        return;
-      }
-      await confirmDeposit(ref);
-      router.push("/espace");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Une erreur est survenue.");
-    } finally {
-      setSubmitting(false);
-    }
+    flow.pay(() => router.push("/espace"));
   };
-
   const reset = () => {
     setScreen("booking");
-    setWeekIdx(pickDefaultWeek(weeks));
-    setExtras(defaultExtras(products));
-    setAccepted(false);
-    setSigEmpty(true);
-    setReference(null);
-    setError(null);
-    sigRef.current?.clear();
+    setCheckoutStep("infos");
+    flow.resetFlow();
   };
 
   const timeline = [
@@ -328,7 +241,7 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
                             key={wk.id}
                             onClick={() => {
                               if (wk.booked) return;
-                              setWeekIdx(i);
+                              selectWeek(i);
                               setMonthIdx(Math.max(0, months.indexOf(monthKey(wk.startDate))));
                               setWeekPickerOpen(false);
                             }}
@@ -418,6 +331,9 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
                     <input placeholder="Adresse" value={info.addressLine} onChange={setField("addressLine")} style={css("grid-column:1/3;" + inputCss)} />
                     <input placeholder="Code postal" value={info.postalCode} onChange={setField("postalCode")} style={css(inputCss)} />
                     <input placeholder="Ville" value={info.city} onChange={setField("city")} style={css(inputCss)} />
+                    <div style={css("grid-column:1/3")}>
+                      <GuestPicker adults={adults} children={children} capacity={capacity} setAdults={setAdults} setChildren={setChildren} />
+                    </div>
                   </div>
                   <div onClick={goToContract} style={css(`margin-top:24px;max-width:280px;padding:15px;border-radius:13px;text-align:center;font:600 14px 'Hanken Grotesk';${infoComplete && !submitting ? "background:#1A1B1A;color:#fff;cursor:pointer;" : "background:#D8D7D2;color:#fff;cursor:default;opacity:.7;"}`)}>{submitting ? "…" : infoComplete ? "Continuer" : "Complétez vos informations"}</div>
                 </>
@@ -554,10 +470,7 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
           publishableKey={stripeSession.pk}
           clientSecret={stripeSession.clientSecret}
           amountLabel={eur(deposit)}
-          onPaid={async () => {
-            await confirmDeposit(stripeSession.reference);
-            router.push("/espace");
-          }}
+          onPaid={() => flow.finishStripe(() => router.push("/espace"))}
           onClose={() => setStripeSession(null)}
         />
       )}

@@ -77,6 +77,11 @@ export type AdminBooking = {
   cautionCapturedCents: number | null;
   depositRefundedCents: number;
   balanceRefundedCents: number;
+  balanceAttempts: number;
+  balanceLastError: string | null;
+  cautionAttempts: number;
+  cautionLastError: string | null;
+  balanceOverdue: boolean;
   customerEmail: string | null;
   customerName: string | null;
   createdAt: string;

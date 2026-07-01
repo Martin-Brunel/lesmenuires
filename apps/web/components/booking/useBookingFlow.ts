@@ -1,0 +1,194 @@
+"use client";
+
+// Shared booking-flow orchestration for the desktop and mobile funnels.
+// Owns the cart/payment state and the create→pay→confirm sequence so both
+// funnels stay in lockstep (no divergence). Screen/navigation stays in each
+// funnel (their models differ); this hook is UI-agnostic.
+
+import { useRef, useState } from "react";
+import type { BookingContext } from "@/lib/api";
+import { confirmDeposit, createBooking, payDeposit } from "@/lib/api";
+import {
+  computeTotals,
+  defaultExtras,
+  monthKey,
+  monthsOf,
+  pickDefaultWeek,
+  type ExtrasState,
+} from "./data";
+import { type SignaturePadHandle } from "./SignaturePad";
+
+export type ContactInfo = {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  addressLine: string;
+  postalCode: string;
+  city: string;
+};
+
+const EMPTY_INFO: ContactInfo = {
+  firstName: "",
+  lastName: "",
+  email: "",
+  phone: "",
+  addressLine: "",
+  postalCode: "",
+  city: "",
+};
+
+export function useBookingFlow(ctx: BookingContext) {
+  const { property, weeks, products } = ctx;
+
+  const [info, setInfo] = useState<ContactInfo>(EMPTY_INFO);
+  const setField =
+    (k: keyof ContactInfo) => (e: React.ChangeEvent<HTMLInputElement>) =>
+      setInfo((s) => ({ ...s, [k]: e.target.value }));
+
+  const capacity = Math.max(1, property.capacity || 1);
+  const [adults, setAdultsRaw] = useState(2);
+  const [children, setChildrenRaw] = useState(0);
+  // Selection changes invalidate the pending cart so totals/party stay correct.
+  const [reference, setReference] = useState<string | null>(null);
+  const invalidate = () => setReference(null);
+  const setAdults = (n: number) => {
+    setAdultsRaw(Math.min(capacity, Math.max(1, n)));
+    invalidate();
+  };
+  const setChildren = (n: number) => {
+    setChildrenRaw(Math.min(capacity, Math.max(0, n)));
+    invalidate();
+  };
+
+  const [monthIdx, setMonthIdx] = useState(() => {
+    const ms = monthsOf(weeks);
+    const w = weeks[pickDefaultWeek(weeks)];
+    const i = w ? ms.indexOf(monthKey(w.startDate)) : 0;
+    return i < 0 ? 0 : i;
+  });
+  const [weekIdx, setWeekIdx] = useState(() => pickDefaultWeek(weeks));
+  const [extras, setExtras] = useState<ExtrasState>(() => defaultExtras(products));
+  const [accepted, setAccepted] = useState(false);
+  const [sigEmpty, setSigEmpty] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [stripeSession, setStripeSession] = useState<{
+    clientSecret: string;
+    pk: string;
+    reference: string;
+  } | null>(null);
+  const sigRef = useRef<SignaturePadHandle>(null);
+
+  const week = weeks[weekIdx];
+  const months = monthsOf(weeks);
+  const totals = week
+    ? computeTotals(week.priceCents, products, extras, property.depositPct)
+    : { extrasTotal: 0, total: 0, deposit: 0, balance: 0 };
+  const selectedExtras = products.filter((x) => extras[x.key]);
+
+  const infoComplete =
+    info.firstName.trim() !== "" &&
+    info.lastName.trim() !== "" &&
+    /.+@.+\..+/.test(info.email) &&
+    info.phone.trim() !== "" &&
+    info.addressLine.trim() !== "" &&
+    info.postalCode.trim() !== "" &&
+    info.city.trim() !== "";
+
+  const selectWeek = (i: number) => {
+    if (!weeks[i]?.booked) {
+      setWeekIdx(i);
+      invalidate();
+    }
+  };
+  const toggleExtra = (k: string) => {
+    setExtras((s) => ({ ...s, [k]: !s[k] }));
+    invalidate();
+  };
+
+  // Create the cart booking once the contact info is entered, so an abandoned
+  // cart keeps the coordonnées for the relance.
+  const ensureBooking = async (): Promise<string> => {
+    if (reference) return reference;
+    if (!week) throw new Error("Aucune semaine sélectionnée.");
+    const res = await createBooking({
+      propertySlug: property.slug,
+      weekId: week.id,
+      extras: selectedExtras.map((p) => p.key),
+      adults,
+      children,
+      customer: { ...info, country: "France" },
+    });
+    setReference(res.reference);
+    return res.reference;
+  };
+
+  /** Ensure the cart exists; manages submitting/error. Returns success. */
+  const ensureCart = async (): Promise<boolean> => {
+    if (!infoComplete || submitting) return false;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await ensureBooking();
+      return true;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Une erreur est survenue.");
+      return false;
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /** Pay the deposit. If Stripe, opens the Payment Element (sets stripeSession)
+   *  and calls nothing else; otherwise (mock) confirms and runs `onDone`. */
+  const pay = async (onDone: () => void): Promise<void> => {
+    if (submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const ref = await ensureBooking();
+      const p = await payDeposit(ref);
+      if (p.provider === "stripe" && p.publishableKey) {
+        setStripeSession({ clientSecret: p.clientSecret, pk: p.publishableKey, reference: ref });
+        return;
+      }
+      await confirmDeposit(ref);
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Une erreur est survenue.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /** Called by StripeCheckout once the card is confirmed. */
+  const finishStripe = async (onDone: () => void): Promise<void> => {
+    if (!stripeSession) return;
+    await confirmDeposit(stripeSession.reference);
+    onDone();
+  };
+
+  const resetFlow = () => {
+    setWeekIdx(pickDefaultWeek(weeks));
+    setExtras(defaultExtras(products));
+    setAccepted(false);
+    setSigEmpty(true);
+    setError(null);
+    setReference(null);
+    setStripeSession(null);
+    sigRef.current?.clear();
+  };
+
+  return {
+    info, setField, setInfo,
+    adults, setAdults, children, setChildren, capacity,
+    monthIdx, setMonthIdx, weekIdx, selectWeek,
+    extras, toggleExtra, selectedExtras,
+    accepted, setAccepted, sigEmpty, setSigEmpty, sigRef,
+    reference, submitting, error, setError,
+    stripeSession, setStripeSession,
+    week, months, totals, infoComplete,
+    ensureBooking, ensureCart, pay, finishStripe, resetFlow,
+  };
+}
