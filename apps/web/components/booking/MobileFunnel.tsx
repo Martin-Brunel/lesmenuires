@@ -79,7 +79,7 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
     );
   }
 
-  const { total, deposit, balance } = totals;
+  const { total, deposit, balance, touristTax } = totals;
   const fromPrice = Math.min(...weeks.map((w) => w.priceCents));
   const inputCss =
     "width:100%;background:#FFF;border:1px solid rgba(0,0,0,.1);border-radius:12px;padding:14px;font-size:15px;color:#1A1B1A";
@@ -361,6 +361,12 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
                       <span>Solde — prélevé le {balanceDueLabel(week.startDate)}</span>
                       <span>{eur(balance)}</span>
                     </div>
+                    {touristTax > 0 && (
+                      <div style={css("display:flex;justify-content:space-between;margin-top:4px;font:400 11.5px 'Hanken Grotesk';color:#9A9C97")}>
+                        <span>dont taxe de séjour</span>
+                        <span>{eur(touristTax)}</span>
+                      </div>
+                    )}
                     <div style={css("display:flex;justify-content:space-between;margin-top:7px;font:400 12.5px 'Hanken Grotesk';color:#6B6E6B")}>
                       <span>Caution (empreinte, non débitée)</span>
                       <span>{eur(caution)}</span>

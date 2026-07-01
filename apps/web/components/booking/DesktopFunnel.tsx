@@ -71,7 +71,7 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
     );
   }
 
-  const { total, deposit, balance } = totals;
+  const { total, deposit, balance, touristTax } = totals;
   const inputCss =
     "background:#FFF;border:1px solid rgba(0,0,0,.1);border-radius:12px;padding:14px;font-size:14.5px;color:#1A1B1A";
   const checkoutReady = infoComplete && accepted && !sigEmpty && !submitting;
@@ -432,6 +432,12 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
                     <span>Solde le {balanceDueLabel(week.startDate)}</span>
                     <span>{eur(balance)}</span>
                   </div>
+                  {touristTax > 0 && (
+                    <div style={css("display:flex;justify-content:space-between;margin-top:4px;font:400 11px 'Hanken Grotesk';color:#9A9C97")}>
+                      <span>dont taxe de séjour</span>
+                      <span>{eur(touristTax)}</span>
+                    </div>
+                  )}
                   <div style={css("display:flex;justify-content:space-between;margin-top:7px;font:400 12px 'Hanken Grotesk';color:#6B6E6B")}>
                     <span>Caution (empreinte)</span>
                     <span>{eur(caution)}</span>

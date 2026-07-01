@@ -13,6 +13,7 @@ export type ApiProperty = {
   heroSeed: string;
   depositPct: number;
   cautionCents: number;
+  touristTaxCents: number;
 };
 
 export type ApiWeek = {
@@ -65,6 +66,7 @@ export type BookingResult = {
   depositCents: number;
   balanceCents: number;
   cautionCents: number;
+  touristTaxCents: number;
   createdAt: string;
 };
 

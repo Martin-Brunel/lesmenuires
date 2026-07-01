@@ -16,6 +16,7 @@ export type AdminProperty = {
   heroSeed: string;
   depositPct: number;
   cautionCents: number;
+  touristTaxCents: number;
   arrivalInstructions: string;
   houseRules: string;
 };

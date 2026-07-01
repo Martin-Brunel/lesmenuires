@@ -84,8 +84,15 @@ export function useBookingFlow(ctx: BookingContext) {
   const week = weeks[weekIdx];
   const months = monthsOf(weeks);
   const totals = week
-    ? computeTotals(week.priceCents, products, extras, property.depositPct)
-    : { extrasTotal: 0, total: 0, deposit: 0, balance: 0 };
+    ? computeTotals(
+        week.priceCents,
+        products,
+        extras,
+        property.depositPct,
+        property.touristTaxCents,
+        adults,
+      )
+    : { extrasTotal: 0, total: 0, deposit: 0, balance: 0, touristTax: 0 };
   const selectedExtras = products.filter((x) => extras[x.key]);
 
   const infoComplete =

@@ -156,6 +156,7 @@ struct PropertyDto {
     hero_seed: String,
     deposit_pct: i32,
     caution_cents: i64,
+    tourist_tax_cents: i64,
 }
 
 #[derive(FromRow, Serialize)]
@@ -222,7 +223,8 @@ async fn booking_context(
 ) -> Result<Json<BookingContext>, AppError> {
     let property = sqlx::query_as::<_, PropertyDto>(
         "select slug, name, location_label, description, surface_label, capacity, bedrooms, \
-                specs_label, highlight_label, hero_seed, deposit_pct, caution_cents \
+                specs_label, highlight_label, hero_seed, deposit_pct, caution_cents, \
+                tourist_tax_cents \
          from property where slug = $1",
     )
     .bind(&slug)
@@ -332,6 +334,7 @@ struct PropRow {
     id: Uuid,
     deposit_pct: i32,
     caution_cents: i64,
+    tourist_tax_cents: i64,
 }
 
 #[derive(FromRow)]
@@ -362,6 +365,7 @@ struct BookingDto {
     deposit_cents: i64,
     balance_cents: i64,
     caution_cents: i64,
+    tourist_tax_cents: i64,
     created_at: DateTime<Utc>,
 }
 
@@ -379,7 +383,7 @@ async fn create_booking(
     )?;
 
     let prop = sqlx::query_as::<_, PropRow>(
-        "select id, deposit_pct, caution_cents from property where slug = $1",
+        "select id, deposit_pct, caution_cents, tourist_tax_cents from property where slug = $1",
     )
     .bind(&req.property_slug)
     .fetch_optional(&st.pool)
@@ -420,7 +424,16 @@ async fn create_booking(
     }
 
     let extras_prices: Vec<i64> = products.iter().map(|p| p.price_cents).collect();
-    let totals = pricing::compute(week.price_cents, &extras_prices, prop.deposit_pct as i64);
+    let adults = req.adults.unwrap_or(2);
+    let children = req.children.unwrap_or(0);
+    let totals = pricing::compute(
+        week.price_cents,
+        &extras_prices,
+        prop.deposit_pct as i64,
+        prop.tourist_tax_cents,
+        adults as i64,
+        pricing::NIGHTS_PER_WEEK,
+    );
 
     let reference = format!(
         "ADR-{}",
@@ -465,15 +478,15 @@ async fn create_booking(
         "insert into booking \
             (reference, property_id, customer_id, week_id, status, adults, children, \
              week_price_cents, extras_total_cents, total_cents, deposit_pct, \
-             deposit_cents, balance_cents, caution_cents) \
-         values ($1, $2, $3, $4, 'cart', $5, $6, $7, $8, $9, $10, $11, $12, $13) returning id",
+             deposit_cents, balance_cents, caution_cents, tourist_tax_cents) \
+         values ($1, $2, $3, $4, 'cart', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) returning id",
     )
     .bind(&reference)
     .bind(prop.id)
     .bind(customer_id)
     .bind(week.id)
-    .bind(req.adults.unwrap_or(2))
-    .bind(req.children.unwrap_or(0))
+    .bind(adults)
+    .bind(children)
     .bind(totals.week_price_cents)
     .bind(totals.extras_total_cents)
     .bind(totals.total_cents)
@@ -481,6 +494,7 @@ async fn create_booking(
     .bind(totals.deposit_cents)
     .bind(totals.balance_cents)
     .bind(prop.caution_cents)
+    .bind(totals.tourist_tax_cents)
     .fetch_one(&mut *tx)
     .await?
     .0;
@@ -527,7 +541,8 @@ async fn get_booking(
 async fn fetch_booking(pool: &PgPool, reference: &str) -> Result<BookingDto, AppError> {
     sqlx::query_as::<_, BookingDto>(
         "select reference, status, week_price_cents, extras_total_cents, total_cents, \
-                deposit_pct, deposit_cents, balance_cents, caution_cents, created_at \
+                deposit_pct, deposit_cents, balance_cents, caution_cents, tourist_tax_cents, \
+                created_at \
          from booking where reference = $1",
     )
     .bind(reference)

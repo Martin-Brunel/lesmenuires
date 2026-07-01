@@ -152,6 +152,17 @@ export default function EditorialPage() {
                   }
                 />
               </Field>
+              <Field label="Taxe de séjour (€ / adulte / nuit)">
+                <Input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  value={p.touristTaxCents / 100}
+                  onChange={(e) =>
+                    set("touristTaxCents", Math.round(Number(e.target.value) * 100))
+                  }
+                />
+              </Field>
             </div>
 
             <Field

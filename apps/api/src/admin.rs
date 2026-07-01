@@ -280,6 +280,7 @@ struct AdminPropertyDto {
     hero_seed: String,
     deposit_pct: i32,
     caution_cents: i64,
+    tourist_tax_cents: i64,
     arrival_instructions: String,
     house_rules: String,
 }
@@ -291,7 +292,7 @@ async fn get_property(
     let dto = sqlx::query_as::<_, AdminPropertyDto>(
         "select slug, name, location_label, description, surface_label, capacity, bedrooms, \
                 specs_label, highlight_label, hero_seed, deposit_pct, caution_cents, \
-                arrival_instructions, house_rules \
+                tourist_tax_cents, arrival_instructions, house_rules \
          from property where slug = $1",
     )
     .bind(&slug)
@@ -316,6 +317,8 @@ struct UpdateProperty {
     deposit_pct: i32,
     caution_cents: i64,
     #[serde(default)]
+    tourist_tax_cents: i64,
+    #[serde(default)]
     arrival_instructions: String,
     #[serde(default)]
     house_rules: String,
@@ -329,15 +332,18 @@ async fn update_property(
     if p.deposit_pct < 0 || p.deposit_pct > 100 {
         return Err(AppError::BadRequest("Acompte : 0 à 100 %.".into()));
     }
+    if p.tourist_tax_cents < 0 {
+        return Err(AppError::BadRequest("Taxe de séjour invalide.".into()));
+    }
     let dto = sqlx::query_as::<_, AdminPropertyDto>(
         "update property set name=$2, location_label=$3, description=$4, surface_label=$5, \
                 capacity=$6, bedrooms=$7, specs_label=$8, highlight_label=$9, hero_seed=$10, \
                 deposit_pct=$11, caution_cents=$12, arrival_instructions=$13, house_rules=$14, \
-                updated_at=now() \
+                tourist_tax_cents=$15, updated_at=now() \
          where slug=$1 \
          returning slug, name, location_label, description, surface_label, capacity, bedrooms, \
                    specs_label, highlight_label, hero_seed, deposit_pct, caution_cents, \
-                   arrival_instructions, house_rules",
+                   tourist_tax_cents, arrival_instructions, house_rules",
     )
     .bind(&slug)
     .bind(&p.name)
@@ -353,6 +359,7 @@ async fn update_property(
     .bind(p.caution_cents)
     .bind(&p.arrival_instructions)
     .bind(&p.house_rules)
+    .bind(p.tourist_tax_cents)
     .fetch_optional(&st.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("propriété".into()))?;

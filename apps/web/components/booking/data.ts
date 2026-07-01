@@ -63,11 +63,16 @@ export function pickDefaultWeek(weeks: ApiWeek[]): number {
   return i === -1 ? 0 : i;
 }
 
+/** Nights in a strict Saturday→Saturday week (mirrors pricing::NIGHTS_PER_WEEK). */
+export const NIGHTS_PER_WEEK = 7;
+
 export function computeTotals(
   weekPriceCents: number,
   products: ApiProduct[],
   extras: ExtrasState,
   depositPct: number,
+  touristTaxCentsPerAdultNight = 0,
+  adults = 0,
 ) {
   const extrasTotal = products.reduce(
     (acc, p) => acc + (extras[p.key] ? p.priceCents : 0),
@@ -75,6 +80,10 @@ export function computeTotals(
   );
   const total = weekPriceCents + extrasTotal;
   const deposit = Math.round((total * depositPct) / 100);
-  const balance = total - deposit;
-  return { extrasTotal, total, deposit, balance };
+  // Taxe de séjour : par adulte et par nuit (mineurs exonérés), pass-through
+  // ajouté en totalité au solde. Mirrors pricing::compute côté serveur.
+  const touristTax =
+    Math.max(0, touristTaxCentsPerAdultNight) * Math.max(0, adults) * NIGHTS_PER_WEEK;
+  const balance = total - deposit + touristTax;
+  return { extrasTotal, total, deposit, balance, touristTax };
 }
