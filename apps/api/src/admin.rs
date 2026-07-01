@@ -717,14 +717,13 @@ async fn finances(State(st): State<AppState>) -> Result<Json<FinancesResponse>, 
     .fetch_one(&st.pool)
     .await?;
 
-    let (upcoming_balances, upcoming_count, tax_upcoming): (i64, i64, i64) =
-        sqlx::query_as(
-            "select coalesce(sum(balance_cents),0)::bigint, count(*)::bigint, \
+    let (upcoming_balances, upcoming_count, tax_upcoming): (i64, i64, i64) = sqlx::query_as(
+        "select coalesce(sum(balance_cents),0)::bigint, count(*)::bigint, \
                     coalesce(sum(tourist_tax_cents),0)::bigint \
              from booking where status = 'confirmed' and balance_paid_at is null",
-        )
-        .fetch_one(&st.pool)
-        .await?;
+    )
+    .fetch_one(&st.pool)
+    .await?;
 
     let cautions_held: i64 = sqlx::query_scalar(
         "select coalesce(sum(caution_cents),0)::bigint from booking \

@@ -1211,7 +1211,11 @@ async fn pay_balance(
 
     let intent = st
         .payments
-        .create_balance_intent(&reference, b.balance_cents, b.provider_customer_id.as_deref())
+        .create_balance_intent(
+            &reference,
+            b.balance_cents,
+            b.provider_customer_id.as_deref(),
+        )
         .await?;
     let provider = st.payments.name().to_string();
 

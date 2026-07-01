@@ -38,6 +38,7 @@ pub struct TickReport {
     pub carts_reminded: i64,
     pub carts_expired: i64,
     pub tokens_purged: i64,
+    pub balances_prenotified: i64,
 }
 
 impl TickReport {
@@ -49,12 +50,16 @@ impl TickReport {
             + self.carts_reminded
             + self.carts_expired
             + self.tokens_purged
+            + self.balances_prenotified
             > 0
     }
 }
 
 pub async fn run_tick(pool: &PgPool, payments: &Arc<dyn PaymentProvider>) -> TickReport {
     let mut r = TickReport::default();
+    if let Err(e) = prenotify_balances(pool, &mut r).await {
+        tracing::error!("job pré-notif solde: {e:?}");
+    }
     if let Err(e) = charge_due_balances(pool, payments, &mut r).await {
         tracing::error!("job solde: {e:?}");
     }
@@ -197,6 +202,71 @@ async fn charge_due_balances(
                 );
             }
         }
+    }
+    Ok(())
+}
+
+#[derive(FromRow)]
+struct PrenotifyRow {
+    id: Uuid,
+    reference: String,
+    balance_cents: i64,
+    due_label: String,
+    email: Option<String>,
+    first_name: Option<String>,
+}
+
+/// A few days before the automatic balance charge (J-14), warn the customer so
+/// they can check their card or pay early — cuts down SCA failures. Sent once.
+async fn prenotify_balances(pool: &PgPool, r: &mut TickReport) -> Result<(), sqlx::Error> {
+    // Fires in the 3-day window before the charge opens (start_date-17 .. -15).
+    let due: Vec<PrenotifyRow> = sqlx::query_as(
+        "select b.id, b.reference, b.balance_cents, aw.balance_due_label as due_label, \
+                c.email, c.first_name \
+         from booking b join availability_week aw on aw.id = b.week_id \
+         left join customer c on c.id = b.customer_id \
+         where b.status = 'confirmed' and b.balance_paid_at is null and b.balance_cents > 0 \
+           and b.payment_flag is null and b.balance_prenotified_at is null \
+           and aw.start_date - 17 <= current_date and current_date < aw.start_date - 14",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    for d in due {
+        // Mark first (idempotent even if the e-mail send is best-effort).
+        sqlx::query(
+            "update booking set balance_prenotified_at = now(), updated_at = now() where id = $1",
+        )
+        .bind(d.id)
+        .execute(pool)
+        .await?;
+        r.balances_prenotified += 1;
+
+        if let Some(to) = d.email.clone().filter(|e| !e.is_empty()) {
+            let body = format!(
+                "{}<br><br>Le solde de votre séjour à L'Adret, soit <strong>{}</strong>, sera \
+                 prélevé automatiquement le {} sur la carte enregistrée lors de votre réservation \
+                 {}.<br><br>Vous n'avez rien à faire : assurez-vous simplement que votre carte est \
+                 toujours valide. Vous pouvez aussi régler le solde dès maintenant depuis votre espace.",
+                greeting(d.first_name.as_deref()),
+                eur(d.balance_cents),
+                d.due_label,
+                d.reference,
+            );
+            let html = email::template(
+                "Prélèvement du solde à venir",
+                &body,
+                "Voir ma réservation",
+                &format!("{}/espace", email::front_url()),
+            );
+            email::spawn(to, "Prélèvement du solde à venir — L'Adret".into(), html);
+        }
+    }
+    if r.balances_prenotified > 0 {
+        tracing::info!(
+            "{} pré-notification(s) de solde envoyée(s)",
+            r.balances_prenotified
+        );
     }
     Ok(())
 }
