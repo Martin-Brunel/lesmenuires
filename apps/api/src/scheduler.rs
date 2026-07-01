@@ -115,7 +115,7 @@ async fn charge_due_balances(
          from booking b join availability_week aw on aw.id = b.week_id \
          left join customer c on c.id = b.customer_id \
          where b.status = 'confirmed' and b.balance_paid_at is null and b.balance_cents > 0 \
-           and b.payment_flag is null \
+           and b.payment_flag is null and b.channel = 'online' \
            and b.provider_customer_id is not null and b.provider_payment_method_id is not null \
            and aw.start_date - 14 <= current_date and aw.start_date >= current_date",
     )
@@ -225,6 +225,7 @@ async fn prenotify_balances(pool: &PgPool, r: &mut TickReport) -> Result<(), sql
          left join customer c on c.id = b.customer_id \
          where b.status = 'confirmed' and b.balance_paid_at is null and b.balance_cents > 0 \
            and b.payment_flag is null and b.balance_prenotified_at is null \
+           and b.channel = 'online' \
            and aw.start_date - 17 <= current_date and current_date < aw.start_date - 14",
     )
     .fetch_all(pool)

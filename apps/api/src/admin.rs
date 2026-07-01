@@ -37,9 +37,11 @@ pub fn routes(state: AppState) -> Router {
         .route("/products", get(list_products).post(create_product))
         .route("/products/:id", put(update_product).delete(delete_product))
         .route("/bookings", get(list_bookings))
+        .route("/bookings/manual", post(create_manual_booking))
         .route("/finances", get(finances))
         .route("/contacts", get(list_contacts))
         .route("/bookings/:reference/signature", get(get_signature))
+        .route("/bookings/:reference/mark-paid", post(mark_paid))
         .route("/bookings/:reference/cancel", post(cancel_booking))
         .route(
             "/bookings/:reference/caution/capture",
@@ -700,6 +702,303 @@ struct FinancesResponse {
     tax_declaration: Vec<TaxDeclarationRow>,
 }
 
+// ---------------------------------------------------------------------------
+// Réservations manuelles (hors ligne) : échéances chèque/virement pointées à la
+// main, caution par chèque. Ignorées par le scheduler (channel='manual').
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ManualCustomer {
+    #[serde(default)]
+    first_name: String,
+    #[serde(default)]
+    last_name: String,
+    email: String,
+    #[serde(default)]
+    phone: String,
+    #[serde(default)]
+    address_line: String,
+    #[serde(default)]
+    postal_code: String,
+    #[serde(default)]
+    city: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ManualBookingInput {
+    week_id: Uuid,
+    customer: ManualCustomer,
+    #[serde(default = "two")]
+    adults: i32,
+    #[serde(default)]
+    children: i32,
+    /// 'cheque' | 'virement' — moyen de règlement des échéances.
+    payment_method: String,
+    /// 'cheque' | 'card' — nature de la caution.
+    caution_method: String,
+    #[serde(default)]
+    deposit_paid: bool,
+    #[serde(default)]
+    balance_paid: bool,
+    #[serde(default)]
+    admin_notes: String,
+}
+
+fn two() -> i32 {
+    2
+}
+
+#[derive(FromRow)]
+struct ManualPropRow {
+    id: Uuid,
+    deposit_pct: i32,
+    caution_cents: i64,
+    tourist_tax_cents: i64,
+}
+
+#[derive(FromRow)]
+struct ManualWeekRow {
+    price_cents: i64,
+    status: String,
+    range_label: String,
+}
+
+async fn create_manual_booking(
+    State(st): State<AppState>,
+    Json(input): Json<ManualBookingInput>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if !["cheque", "virement"].contains(&input.payment_method.as_str()) {
+        return Err(AppError::BadRequest(
+            "Moyen de règlement invalide (chèque ou virement).".into(),
+        ));
+    }
+    if !["cheque", "card"].contains(&input.caution_method.as_str()) {
+        return Err(AppError::BadRequest("Type de caution invalide.".into()));
+    }
+    if input.customer.email.trim().is_empty() {
+        return Err(AppError::BadRequest("E-mail client requis.".into()));
+    }
+
+    let week = sqlx::query_as::<_, ManualWeekRow>(
+        "select price_cents, status, range_label from availability_week where id = $1",
+    )
+    .bind(input.week_id)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("semaine".into()))?;
+    if week.status != "available" {
+        return Err(AppError::BadRequest(
+            "Cette semaine n'est pas disponible.".into(),
+        ));
+    }
+    let prop = sqlx::query_as::<_, ManualPropRow>(
+        "select p.id, p.deposit_pct, p.caution_cents, p.tourist_tax_cents \
+         from property p join availability_week aw on aw.property_id = p.id where aw.id = $1",
+    )
+    .bind(input.week_id)
+    .fetch_one(&st.pool)
+    .await?;
+
+    let totals = crate::pricing::compute(
+        week.price_cents,
+        &[],
+        prop.deposit_pct as i64,
+        prop.tourist_tax_cents,
+        input.adults.max(0) as i64,
+        crate::pricing::NIGHTS_PER_WEEK,
+    );
+    let reference = format!(
+        "ADR-{}",
+        &Uuid::new_v4().simple().to_string()[..6].to_uppercase()
+    );
+
+    let mut tx = st.pool.begin().await?;
+    // Claim the week atomically (available -> booked).
+    let claimed = sqlx::query(
+        "update availability_week set status = 'booked' where id = $1 and status = 'available'",
+    )
+    .bind(input.week_id)
+    .execute(&mut *tx)
+    .await?;
+    if claimed.rows_affected() == 0 {
+        return Err(AppError::BadRequest(
+            "Cette semaine vient d'être réservée.".into(),
+        ));
+    }
+
+    let c = &input.customer;
+    let customer_id: Uuid = sqlx::query_as::<_, (Uuid,)>(
+        "insert into customer \
+            (email, first_name, last_name, phone, address_line, postal_code, city, country) \
+         values ($1, $2, $3, $4, $5, $6, $7, 'France') \
+         on conflict (lower(email)) where coalesce(email, '') <> '' \
+         do update set first_name = excluded.first_name, last_name = excluded.last_name, \
+            phone = excluded.phone, address_line = excluded.address_line, \
+            postal_code = excluded.postal_code, city = excluded.city \
+         returning id",
+    )
+    .bind(&c.email)
+    .bind(&c.first_name)
+    .bind(&c.last_name)
+    .bind(&c.phone)
+    .bind(&c.address_line)
+    .bind(&c.postal_code)
+    .bind(&c.city)
+    .fetch_one(&mut *tx)
+    .await?
+    .0;
+
+    let booking_id: Uuid = sqlx::query_as::<_, (Uuid,)>(
+        "insert into booking \
+            (reference, property_id, customer_id, week_id, status, channel, adults, children, \
+             week_price_cents, extras_total_cents, total_cents, deposit_pct, deposit_cents, \
+             balance_cents, caution_cents, tourist_tax_cents, payment_method, caution_method, \
+             admin_notes, deposit_paid_at, balance_paid_at) \
+         values ($1,$2,$3,$4,'confirmed','manual',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, \
+             case when $18 then now() end, case when $19 then now() end) returning id",
+    )
+    .bind(&reference)
+    .bind(prop.id)
+    .bind(customer_id)
+    .bind(input.week_id)
+    .bind(input.adults)
+    .bind(input.children)
+    .bind(totals.week_price_cents)
+    .bind(totals.extras_total_cents)
+    .bind(totals.total_cents)
+    .bind(prop.deposit_pct)
+    .bind(totals.deposit_cents)
+    .bind(totals.balance_cents)
+    .bind(prop.caution_cents)
+    .bind(totals.tourist_tax_cents)
+    .bind(&input.payment_method)
+    .bind(&input.caution_method)
+    .bind(&input.admin_notes)
+    .bind(input.deposit_paid)
+    .bind(input.balance_paid)
+    .fetch_one(&mut *tx)
+    .await?
+    .0;
+
+    sqlx::query(
+        "insert into booking_line \
+            (booking_id, kind, label, quantity, unit_price_cents, total_cents, position) \
+         values ($1, 'accommodation', $2, 1, $3, $3, 0)",
+    )
+    .bind(booking_id)
+    .bind(format!("Location · {}", week.range_label))
+    .bind(week.price_cents)
+    .execute(&mut *tx)
+    .await?;
+
+    if input.deposit_paid {
+        insert_manual_payment(
+            &mut tx,
+            booking_id,
+            "deposit",
+            totals.deposit_cents,
+            &input.payment_method,
+        )
+        .await?;
+    }
+    if input.balance_paid {
+        insert_manual_payment(
+            &mut tx,
+            booking_id,
+            "balance",
+            totals.balance_cents,
+            &input.payment_method,
+        )
+        .await?;
+    }
+    tx.commit().await?;
+
+    Ok(Json(serde_json::json!({ "reference": reference })))
+}
+
+async fn insert_manual_payment(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    booking_id: Uuid,
+    kind: &str,
+    amount_cents: i64,
+    method: &str,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "insert into payment (booking_id, type, provider, amount_cents, status, method) \
+         values ($1, $2, 'manual', $3, 'succeeded', $4)",
+    )
+    .bind(booking_id)
+    .bind(kind)
+    .bind(amount_cents)
+    .bind(method)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MarkPaidInput {
+    /// 'deposit' | 'balance'
+    kind: String,
+    /// 'cheque' | 'virement'
+    method: String,
+}
+
+/// Point manuellement une échéance (chèque/virement reçu) d'une réservation.
+async fn mark_paid(
+    State(st): State<AppState>,
+    Path(reference): Path<String>,
+    Json(body): Json<MarkPaidInput>,
+) -> Result<StatusCode, AppError> {
+    if !["deposit", "balance"].contains(&body.kind.as_str()) {
+        return Err(AppError::BadRequest("Échéance invalide.".into()));
+    }
+    if !["cheque", "virement"].contains(&body.method.as_str()) {
+        return Err(AppError::BadRequest("Moyen de règlement invalide.".into()));
+    }
+    let paid_col = if body.kind == "deposit" {
+        "deposit_paid_at"
+    } else {
+        "balance_paid_at"
+    };
+    let amount_col = if body.kind == "deposit" {
+        "deposit_cents"
+    } else {
+        "balance_cents"
+    };
+    let row = sqlx::query_as::<_, (Uuid, i64, bool)>(&format!(
+        "select id, {amount_col}, ({paid_col} is not null) from booking \
+         where reference = $1 and channel = 'manual'"
+    ))
+    .bind(&reference)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("réservation manuelle".into()))?;
+    if row.2 {
+        return Err(AppError::BadRequest("Échéance déjà pointée.".into()));
+    }
+
+    let mut tx = st.pool.begin().await?;
+    let new_status = if body.kind == "balance" {
+        "balance_paid"
+    } else {
+        "confirmed"
+    };
+    sqlx::query(&format!(
+        "update booking set {paid_col} = now(), status = $2, updated_at = now() where id = $1"
+    ))
+    .bind(row.0)
+    .bind(new_status)
+    .execute(&mut *tx)
+    .await?;
+    insert_manual_payment(&mut tx, row.0, &body.kind, row.1, &body.method).await?;
+    tx.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn finances(State(st): State<AppState>) -> Result<Json<FinancesResponse>, AppError> {
     let agg = sqlx::query_as::<_, PaymentAgg>(
         "select \
@@ -997,6 +1296,7 @@ struct CautionRow {
     caution_cents: i64,
     provider_customer_id: Option<String>,
     provider_payment_method_id: Option<String>,
+    caution_method: Option<String>,
     caution_released_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -1006,7 +1306,7 @@ struct CautionRow {
 async fn load_caution(st: &AppState, reference: &str) -> Result<CautionRow, AppError> {
     let b = sqlx::query_as::<_, CautionRow>(
         "select id, caution_cents, provider_customer_id, provider_payment_method_id, \
-                caution_released_at \
+                caution_method, caution_released_at \
          from booking where reference = $1",
     )
     .bind(reference)
@@ -1037,22 +1337,31 @@ async fn capture_caution(
             "Montant à débiter invalide (0 < montant ≤ caution).".into(),
         ));
     }
-    let (Some(customer), Some(pm)) = (&b.provider_customer_id, &b.provider_payment_method_id)
-    else {
-        return Err(AppError::BadRequest(
-            "Aucune carte enregistrée pour débiter la caution.".into(),
-        ));
+
+    // Cheque caution (manual bookings) or missing card → record the encashment
+    // without any Stripe call. Card-on-file → charge off-session.
+    let is_cheque = b.caution_method.as_deref() == Some("cheque");
+    let (intent, provider, method): (Option<String>, &str, Option<&str>) = if is_cheque {
+        (None, "manual", Some("cheque"))
+    } else {
+        let (Some(customer), Some(pm)) = (&b.provider_customer_id, &b.provider_payment_method_id)
+        else {
+            return Err(AppError::BadRequest(
+                "Aucune carte enregistrée pour débiter la caution.".into(),
+            ));
+        };
+        let id = st
+            .payments
+            .charge_off_session(
+                customer,
+                pm,
+                body.amount_cents,
+                &format!("caution-charge-{}", b.id),
+            )
+            .await?;
+        (Some(id), st.payments.name(), None)
     };
-    // Stable key per booking: a retried charge never double-debits.
-    let intent = st
-        .payments
-        .charge_off_session(
-            customer,
-            pm,
-            body.amount_cents,
-            &format!("caution-charge-{}", b.id),
-        )
-        .await?;
+
     sqlx::query(
         "update booking set caution_captured_cents = $2, caution_released_at = now(), \
             updated_at = now() where id = $1",
@@ -1062,13 +1371,14 @@ async fn capture_caution(
     .execute(&st.pool)
     .await?;
     sqlx::query(
-        "insert into payment (booking_id, type, provider, provider_intent_id, amount_cents, status) \
-         values ($1, 'caution_capture', $2, $3, $4, 'captured')",
+        "insert into payment (booking_id, type, provider, provider_intent_id, amount_cents, status, method) \
+         values ($1, 'caution_capture', $2, $3, $4, 'captured', $5)",
     )
     .bind(b.id)
-    .bind(st.payments.name())
+    .bind(provider)
     .bind(&intent)
     .bind(body.amount_cents)
+    .bind(method)
     .execute(&st.pool)
     .await?;
     Ok(StatusCode::NO_CONTENT)
