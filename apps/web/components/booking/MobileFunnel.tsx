@@ -368,7 +368,7 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
                       </div>
                     )}
                     <div style={css("display:flex;justify-content:space-between;margin-top:7px;font:400 12.5px 'Hanken Grotesk';color:#6B6E6B")}>
-                      <span>Caution (empreinte, non débitée)</span>
+                      <span>Caution (garantie, non débitée)</span>
                       <span>{eur(caution)}</span>
                     </div>
                   </div>
@@ -381,7 +381,7 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
                 Entre le propriétaire de {name}, ci-après « le Bailleur », et le signataire, ci-après « le Preneur ». Le présent contrat a pour objet la location meublée à usage saisonnier du logement situé à {location}, pour la période indiquée ci-dessus.
                 <br />
                 <br />
-                Le Preneur s&apos;engage à occuper les lieux paisiblement, à hauteur de {capacity} personnes maximum, et à restituer le logement en bon état. L&apos;acompte versé à la signature vaut réservation ferme. Le solde est prélevé deux semaines avant l&apos;arrivée. Une empreinte de caution est réalisée à titre de garantie et libérée après l&apos;état des lieux de sortie. Toute annulation est régie par les conditions générales annexées.
+                Le Preneur s&apos;engage à occuper les lieux paisiblement, à hauteur de {capacity} personnes maximum, et à restituer le logement en bon état. L&apos;acompte versé à la signature vaut réservation ferme. Le solde est prélevé deux semaines avant l&apos;arrivée. Une caution de {eur(caution)} est demandée à titre de garantie : aucun montant n&apos;est bloqué ni débité — la carte enregistrée ne serait débitée qu&apos;en cas de dégâts constatés à l&apos;état des lieux de sortie. Toute annulation est régie par les conditions générales annexées.
               </div>
 
               {/* accept */}

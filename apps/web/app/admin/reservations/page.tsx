@@ -76,14 +76,14 @@ export default function ReservationsPage() {
 
   const releaseCaution = async (reference: string) => {
     const ok = await confirm({
-      title: "Libérer la caution ?",
-      description: "L'empreinte est annulée, aucun montant n'est débité au client.",
-      confirmLabel: "Libérer",
+      title: "Clôturer la caution sans débit ?",
+      description: "Aucun dégât : la caution est clôturée, rien n'est débité au client.",
+      confirmLabel: "Clôturer",
     });
     if (!ok) return;
     try {
       await adminApi.releaseCaution(reference);
-      toast.success("Caution libérée.");
+      toast.success("Caution clôturée.");
       reload();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erreur");
@@ -94,11 +94,11 @@ export default function ReservationsPage() {
     const max = (b.cautionCents / 100).toFixed(0);
     const amount = parseEuros(
       await prompt({
-        title: "Capturer la caution",
-        description: `Montant à débiter sur l'empreinte (max ${max} €).`,
+        title: "Débiter des dégâts",
+        description: `Montant à débiter sur la carte enregistrée du client (max ${max} €).`,
         label: "Montant (€)",
         defaultValue: max,
-        confirmLabel: "Capturer",
+        confirmLabel: "Débiter",
       }),
     );
     if (amount === null) return;
@@ -108,7 +108,7 @@ export default function ReservationsPage() {
     }
     try {
       await adminApi.captureCaution(b.reference, amount);
-      toast.success(`${(amount / 100).toFixed(2)} € capturés sur la caution.`);
+      toast.success(`${(amount / 100).toFixed(2)} € débités sur la caution.`);
       reload();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erreur");
@@ -239,21 +239,23 @@ export default function ReservationsPage() {
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-1">
-                    {b.cautionAuthorizedAt && !b.cautionReleasedAt && (
-                      <>
-                        <Button size="sm" variant="ghost" onClick={() => releaseCaution(b.reference)}>
-                          Libérer caution
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => captureCaution(b)}>
-                          Capturer
-                        </Button>
-                      </>
-                    )}
+                    {(b.status === "confirmed" || b.status === "balance_paid") &&
+                      b.cautionCents > 0 &&
+                      !b.cautionReleasedAt && (
+                        <>
+                          <Button size="sm" variant="ghost" onClick={() => captureCaution(b)}>
+                            Débiter dégâts
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => releaseCaution(b.reference)}>
+                            Clôturer caution
+                          </Button>
+                        </>
+                      )}
                     {b.cautionReleasedAt && (
                       <span className="text-xs text-muted-foreground">
                         {b.cautionCapturedCents && b.cautionCapturedCents > 0
-                          ? `Caution : ${fmtEur(b.cautionCapturedCents)} capturés`
-                          : "Caution libérée"}
+                          ? `Caution : ${fmtEur(b.cautionCapturedCents)} débités`
+                          : "Caution clôturée"}
                       </span>
                     )}
                     {b.depositPaidAt && b.status !== "cancelled" && (
@@ -387,7 +389,7 @@ function CancelDialog({
       <div className="rounded-md bg-muted/50 p-3 text-xs leading-relaxed text-muted-foreground">
         <b className="text-foreground">Règle :</b> l&apos;acompte reste acquis et le solde n&apos;est
         pas prélevé. Ajustez ci-dessous pour rembourser, en tout ou partie, les sommes déjà réglées.
-        La semaine redevient disponible et l&apos;empreinte de caution éventuelle est libérée.
+        La semaine redevient disponible ; aucune caution n&apos;est prélevée.
       </div>
 
       <div className="mt-4 space-y-3">

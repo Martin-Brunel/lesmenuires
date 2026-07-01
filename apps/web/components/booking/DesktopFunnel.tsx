@@ -353,7 +353,7 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
                     Entre le propriétaire de {name}, ci-après « le Bailleur », et le signataire, ci-après « le Preneur ». Le présent contrat a pour objet la location meublée à usage saisonnier situé à {property.locationLabel}, pour la période indiquée dans le récapitulatif ci-contre.
                     <br />
                     <br />
-                    Le Preneur s&apos;engage à occuper les lieux paisiblement et à restituer le logement en bon état. L&apos;acompte versé à la signature vaut réservation ferme. Le solde est prélevé deux semaines avant l&apos;arrivée. Une empreinte de caution est réalisée à titre de garantie et libérée après l&apos;état des lieux de sortie. Toute annulation est régie par les conditions générales annexées au présent contrat.
+                    Le Preneur s&apos;engage à occuper les lieux paisiblement et à restituer le logement en bon état. L&apos;acompte versé à la signature vaut réservation ferme. Le solde est prélevé deux semaines avant l&apos;arrivée. Une caution de {eur(caution)} est demandée à titre de garantie : aucun montant n&apos;est bloqué ni débité — la carte enregistrée ne serait débitée qu&apos;en cas de dégâts constatés à l&apos;état des lieux de sortie. Toute annulation est régie par les conditions générales annexées au présent contrat.
                   </div>
                   <div onClick={() => setAccepted((a) => !a)} style={css("margin-top:14px;display:flex;align-items:center;gap:11px;cursor:pointer")}>
                     <div style={css(`flex:none;width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;color:#fff;transition:background .15s;${accepted ? `background:${ACCENT};border:1.5px solid ${ACCENT};` : "background:#FFF;border:1.5px solid rgba(0,0,0,.2);"}`)}>{accepted ? "✓" : ""}</div>
@@ -380,7 +380,7 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
                 <>
                   <div style={css("font:500 11px 'Hanken Grotesk';letter-spacing:.06em;color:#9A9C97")}>PAIEMENT DE L&apos;ACOMPTE</div>
                   <p style={css("margin:12px 0 0;font:400 15px/1.7 'Hanken Grotesk';color:#5A5C58;max-width:60ch")}>
-                    Vous réglez aujourd&apos;hui l&apos;acompte de <b>{eur(deposit)}</b>. Le solde de {eur(balance)} sera prélevé automatiquement le {balanceDueLabel(week.startDate)}, et une empreinte de caution de {eur(caution)} (non débitée) sera réalisée avant votre arrivée.
+                    Vous réglez aujourd&apos;hui l&apos;acompte de <b>{eur(deposit)}</b>. Le solde de {eur(balance)} sera prélevé automatiquement le {balanceDueLabel(week.startDate)}. Une caution de {eur(caution)} sert de garantie : rien n&apos;est bloqué, votre carte ne serait débitée qu&apos;en cas de dégâts.
                   </p>
                   <div style={css("margin-top:14px;display:flex;align-items:center;gap:8px;font:400 12px 'Hanken Grotesk';color:#9A9C97")}>
                     <span style={css("font-size:13px")}>🔒</span> Paiement sécurisé · Stripe — vos informations bancaires ne transitent jamais par nos serveurs.
@@ -439,7 +439,7 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
                     </div>
                   )}
                   <div style={css("display:flex;justify-content:space-between;margin-top:7px;font:400 12px 'Hanken Grotesk';color:#6B6E6B")}>
-                    <span>Caution (empreinte)</span>
+                    <span>Caution (garantie, non débitée)</span>
                     <span>{eur(caution)}</span>
                   </div>
                 </div>

@@ -30,8 +30,9 @@ export default function Cgv() {
       <p>
         La réservation est ferme après signature électronique du contrat et versement de l’acompte.
         Le solde est prélevé automatiquement <strong>deux semaines avant l’arrivée</strong> sur le
-        moyen de paiement enregistré. Une <strong>empreinte de caution</strong> (non débitée) est
-        réalisée à titre de garantie environ cinq jours avant l’arrivée.
+        moyen de paiement enregistré. Une <strong>caution</strong> est demandée à titre de garantie :
+        aucun montant n’est bloqué ni prélevé, la carte enregistrée n’étant débitée qu’en cas de
+        dégâts constatés (voir article 5).
       </p>
 
       <h2>2. Acompte</h2>
@@ -71,8 +72,10 @@ export default function Cgv() {
 
       <h2>5. Caution</h2>
       <p>
-        L’empreinte de caution garantit les éventuels dommages et manquements constatés à l’état des
-        lieux de sortie. Elle est libérée après le départ, déduction faite des sommes justifiées.
+        La caution garantit les éventuels dommages et manquements constatés à l’état des lieux de
+        sortie. Le moyen de paiement enregistré lors de la réservation reste en garantie : aucun
+        montant n’est bloqué. En cas de dégâts justifiés, le montant correspondant (dans la limite de
+        la caution) est débité sur ce moyen de paiement ; à défaut, aucun prélèvement n’est effectué.
       </p>
 
       <h2>6. Occupation</h2>

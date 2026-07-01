@@ -63,9 +63,6 @@ pub async fn run_tick(pool: &PgPool, payments: &Arc<dyn PaymentProvider>) -> Tic
     if let Err(e) = charge_due_balances(pool, payments, &mut r).await {
         tracing::error!("job solde: {e:?}");
     }
-    if let Err(e) = authorize_due_cautions(pool, payments, &mut r).await {
-        tracing::error!("job caution: {e:?}");
-    }
     if let Err(e) = remind_abandoned_carts(pool, &mut r).await {
         tracing::error!("job relance: {e:?}");
     }
@@ -165,8 +162,9 @@ async fn charge_due_balances(
                     let body = format!(
                         "{}<br><br>Le solde de votre séjour à L'Adret ({}) vient d'être prélevé \
                          sur votre moyen de paiement enregistré. Votre réservation {} est \
-                         entièrement réglée.<br><br>Une empreinte de caution sera réalisée \
-                         quelques jours avant votre arrivée (elle n'est pas débitée).",
+                         entièrement réglée.<br><br>Aucune caution n'est prélevée : votre carte \
+                         reste simplement enregistrée et ne serait débitée qu'en cas de dégâts \
+                         constatés à l'état des lieux de sortie.",
                         greeting(d.first_name.as_deref()),
                         eur(d.balance_cents),
                         d.reference,
@@ -325,7 +323,7 @@ async fn notify_payment_issue(
     let what = if kind == "balance" {
         "le prélèvement du solde de votre séjour"
     } else {
-        "l'empreinte de caution de votre séjour"
+        "une opération de paiement de votre séjour"
     };
     let body = format!(
         "{hello}<br><br>Nous n'avons pas pu effectuer {what} (réservation <b>{reference}</b>). \
@@ -345,117 +343,6 @@ async fn notify_payment_issue(
         "Action requise sur votre réservation — L'Adret".into(),
         html,
     );
-}
-
-#[derive(FromRow)]
-struct CautionDue {
-    id: Uuid,
-    reference: String,
-    caution_cents: i64,
-    provider_customer_id: String,
-    provider_payment_method_id: String,
-    attempts: i32,
-    email: Option<String>,
-    first_name: Option<String>,
-    notified: bool,
-}
-
-async fn authorize_due_cautions(
-    pool: &PgPool,
-    payments: &Arc<dyn PaymentProvider>,
-    r: &mut TickReport,
-) -> Result<(), sqlx::Error> {
-    let due = sqlx::query_as::<_, CautionDue>(
-        "select b.id, b.reference, b.caution_cents, b.provider_customer_id, \
-                b.provider_payment_method_id, b.caution_attempts as attempts, \
-                c.email, c.first_name, (b.caution_failed_notified_at is not null) as notified \
-         from booking b join availability_week aw on aw.id = b.week_id \
-         left join customer c on c.id = b.customer_id \
-         where b.status in ('confirmed', 'balance_paid') and b.caution_authorized_at is null \
-           and b.caution_cents > 0 and b.payment_flag is null \
-           and b.provider_customer_id is not null \
-           and b.provider_payment_method_id is not null \
-           and aw.start_date - 5 <= current_date and aw.start_date >= current_date",
-    )
-    .fetch_all(pool)
-    .await?;
-
-    for d in due {
-        match payments
-            .authorize_hold(
-                &d.provider_customer_id,
-                &d.provider_payment_method_id,
-                d.caution_cents,
-                &format!("caution-{}-{}", d.id, d.attempts),
-            )
-            .await
-        {
-            Ok(intent_id) => {
-                let mut tx = pool.begin().await?;
-                sqlx::query(
-                    "insert into payment (booking_id, type, provider, provider_intent_id, amount_cents, status) \
-                     values ($1, 'caution_auth', $2, $3, $4, 'authorized')",
-                )
-                .bind(d.id)
-                .bind(payments.name())
-                .bind(&intent_id)
-                .bind(d.caution_cents)
-                .execute(&mut *tx)
-                .await?;
-                sqlx::query(
-                    "update booking set caution_intent_id = $2, caution_authorized_at = now(), \
-                        caution_last_error = null, updated_at = now() where id = $1",
-                )
-                .bind(d.id)
-                .bind(&intent_id)
-                .execute(&mut *tx)
-                .await?;
-                tx.commit().await?;
-                r.cautions_authorized += 1;
-                tracing::info!("caution autorisée: {} ({} c)", d.reference, d.caution_cents);
-                if let Some(to) = d.email.clone().filter(|e| !e.is_empty()) {
-                    let body = format!(
-                        "{}<br><br>À l'approche de votre séjour à L'Adret, une empreinte de \
-                         caution de {} a été réalisée sur votre carte pour la réservation {}. \
-                         <strong>Ce montant n'est pas débité</strong> : il s'agit d'une simple \
-                         garantie, libérée après l'état des lieux de sortie.",
-                        greeting(d.first_name.as_deref()),
-                        eur(d.caution_cents),
-                        d.reference,
-                    );
-                    let html = email::template(
-                        "Empreinte de caution",
-                        &body,
-                        "Voir ma réservation",
-                        &format!("{}/espace", email::front_url()),
-                    );
-                    email::spawn(to, "Empreinte de caution — L'Adret".into(), html);
-                }
-            }
-            Err(e) => {
-                r.caution_failures += 1;
-                let definitive = e.is_definitive();
-                record_failure(pool, d.id, "caution", definitive, &format!("{e:?}")).await?;
-                if definitive && !d.notified {
-                    notify_payment_issue(
-                        pool,
-                        d.id,
-                        "caution",
-                        d.email,
-                        d.first_name,
-                        &d.reference,
-                    )
-                    .await;
-                }
-                tracing::warn!(
-                    "échec caution {} (définitif={definitive}, tentative {}): {e:?}",
-                    d.reference,
-                    d.attempts
-                );
-            }
-        }
-    }
-    Ok(())
 }
 
 #[derive(sqlx::FromRow)]

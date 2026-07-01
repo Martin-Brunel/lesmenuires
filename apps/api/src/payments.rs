@@ -57,17 +57,6 @@ pub trait PaymentProvider: Send + Sync {
         idem: &str,
     ) -> Result<String, AppError>;
 
-    /// Manual-capture authorization (caution hold). `idem` = stable key.
-    async fn authorize_hold(
-        &self,
-        customer_ref: &str,
-        payment_method_ref: &str,
-        amount_cents: i64,
-        idem: &str,
-    ) -> Result<String, AppError>;
-
-    async fn capture(&self, intent_id: &str, amount_cents: i64, idem: &str)
-        -> Result<(), AppError>;
     async fn release(&self, intent_id: &str, idem: &str) -> Result<(), AppError>;
     /// Refund (partial or full) a captured PaymentIntent. Returns the refund id.
     /// `idem` is a stable key so a retried refund never double-refunds.
@@ -137,23 +126,6 @@ impl PaymentProvider for MockProvider {
         _idem: &str,
     ) -> Result<String, AppError> {
         Ok(fake("mock_pi"))
-    }
-    async fn authorize_hold(
-        &self,
-        _customer_ref: &str,
-        _payment_method_ref: &str,
-        _amount_cents: i64,
-        _idem: &str,
-    ) -> Result<String, AppError> {
-        Ok(fake("mock_auth"))
-    }
-    async fn capture(
-        &self,
-        _intent_id: &str,
-        _amount_cents: i64,
-        _idem: &str,
-    ) -> Result<(), AppError> {
-        Ok(())
     }
     async fn release(&self, _intent_id: &str, _idem: &str) -> Result<(), AppError> {
         Ok(())
@@ -370,46 +342,6 @@ impl PaymentProvider for StripeProvider {
             )
             .await?;
         Ok(jstr(&pi, "id"))
-    }
-
-    async fn authorize_hold(
-        &self,
-        customer_ref: &str,
-        payment_method_ref: &str,
-        amount_cents: i64,
-        idem: &str,
-    ) -> Result<String, AppError> {
-        let pi = self
-            .post_idem(
-                "/payment_intents",
-                &[
-                    ("amount", amount_cents.to_string()),
-                    ("currency", "eur".to_string()),
-                    ("customer", customer_ref.to_string()),
-                    ("payment_method", payment_method_ref.to_string()),
-                    ("off_session", "true".to_string()),
-                    ("confirm", "true".to_string()),
-                    ("capture_method", "manual".to_string()),
-                ],
-                Some(idem),
-            )
-            .await?;
-        Ok(jstr(&pi, "id"))
-    }
-
-    async fn capture(
-        &self,
-        intent_id: &str,
-        amount_cents: i64,
-        idem: &str,
-    ) -> Result<(), AppError> {
-        self.post_idem(
-            &format!("/payment_intents/{intent_id}/capture"),
-            &[("amount_to_capture", amount_cents.to_string())],
-            Some(idem),
-        )
-        .await?;
-        Ok(())
     }
 
     async fn release(&self, intent_id: &str, idem: &str) -> Result<(), AppError> {

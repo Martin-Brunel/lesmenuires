@@ -679,8 +679,6 @@ struct FinanceSummary {
     upcoming_count: i64,
     /// Taxe de séjour à venir (portée par les soldes non encore prélevés).
     tourist_tax_upcoming_cents: i64,
-    /// Cautions actuellement bloquées (empreintes actives non libérées).
-    cautions_held_cents: i64,
 }
 
 #[derive(Serialize, FromRow)]
@@ -729,13 +727,6 @@ async fn finances(State(st): State<AppState>) -> Result<Json<FinancesResponse>, 
     .fetch_one(&st.pool)
     .await?;
 
-    let cautions_held: i64 = sqlx::query_scalar(
-        "select coalesce(sum(caution_cents),0)::bigint from booking \
-         where caution_authorized_at is not null and caution_released_at is null",
-    )
-    .fetch_one(&st.pool)
-    .await?;
-
     let net = agg.deposits_paid_cents + agg.balances_paid_cents + agg.caution_captured_cents
         - agg.refunds_cents;
 
@@ -764,7 +755,6 @@ async fn finances(State(st): State<AppState>) -> Result<Json<FinancesResponse>, 
             upcoming_balances_cents: upcoming_balances,
             upcoming_count,
             tourist_tax_upcoming_cents: tax_upcoming,
-            cautions_held_cents: cautions_held,
         },
         tax_declaration,
     }))
@@ -868,9 +858,6 @@ struct CancelRow {
     balance_cents: i64,
     deposit_paid_at: Option<DateTime<Utc>>,
     balance_paid_at: Option<DateTime<Utc>>,
-    caution_intent_id: Option<String>,
-    caution_authorized_at: Option<DateTime<Utc>>,
-    caution_released_at: Option<DateTime<Utc>>,
 }
 
 /// Annule une réservation confirmée. Règle : l'acompte reste acquis et le solde
@@ -882,8 +869,7 @@ async fn cancel_booking(
     Json(body): Json<CancelInput>,
 ) -> Result<StatusCode, AppError> {
     let b = sqlx::query_as::<_, CancelRow>(
-        "select id, status, deposit_cents, balance_cents, deposit_paid_at, balance_paid_at, \
-                caution_intent_id, caution_authorized_at, caution_released_at \
+        "select id, status, deposit_cents, balance_cents, deposit_paid_at, balance_paid_at \
          from booking where reference = $1",
     )
     .bind(&reference)
@@ -930,43 +916,13 @@ async fn cancel_booking(
     if body.refund_balance_cents > 0 {
         refunds.push(perform_refund(&st, b.id, "balance", body.refund_balance_cents).await?);
     }
-    // Release any active caution imprint — no reason to hold it on a cancellation.
-    let release_intent = match (
-        &b.caution_intent_id,
-        b.caution_authorized_at,
-        b.caution_released_at,
-    ) {
-        (Some(intent), Some(_), None) => {
-            st.payments
-                .release(intent, &format!("release-{}", b.id))
-                .await?;
-            Some(intent.clone())
-        }
-        _ => None,
-    };
+    // Caution = card-on-file (Option B) : nothing is held, so nothing to release on
+    // cancellation — we simply never charge it.
 
-    // 2) Persist everything atomically: refunds, caution release, cancel, free week.
+    // 2) Persist everything atomically: refunds, cancel, free week.
     let mut tx = st.pool.begin().await?;
     for rr in &refunds {
         insert_refund_row(&mut tx, b.id, st.payments.name(), rr).await?;
-    }
-    if let Some(intent) = &release_intent {
-        sqlx::query(
-            "update booking set caution_captured_cents = 0, caution_released_at = now() \
-             where id = $1",
-        )
-        .bind(b.id)
-        .execute(&mut *tx)
-        .await?;
-        sqlx::query(
-            "insert into payment (booking_id, type, provider, provider_intent_id, amount_cents, status) \
-             values ($1, 'caution_release', $2, $3, 0, 'released')",
-        )
-        .bind(b.id)
-        .bind(st.payments.name())
-        .bind(intent)
-        .execute(&mut *tx)
-        .await?;
     }
     sqlx::query(
         "update booking set status = 'cancelled', cancelled_at = now(), \
@@ -1038,26 +994,25 @@ async fn cancel_booking(
 #[derive(FromRow)]
 struct CautionRow {
     id: Uuid,
-    caution_intent_id: Option<String>,
     caution_cents: i64,
-    caution_authorized_at: Option<chrono::DateTime<chrono::Utc>>,
+    provider_customer_id: Option<String>,
+    provider_payment_method_id: Option<String>,
     caution_released_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+/// Caution model = card-on-file + charge-on-demand (Option B) : no Stripe hold is
+/// placed. The card saved at the deposit is charged only if damage is found. The
+/// caution is "settled" (caution_released_at) once the operator charges or waives it.
 async fn load_caution(st: &AppState, reference: &str) -> Result<CautionRow, AppError> {
     let b = sqlx::query_as::<_, CautionRow>(
-        "select id, caution_intent_id, caution_cents, caution_authorized_at, caution_released_at \
+        "select id, caution_cents, provider_customer_id, provider_payment_method_id, \
+                caution_released_at \
          from booking where reference = $1",
     )
     .bind(reference)
     .fetch_optional(&st.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("réservation".into()))?;
-    if b.caution_intent_id.is_none() || b.caution_authorized_at.is_none() {
-        return Err(AppError::BadRequest(
-            "Aucune empreinte de caution active sur cette réservation.".into(),
-        ));
-    }
     if b.caution_released_at.is_some() {
         return Err(AppError::BadRequest("Caution déjà traitée.".into()));
     }
@@ -1070,6 +1025,7 @@ struct CaptureInput {
     amount_cents: i64,
 }
 
+/// Charge damages on the saved card (off-session), up to the caution amount.
 async fn capture_caution(
     State(st): State<AppState>,
     Path(reference): Path<String>,
@@ -1078,12 +1034,24 @@ async fn capture_caution(
     let b = load_caution(&st, &reference).await?;
     if body.amount_cents <= 0 || body.amount_cents > b.caution_cents {
         return Err(AppError::BadRequest(
-            "Montant à capturer invalide (0 < montant ≤ caution).".into(),
+            "Montant à débiter invalide (0 < montant ≤ caution).".into(),
         ));
     }
-    let intent = b.caution_intent_id.clone().unwrap();
-    st.payments
-        .capture(&intent, body.amount_cents, &format!("capture-{}", b.id))
+    let (Some(customer), Some(pm)) = (&b.provider_customer_id, &b.provider_payment_method_id)
+    else {
+        return Err(AppError::BadRequest(
+            "Aucune carte enregistrée pour débiter la caution.".into(),
+        ));
+    };
+    // Stable key per booking: a retried charge never double-debits.
+    let intent = st
+        .payments
+        .charge_off_session(
+            customer,
+            pm,
+            body.amount_cents,
+            &format!("caution-charge-{}", b.id),
+        )
         .await?;
     sqlx::query(
         "update booking set caution_captured_cents = $2, caution_released_at = now(), \
@@ -1106,15 +1074,12 @@ async fn capture_caution(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Close the caution without charging (no damage). No Stripe call — nothing held.
 async fn release_caution(
     State(st): State<AppState>,
     Path(reference): Path<String>,
 ) -> Result<StatusCode, AppError> {
     let b = load_caution(&st, &reference).await?;
-    let intent = b.caution_intent_id.clone().unwrap();
-    st.payments
-        .release(&intent, &format!("release-{}", b.id))
-        .await?;
     sqlx::query(
         "update booking set caution_captured_cents = 0, caution_released_at = now(), \
             updated_at = now() where id = $1",
@@ -1124,11 +1089,10 @@ async fn release_caution(
     .await?;
     sqlx::query(
         "insert into payment (booking_id, type, provider, provider_intent_id, amount_cents, status) \
-         values ($1, 'caution_release', $2, $3, 0, 'released')",
+         values ($1, 'caution_release', $2, null, 0, 'released')",
     )
     .bind(b.id)
     .bind(st.payments.name())
-    .bind(&intent)
     .execute(&st.pool)
     .await?;
     Ok(StatusCode::NO_CONTENT)

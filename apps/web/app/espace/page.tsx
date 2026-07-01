@@ -322,15 +322,13 @@ function BookingCard({
           amount={eur(b.balanceCents)}
         />
         <Milestone
-          done={!!b.cautionAuthorizedAt}
+          done={false}
           disabled={cancelled}
           label="Caution"
           detail={
             cancelled
-              ? "Aucune empreinte"
-              : b.cautionAuthorizedAt
-                ? `Empreinte réalisée le ${frDate(b.cautionAuthorizedAt)}`
-                : `Empreinte le ${balanceDueLabel(b.startDate, 5)} · non débitée`
+              ? "Aucune caution"
+              : "Garantie · votre carte n'est débitée qu'en cas de dégâts"
           }
           amount={eur(b.cautionCents)}
         />

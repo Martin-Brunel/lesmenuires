@@ -56,7 +56,7 @@ export default function FinancesPage() {
     { label: "Soldes réglés", value: fmtEur(s.balancesPaidCents) },
     { label: "Remboursements", value: `− ${fmtEur(s.refundsCents)}` },
     { label: "Soldes à venir", value: fmtEur(s.upcomingBalancesCents), hint: `${s.upcomingCount} réservation(s) confirmée(s) non soldée(s)` },
-    { label: "Cautions bloquées", value: fmtEur(s.cautionsHeldCents), hint: "Empreintes actives non libérées" },
+    { label: "Cautions débitées (dégâts)", value: fmtEur(s.cautionCapturedCents), hint: "Débits sur carte enregistrée en cas de dégâts" },
     { label: "Taxe de séjour collectée", value: fmtEur(s.touristTaxCollectedCents), hint: "À reverser à la commune" },
     { label: "Taxe de séjour à venir", value: fmtEur(s.touristTaxUpcomingCents), hint: "Portée par les soldes non prélevés" },
   ];

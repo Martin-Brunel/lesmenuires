@@ -107,7 +107,6 @@ export type FinanceSummary = {
   upcomingBalancesCents: number;
   upcomingCount: number;
   touristTaxUpcomingCents: number;
-  cautionsHeldCents: number;
 };
 
 export type TaxDeclarationRow = {
