@@ -21,7 +21,10 @@ pub async fn send(to: &str, subject: &str, html: &str) {
         }
     };
     let from = std::env::var("MAIL_FROM").unwrap_or_else(|_| "onboarding@resend.dev".into());
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .unwrap_or_default();
     let res = client
         .post("https://api.resend.com/emails")
         .bearer_auth(&key)

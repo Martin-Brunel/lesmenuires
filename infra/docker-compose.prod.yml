@@ -18,6 +18,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-lesmenuires}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD requis}
       POSTGRES_DB: ${POSTGRES_DB:-lesmenuires}
+      # Fuseau explicite : les fenêtres J-14/J-5 du scheduler comparent des dates
+      # de séjour françaises à current_date. Sans TZ, Postgres serait en UTC et
+      # basculerait de jour ~1-2 h trop tôt en soirée. Voir scheduler.rs.
+      TZ: Europe/Paris
+      PGTZ: Europe/Paris
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -25,6 +30,9 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
     # Pas de port exposé sur l'hôte : accès uniquement via le réseau interne.
 
   api:
@@ -38,6 +46,8 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-lesmenuires}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lesmenuires}
       BIND_ADDR: 0.0.0.0:8080
       RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
+      APP_ENV: production
+      TZ: Europe/Paris
       API_BASE_URL: https://${DOMAIN}
       FRONT_ORIGIN: https://${DOMAIN}
       COOKIE_SECURE: "true"
@@ -52,6 +62,15 @@ services:
       SCHEDULER_INTERVAL_SECS: ${SCHEDULER_INTERVAL_SECS:-300}
     volumes:
       - media:/app/media
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
 
   web:
     build:
@@ -61,14 +80,20 @@ services:
         NEXT_PUBLIC_API_URL: https://${DOMAIN}
     restart: unless-stopped
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
 
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
     depends_on:
-      - api
-      - web
+      api:
+        condition: service_healthy
+      web:
+        condition: service_started
     ports:
       - "80:80"
       - "443:443"
@@ -79,6 +104,9 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
 
 volumes:
   pgdata:

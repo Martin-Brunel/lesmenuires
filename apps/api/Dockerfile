@@ -22,9 +22,9 @@ RUN touch src/main.rs && cargo build --release \
 
 # --- Stage runtime ---------------------------------------------------------
 FROM debian:bookworm-slim AS runtime
-# ca-certificates : requis pour les appels HTTPS sortants (Stripe, Resend).
+# ca-certificates : appels HTTPS sortants (Stripe, Resend). curl : healthcheck Docker.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 appuser
 

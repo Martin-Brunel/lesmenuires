@@ -75,6 +75,16 @@ async fn main() -> anyhow::Result<()> {
         std::path::PathBuf::from(env::var("MEDIA_DIR").unwrap_or_else(|_| "./media".into()));
     tokio::fs::create_dir_all(&media_dir).await?;
 
+    // Fail closed in production: the mock payment provider always reports success,
+    // so booting with it in prod would confirm bookings without real charges.
+    if is_production() && !payments::stripe_active() {
+        anyhow::bail!(
+            "Production détectée (APP_ENV=production ou COOKIE_SECURE=true) mais le provider \
+             de paiement 'mock' est actif : STRIPE_SECRET_KEY manquante ou invalide. \
+             Refus de démarrer pour éviter des réservations confirmées sans paiement réel."
+        );
+    }
+
     let state = AppState {
         pool,
         media_dir: std::sync::Arc::new(media_dir.clone()),
@@ -702,6 +712,14 @@ fn session_token() -> String {
 /// "; Secure" appended to Set-Cookie when COOKIE_SECURE=true (HTTPS production).
 /// Evaluated once; without it, cookies won't be sent over HTTPS-only contexts
 /// in some browsers and would be exposed if any plain-HTTP hop existed.
+/// Whether the API runs in a production context. `APP_ENV=production` is the
+/// explicit signal; `COOKIE_SECURE=true` (set by the prod compose) is accepted as
+/// a fallback so an existing deployment is covered without a new variable.
+pub(crate) fn is_production() -> bool {
+    matches!(env::var("APP_ENV").as_deref(), Ok("production"))
+        || matches!(env::var("COOKIE_SECURE").as_deref(), Ok("true") | Ok("1"))
+}
+
 pub(crate) fn cookie_secure() -> &'static str {
     static SECURE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *SECURE.get_or_init(|| matches!(env::var("COOKIE_SECURE").as_deref(), Ok("true") | Ok("1")))
@@ -1041,14 +1059,25 @@ async fn stripe_webhook(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<StatusCode, AppError> {
-    if let Ok(secret) = env::var("STRIPE_WEBHOOK_SECRET") {
-        if !secret.is_empty() {
+    match env::var("STRIPE_WEBHOOK_SECRET").ok().filter(|s| !s.is_empty()) {
+        Some(secret) => {
             let sig = headers
                 .get("stripe-signature")
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or_default();
             if !verify_stripe_signature(&body, sig, &secret) {
                 return Err(AppError::BadRequest("Signature webhook invalide.".into()));
+            }
+        }
+        None => {
+            // Fail closed: if Stripe is the live provider, an unsigned webhook must
+            // never be trusted (it could confirm a booking without real payment).
+            // Only the mock/dev provider accepts unsigned events.
+            if payments::stripe_active() {
+                tracing::error!(
+                    "webhook rejeté : STRIPE_WEBHOOK_SECRET absent alors que Stripe est actif"
+                );
+                return Err(AppError::BadRequest("Webhook non vérifiable.".into()));
             }
         }
     }

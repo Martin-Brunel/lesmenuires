@@ -160,7 +160,12 @@ impl StripeProvider {
         Self {
             secret_key,
             publishable_key,
-            http: reqwest::Client::new(),
+            // Bound every Stripe call: a hung request would otherwise stall the
+            // scheduler tick (off-session charges) or a payment handler indefinitely.
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(20))
+                .build()
+                .unwrap_or_default(),
         }
     }
 
@@ -382,6 +387,13 @@ impl PaymentProvider for StripeProvider {
 }
 
 // ---------------------------------------------------------------------------
+
+/// True when a real Stripe secret key is configured (provider is Stripe, not mock).
+/// Used to fail closed: require a verified webhook secret and refuse the mock
+/// provider in production.
+pub fn stripe_active() -> bool {
+    matches!(std::env::var("STRIPE_SECRET_KEY"), Ok(key) if key.starts_with("sk_"))
+}
 
 pub fn from_env() -> Arc<dyn PaymentProvider> {
     match std::env::var("STRIPE_SECRET_KEY") {
