@@ -770,6 +770,50 @@ async fn cancel_booking(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
+
+    // Confirm the cancellation to the customer, stating any refund made.
+    let refunded: i64 = body.refund_deposit_cents + body.refund_balance_cents;
+    if let Some((email, first_name, week_range)) =
+        sqlx::query_as::<_, (Option<String>, Option<String>, String)>(
+            "select c.email, c.first_name, aw.range_label \
+         from booking b join availability_week aw on aw.id = b.week_id \
+         left join customer c on c.id = b.customer_id where b.id = $1",
+        )
+        .bind(b.id)
+        .fetch_optional(&st.pool)
+        .await?
+        .filter(|(e, _, _)| e.as_deref().map(|s| !s.is_empty()).unwrap_or(false))
+    {
+        let hello = match first_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            Some(n) => format!("Bonjour {n},"),
+            None => "Bonjour,".to_string(),
+        };
+        let refund_line = if refunded > 0 {
+            format!(
+                "<br><br>Un remboursement de {},{:02} € a été effectué sur votre moyen de \
+                 paiement (délai bancaire habituel : quelques jours).",
+                refunded / 100,
+                (refunded % 100).abs()
+            )
+        } else {
+            String::new()
+        };
+        let body_html = format!(
+            "{hello}<br><br>Votre réservation {reference} (semaine {week_range}) à L'Adret a bien \
+             été annulée.{refund_line}<br><br>Pour toute question, répondez simplement à cet e-mail."
+        );
+        let html = crate::email::template("Réservation annulée", &body_html, "", "");
+        crate::email::spawn(
+            email.unwrap(),
+            "Annulation de votre réservation — L'Adret".into(),
+            html,
+        );
+    }
+
     Ok(StatusCode::NO_CONTENT)
 }
 

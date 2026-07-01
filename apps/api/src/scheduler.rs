@@ -16,6 +16,18 @@ use sqlx::FromRow;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// Format cents as a French euro amount, e.g. 123456 → "1234,56 €".
+fn eur(cents: i64) -> String {
+    format!("{},{:02} €", cents / 100, (cents % 100).abs())
+}
+
+fn greeting(first_name: Option<&str>) -> String {
+    match first_name.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(name) => format!("Bonjour {name},"),
+        None => "Bonjour,".to_string(),
+    }
+}
+
 #[derive(Default, Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct TickReport {
@@ -144,6 +156,24 @@ async fn charge_due_balances(
                 tx.commit().await?;
                 r.balances_charged += 1;
                 tracing::info!("solde prélevé: {} ({} c)", d.reference, d.balance_cents);
+                if let Some(to) = d.email.clone().filter(|e| !e.is_empty()) {
+                    let body = format!(
+                        "{}<br><br>Le solde de votre séjour à L'Adret ({}) vient d'être prélevé \
+                         sur votre moyen de paiement enregistré. Votre réservation {} est \
+                         entièrement réglée.<br><br>Une empreinte de caution sera réalisée \
+                         quelques jours avant votre arrivée (elle n'est pas débitée).",
+                        greeting(d.first_name.as_deref()),
+                        eur(d.balance_cents),
+                        d.reference,
+                    );
+                    let html = email::template(
+                        "Solde réglé",
+                        &body,
+                        "Voir ma réservation",
+                        &format!("{}/espace", email::front_url()),
+                    );
+                    email::spawn(to, "Solde réglé — L'Adret".into(), html);
+                }
             }
             Err(e) => {
                 r.balance_failures += 1;
@@ -313,6 +343,24 @@ async fn authorize_due_cautions(
                 tx.commit().await?;
                 r.cautions_authorized += 1;
                 tracing::info!("caution autorisée: {} ({} c)", d.reference, d.caution_cents);
+                if let Some(to) = d.email.clone().filter(|e| !e.is_empty()) {
+                    let body = format!(
+                        "{}<br><br>À l'approche de votre séjour à L'Adret, une empreinte de \
+                         caution de {} a été réalisée sur votre carte pour la réservation {}. \
+                         <strong>Ce montant n'est pas débité</strong> : il s'agit d'une simple \
+                         garantie, libérée après l'état des lieux de sortie.",
+                        greeting(d.first_name.as_deref()),
+                        eur(d.caution_cents),
+                        d.reference,
+                    );
+                    let html = email::template(
+                        "Empreinte de caution",
+                        &body,
+                        "Voir ma réservation",
+                        &format!("{}/espace", email::front_url()),
+                    );
+                    email::spawn(to, "Empreinte de caution — L'Adret".into(), html);
+                }
             }
             Err(e) => {
                 r.caution_failures += 1;
