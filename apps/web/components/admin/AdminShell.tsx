@@ -11,6 +11,7 @@ import {
   LogOut,
   Package,
   Snowflake,
+  Wallet,
 } from "lucide-react";
 import { adminApi, type Me } from "@/lib/admin-api";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,7 @@ const NAV = [
   { href: "/admin/editorial", label: "Contenu éditorial", icon: FileText },
   { href: "/admin/prestations", label: "Prestations", icon: Package },
   { href: "/admin/reservations", label: "Réservations", icon: ClipboardList },
+  { href: "/admin/finances", label: "Finances", icon: Wallet },
 ];
 
 export function AdminShell({ children }: { children: React.ReactNode }) {

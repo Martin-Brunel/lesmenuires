@@ -37,6 +37,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/products", get(list_products).post(create_product))
         .route("/products/:id", put(update_product).delete(delete_product))
         .route("/bookings", get(list_bookings))
+        .route("/finances", get(finances))
         .route("/bookings/:reference/signature", get(get_signature))
         .route("/bookings/:reference/cancel", post(cancel_booking))
         .route(
@@ -643,6 +644,126 @@ async fn list_bookings(State(st): State<AppState>) -> Result<Json<Vec<AdminBooki
     .fetch_all(&st.pool)
     .await?;
     Ok(Json(rows))
+}
+
+// ---------------------------------------------------------------------------
+// Finances : flux consolidés (encaissé) + à venir + taxe de séjour (déclaration)
+// ---------------------------------------------------------------------------
+
+#[derive(FromRow)]
+struct PaymentAgg {
+    deposits_paid_cents: i64,
+    balances_paid_cents: i64,
+    refunds_cents: i64,
+    caution_captured_cents: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FinanceSummary {
+    deposits_paid_cents: i64,
+    balances_paid_cents: i64,
+    refunds_cents: i64,
+    caution_captured_cents: i64,
+    /// Encaissement net = acomptes + soldes + cautions capturées − remboursements.
+    net_collected_cents: i64,
+    /// Taxe de séjour déjà collectée (soldes réglés) — à reverser à la commune.
+    tourist_tax_collected_cents: i64,
+    /// Soldes à venir (réservations confirmées non encore soldées, taxe incluse).
+    upcoming_balances_cents: i64,
+    upcoming_count: i64,
+    /// Taxe de séjour à venir (portée par les soldes non encore prélevés).
+    tourist_tax_upcoming_cents: i64,
+    /// Cautions actuellement bloquées (empreintes actives non libérées).
+    cautions_held_cents: i64,
+}
+
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct TaxDeclarationRow {
+    reference: String,
+    customer_name: Option<String>,
+    start_date: NaiveDate,
+    adults: i32,
+    nights: i32,
+    tourist_tax_cents: i64,
+    collected: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FinancesResponse {
+    summary: FinanceSummary,
+    tax_declaration: Vec<TaxDeclarationRow>,
+}
+
+async fn finances(State(st): State<AppState>) -> Result<Json<FinancesResponse>, AppError> {
+    let agg = sqlx::query_as::<_, PaymentAgg>(
+        "select \
+            coalesce(sum(amount_cents) filter (where type='deposit' and status='succeeded'),0)::bigint as deposits_paid_cents, \
+            coalesce(sum(amount_cents) filter (where type='balance' and status='succeeded'),0)::bigint as balances_paid_cents, \
+            coalesce(sum(amount_cents) filter (where type='refund'),0)::bigint as refunds_cents, \
+            coalesce(sum(amount_cents) filter (where type='caution_capture' and status='captured'),0)::bigint as caution_captured_cents \
+         from payment",
+    )
+    .fetch_one(&st.pool)
+    .await?;
+
+    let tax_collected: i64 = sqlx::query_scalar(
+        "select coalesce(sum(tourist_tax_cents),0)::bigint from booking \
+         where balance_paid_at is not null and status <> 'cancelled'",
+    )
+    .fetch_one(&st.pool)
+    .await?;
+
+    let (upcoming_balances, upcoming_count, tax_upcoming): (i64, i64, i64) =
+        sqlx::query_as(
+            "select coalesce(sum(balance_cents),0)::bigint, count(*)::bigint, \
+                    coalesce(sum(tourist_tax_cents),0)::bigint \
+             from booking where status = 'confirmed' and balance_paid_at is null",
+        )
+        .fetch_one(&st.pool)
+        .await?;
+
+    let cautions_held: i64 = sqlx::query_scalar(
+        "select coalesce(sum(caution_cents),0)::bigint from booking \
+         where caution_authorized_at is not null and caution_released_at is null",
+    )
+    .fetch_one(&st.pool)
+    .await?;
+
+    let net = agg.deposits_paid_cents + agg.balances_paid_cents + agg.caution_captured_cents
+        - agg.refunds_cents;
+
+    let tax_declaration = sqlx::query_as::<_, TaxDeclarationRow>(
+        "select b.reference, \
+                nullif(trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')), '') as customer_name, \
+                aw.start_date, b.adults, 7 as nights, b.tourist_tax_cents, \
+                (b.balance_paid_at is not null) as collected \
+         from booking b \
+         join availability_week aw on aw.id = b.week_id \
+         left join customer c on c.id = b.customer_id \
+         where b.tourist_tax_cents > 0 and b.status <> 'cancelled' \
+         order by aw.start_date",
+    )
+    .fetch_all(&st.pool)
+    .await?;
+
+    Ok(Json(FinancesResponse {
+        summary: FinanceSummary {
+            deposits_paid_cents: agg.deposits_paid_cents,
+            balances_paid_cents: agg.balances_paid_cents,
+            refunds_cents: agg.refunds_cents,
+            caution_captured_cents: agg.caution_captured_cents,
+            net_collected_cents: net,
+            tourist_tax_collected_cents: tax_collected,
+            upcoming_balances_cents: upcoming_balances,
+            upcoming_count,
+            tourist_tax_upcoming_cents: tax_upcoming,
+            cautions_held_cents: cautions_held,
+        },
+        tax_declaration,
+    }))
 }
 
 #[derive(Serialize, FromRow)]

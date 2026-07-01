@@ -97,6 +97,34 @@ export type SignatureInfo = {
   signedAt: string | null;
 };
 
+export type FinanceSummary = {
+  depositsPaidCents: number;
+  balancesPaidCents: number;
+  refundsCents: number;
+  cautionCapturedCents: number;
+  netCollectedCents: number;
+  touristTaxCollectedCents: number;
+  upcomingBalancesCents: number;
+  upcomingCount: number;
+  touristTaxUpcomingCents: number;
+  cautionsHeldCents: number;
+};
+
+export type TaxDeclarationRow = {
+  reference: string;
+  customerName: string | null;
+  startDate: string;
+  adults: number;
+  nights: number;
+  touristTaxCents: number;
+  collected: boolean;
+};
+
+export type FinancesResponse = {
+  summary: FinanceSummary;
+  taxDeclaration: TaxDeclarationRow[];
+};
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -174,6 +202,7 @@ export const adminApi = {
   deleteProduct: (id: string) => req<void>(`/products/${id}`, { method: "DELETE" }),
 
   listBookings: () => req<AdminBooking[]>("/bookings"),
+  finances: () => req<FinancesResponse>("/finances"),
   getSignature: (reference: string) =>
     req<SignatureInfo>(`/bookings/${reference}/signature`),
   cancelBooking: (
