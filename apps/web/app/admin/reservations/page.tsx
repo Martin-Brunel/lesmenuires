@@ -24,6 +24,7 @@ const STATUS_LABEL: Record<string, string> = {
   confirmed: "Confirmée",
   balance_paid: "Soldée",
   cancelled: "Annulée",
+  expired: "Expirée",
 };
 
 const STATUS_VARIANT: Record<
@@ -34,6 +35,12 @@ const STATUS_VARIANT: Record<
   confirmed: "success",
   balance_paid: "success",
   cancelled: "destructive",
+  expired: "muted",
+};
+
+const FLAG_LABEL: Record<string, string> = {
+  refunded_externally: "Remboursé (Stripe)",
+  disputed: "Litige Stripe",
 };
 
 export default function ReservationsPage() {
@@ -185,6 +192,14 @@ export default function ReservationsPage() {
                     {b.balanceOverdue && (
                       <Badge variant="destructive" title="Solde impayé alors que l'arrivée est passée">
                         Solde en retard
+                      </Badge>
+                    )}
+                    {b.paymentFlag && (
+                      <Badge
+                        variant="destructive"
+                        title="Événement Stripe hors-app : prélèvements automatiques suspendus"
+                      >
+                        {FLAG_LABEL[b.paymentFlag] ?? b.paymentFlag}
                       </Badge>
                     )}
                     {(b.balanceAttempts > 0 || b.cautionAttempts > 0) &&

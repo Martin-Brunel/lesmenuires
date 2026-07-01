@@ -1069,7 +1069,10 @@ async fn stripe_webhook(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<StatusCode, AppError> {
-    match env::var("STRIPE_WEBHOOK_SECRET").ok().filter(|s| !s.is_empty()) {
+    match env::var("STRIPE_WEBHOOK_SECRET")
+        .ok()
+        .filter(|s| !s.is_empty())
+    {
         Some(secret) => {
             let sig = headers
                 .get("stripe-signature")
@@ -1099,56 +1102,122 @@ async fn stripe_webhook(
         .and_then(|t| t.as_str())
         .unwrap_or_default();
 
-    if kind == "payment_intent.succeeded" {
-        let pi = &event["data"]["object"];
-        let intent_id = pi.get("id").and_then(|v| v.as_str()).unwrap_or_default();
-        let customer = pi.get("customer").and_then(|v| v.as_str());
-        let pm = pi.get("payment_method").and_then(|v| v.as_str());
-
-        let mut tx = st.pool.begin().await?;
-        // Payment is genuinely succeeded — record it regardless (idempotent).
-        sqlx::query(
-            "update payment set status = 'succeeded', updated_at = now() \
-             where provider_intent_id = $1",
-        )
-        .bind(intent_id)
-        .execute(&mut *tx)
-        .await?;
-        // Only a still-pending cart needs confirming (idempotent on re-delivery).
-        let bid: Option<Uuid> = sqlx::query_scalar(
-            "select id from booking where deposit_intent_id = $1 and status = 'cart'",
-        )
-        .bind(intent_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        if let Some(bid) = bid {
-            // Same anti-double-booking guard as the synchronous confirm path.
-            if try_claim_week(&mut tx, bid).await? {
+    let obj = &event["data"]["object"];
+    match kind {
+        "payment_intent.succeeded" => confirm_from_webhook(&st, obj).await?,
+        "payment_intent.payment_failed" | "payment_intent.canceled" => {
+            let intent_id = obj.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+            if !intent_id.is_empty() {
                 sqlx::query(
-                    "update booking set status = 'confirmed', \
+                    "update payment set status = 'failed', updated_at = now() \
+                     where provider_intent_id = $1 and status in ('pending', 'authorized')",
+                )
+                .bind(intent_id)
+                .execute(&st.pool)
+                .await?;
+                tracing::warn!("webhook: paiement échoué/annulé (intent {intent_id}, {kind})");
+            }
+        }
+        "charge.refunded" => {
+            // Refund initiated from the Stripe dashboard: flag the booking so the
+            // scheduler stops charging its balance/caution, and record it.
+            let pi = obj.get("payment_intent").and_then(|v| v.as_str());
+            if let Some(intent_id) = pi.filter(|s| !s.is_empty()) {
+                flag_booking_by_intent(&st, intent_id, "refunded_externally").await?;
+                sqlx::query(
+                    "update payment set status = 'refunded', updated_at = now() \
+                     where provider_intent_id = $1 and status = 'succeeded'",
+                )
+                .bind(intent_id)
+                .execute(&st.pool)
+                .await?;
+                tracing::warn!("webhook: remboursement externe (intent {intent_id})");
+            }
+        }
+        "charge.dispute.created" | "charge.dispute.funds_withdrawn" => {
+            let pi = obj.get("payment_intent").and_then(|v| v.as_str());
+            if let Some(intent_id) = pi.filter(|s| !s.is_empty()) {
+                flag_booking_by_intent(&st, intent_id, "disputed").await?;
+                tracing::error!(
+                    "webhook: LITIGE Stripe ouvert (intent {intent_id}) — action admin requise"
+                );
+            }
+        }
+        other => {
+            tracing::debug!("webhook: event ignoré ({other})");
+        }
+    }
+
+    Ok(StatusCode::OK)
+}
+
+/// Flag a booking (matched by any of its intent ids) for admin attention and stop
+/// the scheduler from charging it further.
+async fn flag_booking_by_intent(
+    st: &AppState,
+    intent_id: &str,
+    flag: &str,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "update booking set payment_flag = $2, flagged_at = now(), updated_at = now() \
+         where (deposit_intent_id = $1 or balance_intent_id = $1 or caution_intent_id = $1) \
+           and payment_flag is null",
+    )
+    .bind(intent_id)
+    .bind(flag)
+    .execute(&st.pool)
+    .await?;
+    Ok(())
+}
+
+/// Confirm a deposit from a verified `payment_intent.succeeded` webhook.
+async fn confirm_from_webhook(st: &AppState, pi: &serde_json::Value) -> Result<(), AppError> {
+    let intent_id = pi.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+    let customer = pi.get("customer").and_then(|v| v.as_str());
+    let pm = pi.get("payment_method").and_then(|v| v.as_str());
+
+    let mut tx = st.pool.begin().await?;
+    // Payment is genuinely succeeded — record it regardless (idempotent).
+    sqlx::query(
+        "update payment set status = 'succeeded', updated_at = now() \
+             where provider_intent_id = $1",
+    )
+    .bind(intent_id)
+    .execute(&mut *tx)
+    .await?;
+    // Only a still-pending cart needs confirming (idempotent on re-delivery).
+    let bid: Option<Uuid> = sqlx::query_scalar(
+        "select id from booking where deposit_intent_id = $1 and status = 'cart'",
+    )
+    .bind(intent_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(bid) = bid {
+        // Same anti-double-booking guard as the synchronous confirm path.
+        if try_claim_week(&mut tx, bid).await? {
+            sqlx::query(
+                "update booking set status = 'confirmed', \
                         deposit_paid_at = coalesce(deposit_paid_at, now()), \
                         provider_customer_id = coalesce(provider_customer_id, $2), \
                         provider_payment_method_id = coalesce(provider_payment_method_id, $3), \
                         updated_at = now() \
                      where id = $1",
-                )
-                .bind(bid)
-                .bind(customer)
-                .bind(pm)
-                .execute(&mut *tx)
-                .await?;
-                tracing::info!("webhook: acompte confirmé (intent {intent_id})");
-            } else {
-                tracing::error!(
-                    "webhook: double-réservation évitée — acompte à rembourser \
+            )
+            .bind(bid)
+            .bind(customer)
+            .bind(pm)
+            .execute(&mut *tx)
+            .await?;
+            tracing::info!("webhook: acompte confirmé (intent {intent_id})");
+        } else {
+            tracing::error!(
+                "webhook: double-réservation évitée — acompte à rembourser \
                      (intent {intent_id}, booking {bid})"
-                );
-            }
+            );
         }
-        tx.commit().await?;
     }
-
-    Ok(StatusCode::OK)
+    tx.commit().await?;
+    Ok(())
 }
 
 /// Seed the first admin user from ADMIN_EMAIL/ADMIN_PASSWORD if none exists yet.

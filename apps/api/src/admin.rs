@@ -591,6 +591,9 @@ struct AdminBookingDto {
     caution_last_error: Option<String>,
     /// Confirmed, balance still unpaid, and arrival is today or past → needs attention.
     balance_overdue: bool,
+    /// Set by webhook events raised from the Stripe dashboard ('refunded_externally'
+    /// or 'disputed'); the scheduler skips flagged bookings.
+    payment_flag: Option<String>,
     customer_email: Option<String>,
     customer_name: Option<String>,
     created_at: DateTime<Utc>,
@@ -609,6 +612,7 @@ async fn list_bookings(State(st): State<AppState>) -> Result<Json<Vec<AdminBooki
                 b.balance_attempts, b.balance_last_error, b.caution_attempts, b.caution_last_error, \
                 (b.status = 'confirmed' and b.balance_paid_at is null and b.balance_cents > 0 \
                     and aw.start_date <= current_date) as balance_overdue, \
+                b.payment_flag, \
                 c.email as customer_email, \
                 nullif(trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')), '') as customer_name, \
                 b.created_at \
