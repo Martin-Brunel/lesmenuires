@@ -42,3 +42,66 @@ pub fn compute(
         tourist_tax_cents,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn week_only_no_tax() {
+        let t = compute(100_000, &[], 30, 0, 2, NIGHTS_PER_WEEK);
+        assert_eq!(t.total_cents, 100_000);
+        assert_eq!(t.deposit_cents, 30_000);
+        assert_eq!(t.tourist_tax_cents, 0);
+        assert_eq!(t.balance_cents, 70_000);
+        // Deposit + balance always reconstitute total + tax (no cent drift).
+        assert_eq!(
+            t.deposit_cents + t.balance_cents,
+            t.total_cents + t.tourist_tax_cents
+        );
+    }
+
+    #[test]
+    fn with_extras() {
+        let t = compute(100_000, &[5_000, 2_500], 30, 0, 2, NIGHTS_PER_WEEK);
+        assert_eq!(t.extras_total_cents, 7_500);
+        assert_eq!(t.total_cents, 107_500);
+        assert_eq!(t.deposit_cents, 32_250);
+        assert_eq!(t.balance_cents, 75_250);
+    }
+
+    #[test]
+    fn tourist_tax_adults_only() {
+        // 1,50 €/adulte/nuit, 2 adultes, 7 nuits → 21,00 € ; enfants ignorés (non passés ici).
+        let t = compute(100_000, &[], 30, 150, 2, NIGHTS_PER_WEEK);
+        assert_eq!(t.tourist_tax_cents, 2_100);
+        assert_eq!(t.total_cents, 100_000); // hors taxe (revenu locatif)
+        assert_eq!(t.deposit_cents, 30_000); // acompte sur le locatif seul
+        assert_eq!(t.balance_cents, 72_100); // (100000-30000) + 2100
+    }
+
+    #[test]
+    fn deposit_rounds_half_up() {
+        // total impair × 30 % → arrondi au centime, sans dérive.
+        let t = compute(33_333, &[], 30, 0, 1, NIGHTS_PER_WEEK);
+        assert_eq!(t.deposit_cents, 10_000); // round(9999.9) = 10000
+        assert_eq!(t.deposit_cents + t.balance_cents, t.total_cents);
+    }
+
+    #[test]
+    fn zero_and_negative_inputs_are_safe() {
+        let t = compute(0, &[], 0, -50, -3, -1);
+        assert_eq!(t.total_cents, 0);
+        assert_eq!(t.deposit_cents, 0);
+        assert_eq!(t.tourist_tax_cents, 0); // négatifs bornés à 0
+        assert_eq!(t.balance_cents, 0);
+    }
+
+    #[test]
+    fn full_deposit_leaves_only_tax_in_balance() {
+        let t = compute(80_000, &[], 100, 150, 3, NIGHTS_PER_WEEK);
+        assert_eq!(t.deposit_cents, 80_000);
+        assert_eq!(t.tourist_tax_cents, 3_150);
+        assert_eq!(t.balance_cents, 3_150); // rental fully covered, only tax remains
+    }
+}
