@@ -292,6 +292,12 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
 
               <div onClick={() => { setScreen("checkout"); setCheckoutStep("infos"); }} style={css("margin-top:18px;padding:16px;background:#1A1B1A;color:#fff;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';cursor:pointer")}>Continuer</div>
               <div style={css("margin-top:12px;text-align:center;font:400 11.5px/1.5 'Hanken Grotesk';color:#9A9C97")}>Annulation gratuite jusqu&apos;à 30 jours avant l&apos;arrivée · Vous ne payez que l&apos;acompte aujourd&apos;hui.</div>
+              <div style={css("margin-top:16px;text-align:center;display:flex;flex-wrap:wrap;gap:4px 14px;justify-content:center;font:400 11px 'Hanken Grotesk';color:#9A9C97")}>
+                <a href="/mentions-legales" style={css("color:#9A9C97")}>Mentions légales</a>
+                <a href="/cgv" style={css("color:#9A9C97")}>Conditions de location</a>
+                <a href="/confidentialite" style={css("color:#9A9C97")}>Confidentialité</a>
+                <a href="/cookies" style={css("color:#9A9C97")}>Cookies</a>
+              </div>
             </div>
           </div>
         </div>
@@ -351,7 +357,9 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
                   </div>
                   <div onClick={() => setAccepted((a) => !a)} style={css("margin-top:14px;display:flex;align-items:center;gap:11px;cursor:pointer")}>
                     <div style={css(`flex:none;width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;color:#fff;transition:background .15s;${accepted ? `background:${ACCENT};border:1.5px solid ${ACCENT};` : "background:#FFF;border:1.5px solid rgba(0,0,0,.2);"}`)}>{accepted ? "✓" : ""}</div>
-                    <div style={css("font:400 13px 'Hanken Grotesk';color:#5A5C58")}>Je reconnais avoir lu et j&apos;accepte le contrat et les conditions générales.</div>
+                    <div style={css("font:400 13px 'Hanken Grotesk';color:#5A5C58")}>Je reconnais avoir lu et j&apos;accepte le contrat et les{" "}
+                      <a href="/cgv" target="_blank" rel="noopener" onClick={(e) => e.stopPropagation()} style={css(`color:${ACCENT}`)}>conditions générales</a>.
+                    </div>
                   </div>
                   <div style={css("margin-top:22px;display:flex;align-items:center;justify-content:space-between")}>
                     <div style={css("font:500 11px 'Hanken Grotesk';letter-spacing:.06em;color:#9A9C97")}>SIGNATURE ÉLECTRONIQUE</div>
