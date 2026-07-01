@@ -418,10 +418,20 @@ async fn create_booking(
 
     let customer_id: Option<Uuid> = match &req.customer {
         Some(c) if !c.email.trim().is_empty() => {
+            // Upsert by e-mail (case-insensitive unique index): a returning client
+            // keeps a single customer row, so /espace and the magic-link login show
+            // all their bookings instead of a fragment per attempt.
             let row = sqlx::query_as::<_, (Uuid,)>(
                 "insert into customer \
                     (email, first_name, last_name, phone, address_line, postal_code, city, country) \
-                 values ($1, $2, $3, $4, $5, $6, $7, $8) returning id",
+                 values ($1, $2, $3, $4, $5, $6, $7, $8) \
+                 on conflict (lower(email)) where coalesce(email, '') <> '' \
+                 do update set \
+                    first_name = excluded.first_name, last_name = excluded.last_name, \
+                    phone = excluded.phone, address_line = excluded.address_line, \
+                    postal_code = excluded.postal_code, city = excluded.city, \
+                    country = excluded.country \
+                 returning id",
             )
             .bind(&c.email)
             .bind(&c.first_name)

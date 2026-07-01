@@ -24,6 +24,8 @@ pub struct TickReport {
     pub cautions_authorized: i64,
     pub caution_failures: i64,
     pub carts_reminded: i64,
+    pub carts_expired: i64,
+    pub tokens_purged: i64,
 }
 
 impl TickReport {
@@ -33,6 +35,8 @@ impl TickReport {
             + self.cautions_authorized
             + self.caution_failures
             + self.carts_reminded
+            + self.carts_expired
+            + self.tokens_purged
             > 0
     }
 }
@@ -47,6 +51,12 @@ pub async fn run_tick(pool: &PgPool, payments: &Arc<dyn PaymentProvider>) -> Tic
     }
     if let Err(e) = remind_abandoned_carts(pool, &mut r).await {
         tracing::error!("job relance: {e:?}");
+    }
+    if let Err(e) = expire_stale_carts(pool, payments, &mut r).await {
+        tracing::error!("job expiration panier: {e:?}");
+    }
+    if let Err(e) = purge_expired_tokens(pool, &mut r).await {
+        tracing::error!("job purge jetons: {e:?}");
     }
     r
 }
@@ -372,6 +382,69 @@ async fn remind_abandoned_carts(pool: &PgPool, r: &mut TickReport) -> Result<(),
             html,
         );
         r.carts_reminded += 1;
+    }
+    Ok(())
+}
+
+#[derive(sqlx::FromRow)]
+struct StaleCartRow {
+    id: Uuid,
+    deposit_intent_id: Option<String>,
+}
+
+/// Expire carts abandoned for more than 48 h: mark them 'expired' and cancel any
+/// dangling deposit PaymentIntent (a cart never blocks a week, but its unconfirmed
+/// intent would otherwise stay open on Stripe forever, and rows accumulate).
+async fn expire_stale_carts(
+    pool: &PgPool,
+    payments: &Arc<dyn PaymentProvider>,
+    r: &mut TickReport,
+) -> Result<(), sqlx::Error> {
+    let stale: Vec<StaleCartRow> = sqlx::query_as(
+        "update booking set status = 'expired', updated_at = now() \
+         where status = 'cart' and created_at < now() - interval '48 hours' \
+         returning id, deposit_intent_id",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    for c in stale {
+        if let Some(intent) = c.deposit_intent_id.as_deref().filter(|s| !s.is_empty()) {
+            // Best-effort: an unconfirmed deposit intent can be safely cancelled
+            // (a succeeded one would have moved the booking to 'confirmed').
+            let idem = format!("cancel-cart-{}", c.id);
+            if let Err(e) = payments.release(intent, &idem).await {
+                tracing::warn!("annulation intent panier expiré {} échouée: {e:?}", c.id);
+            }
+        }
+        r.carts_expired += 1;
+    }
+    if r.carts_expired > 0 {
+        tracing::info!("{} panier(s) abandonné(s) expiré(s)", r.carts_expired);
+    }
+    Ok(())
+}
+
+/// Purge expired auth tokens (RGPD data minimisation): magic links past their
+/// TTL, and session rows well past expiry. Live sessions are untouched (queries
+/// already filter on expires_at > now()).
+async fn purge_expired_tokens(pool: &PgPool, r: &mut TickReport) -> Result<(), sqlx::Error> {
+    let mut purged = 0i64;
+    purged += sqlx::query("delete from magic_link where expires_at < now() - interval '1 day'")
+        .execute(pool)
+        .await?
+        .rows_affected() as i64;
+    purged += sqlx::query("delete from customer_session where expires_at < now()")
+        .execute(pool)
+        .await?
+        .rows_affected() as i64;
+    purged += sqlx::query("delete from admin_session where expires_at < now()")
+        .execute(pool)
+        .await?
+        .rows_affected() as i64;
+    r.tokens_purged += purged;
+    if purged > 0 {
+        tracing::info!("{purged} jeton(s) expiré(s) purgé(s)");
     }
     Ok(())
 }
