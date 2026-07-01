@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   adminApi,
   fmtEur,
@@ -8,8 +9,26 @@ import {
   type AdminWeek,
 } from "@/lib/admin-api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
 const SLUG = "ladret";
+
+const FLAG_LABEL: Record<string, string> = {
+  refunded_externally: "Remboursé (Stripe)",
+  disputed: "Litige Stripe",
+};
+
+/** Reasons a booking needs the operator's attention. */
+function attentionReasons(b: AdminBooking): string[] {
+  const out: string[] = [];
+  if (b.paymentFlag) out.push(FLAG_LABEL[b.paymentFlag] ?? b.paymentFlag);
+  if (b.balanceOverdue) out.push("Solde en retard");
+  if (b.balanceAttempts > 0 && b.status !== "cancelled")
+    out.push(`Échec prélèvement solde ×${b.balanceAttempts}`);
+  if (b.cautionAttempts > 0 && b.status !== "cancelled")
+    out.push(`Échec caution ×${b.cautionAttempts}`);
+  return out;
+}
 
 export default function DashboardPage() {
   const [weeks, setWeeks] = useState<AdminWeek[]>([]);
@@ -37,6 +56,10 @@ export default function DashboardPage() {
     { label: "Semaines complètes", value: loading ? "…" : String(booked) },
   ];
 
+  const attention = bookings
+    .map((b) => ({ b, reasons: attentionReasons(b) }))
+    .filter((x) => x.reasons.length > 0);
+
   return (
     <div className="space-y-6">
       <div>
@@ -57,6 +80,59 @@ export default function DashboardPage() {
           </Card>
         ))}
       </div>
+
+      {!loading && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">
+              Actions requises
+              {attention.length > 0 && (
+                <span className="ml-2 text-sm font-normal text-destructive">
+                  {attention.length}
+                </span>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {attention.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Rien à traiter — aucun incident de paiement en cours.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {attention.map(({ b, reasons }) => (
+                  <li
+                    key={b.reference}
+                    className="flex items-center justify-between gap-3 rounded-md border p-3"
+                  >
+                    <div>
+                      <div className="text-sm font-medium">
+                        {b.customerName ?? b.customerEmail ?? b.reference}
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          {b.reference} · {b.weekRange}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {reasons.map((r) => (
+                          <Badge key={r} variant="destructive">
+                            {r}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                    <Link
+                      href="/admin/reservations"
+                      className="text-sm text-primary underline underline-offset-2 whitespace-nowrap"
+                    >
+                      Traiter
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
