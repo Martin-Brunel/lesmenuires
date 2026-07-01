@@ -73,6 +73,10 @@ export function useBookingFlow(ctx: BookingContext) {
   const [accepted, setAccepted] = useState(false);
   const [sigEmpty, setSigEmpty] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  // Synchronous re-entrancy lock: `submitting` is React state and only updates on
+  // the next render, so two very fast clicks could both pass an `if (submitting)`
+  // guard and double-submit. This ref is set/read synchronously, before any await.
+  const busyRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [stripeSession, setStripeSession] = useState<{
     clientSecret: string;
@@ -134,7 +138,8 @@ export function useBookingFlow(ctx: BookingContext) {
 
   /** Ensure the cart exists; manages submitting/error. Returns success. */
   const ensureCart = async (): Promise<boolean> => {
-    if (!infoComplete || submitting) return false;
+    if (!infoComplete || busyRef.current) return false;
+    busyRef.current = true;
     setSubmitting(true);
     setError(null);
     try {
@@ -144,6 +149,7 @@ export function useBookingFlow(ctx: BookingContext) {
       setError(e instanceof Error ? e.message : "Une erreur est survenue.");
       return false;
     } finally {
+      busyRef.current = false;
       setSubmitting(false);
     }
   };
@@ -151,12 +157,13 @@ export function useBookingFlow(ctx: BookingContext) {
   /** Persist the signed contract before payment. Returns success; manages
    *  submitting/error so the funnel can block the step on failure. */
   const saveSignedContract = async (): Promise<boolean> => {
-    if (submitting) return false;
+    if (busyRef.current) return false;
     const signaturePng = sigRef.current?.toDataURL() ?? null;
     if (!accepted || !signaturePng) {
       setError("Merci d'accepter le contrat et de signer.");
       return false;
     }
+    busyRef.current = true;
     setSubmitting(true);
     setError(null);
     try {
@@ -171,6 +178,7 @@ export function useBookingFlow(ctx: BookingContext) {
       setError(e instanceof Error ? e.message : "Une erreur est survenue.");
       return false;
     } finally {
+      busyRef.current = false;
       setSubmitting(false);
     }
   };
@@ -178,7 +186,8 @@ export function useBookingFlow(ctx: BookingContext) {
   /** Pay the deposit. If Stripe, opens the Payment Element (sets stripeSession)
    *  and calls nothing else; otherwise (mock) confirms and runs `onDone`. */
   const pay = async (onDone: () => void): Promise<void> => {
-    if (submitting) return;
+    if (busyRef.current) return;
+    busyRef.current = true;
     setSubmitting(true);
     setError(null);
     try {
@@ -193,6 +202,7 @@ export function useBookingFlow(ctx: BookingContext) {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Une erreur est survenue.");
     } finally {
+      busyRef.current = false;
       setSubmitting(false);
     }
   };
