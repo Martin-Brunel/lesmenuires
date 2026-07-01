@@ -101,6 +101,7 @@ function ProductRow({
         active,
         position: product.position,
       });
+      toast.success("Prestation enregistrée.");
       onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur");
@@ -164,7 +165,7 @@ function ProductRow({
       <TableCell className="text-right">
         <div className="flex items-center justify-end gap-1">
           <Button size="sm" onClick={save} disabled={!dirty || busy}>
-            {busy ? "…" : "OK"}
+            {busy ? "…" : "Enregistrer"}
           </Button>
           <Button size="icon" variant="ghost" onClick={remove} disabled={busy} title="Supprimer">
             <Trash2 className="size-4 text-destructive" />

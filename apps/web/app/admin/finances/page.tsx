@@ -51,7 +51,7 @@ export default function FinancesPage() {
 
   const s = data.summary;
   const kpis = [
-    { label: "Encaissé net", value: fmtEur(s.netCollectedCents), hint: "Acomptes + soldes + cautions capturées − remboursements" },
+    { label: "Encaissé net", value: fmtEur(s.netCollectedCents), hint: "Acomptes + soldes + cautions débitées − remboursements" },
     { label: "Acomptes réglés", value: fmtEur(s.depositsPaidCents) },
     { label: "Soldes réglés", value: fmtEur(s.balancesPaidCents) },
     { label: "Remboursements", value: `− ${fmtEur(s.refundsCents)}` },

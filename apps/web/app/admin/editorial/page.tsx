@@ -17,10 +17,11 @@ export default function EditorialPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [tab, setTab] = useState<"contenu" | "photos">("contenu");
 
   useEffect(() => {
-    adminApi.getProperty(SLUG).then(setP).catch(() => {});
+    adminApi.getProperty(SLUG).then(setP).catch(() => setLoadError(true));
   }, []);
 
   const set = <K extends keyof AdminProperty>(k: K, v: AdminProperty[K]) =>
@@ -46,6 +47,9 @@ export default function EditorialPage() {
     }
   };
 
+  if (loadError) {
+    return <div className="text-sm text-destructive">Impossible de charger la fiche. Rechargez la page.</div>;
+  }
   if (!p) {
     return <div className="text-sm text-muted-foreground">Chargement…</div>;
   }

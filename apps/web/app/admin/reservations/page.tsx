@@ -47,6 +47,7 @@ export default function ReservationsPage() {
   const [bookings, setBookings] = useState<AdminBooking[] | null>(null);
   const [cancelTarget, setCancelTarget] = useState<AdminBooking | null>(null);
   const [sigTarget, setSigTarget] = useState<{ ref: string; info: SignatureInfo | null }>();
+  const [pending, setPending] = useState<string | null>(null);
   const confirm = useConfirm();
   const prompt = usePrompt();
 
@@ -59,7 +60,15 @@ export default function ReservationsPage() {
     }
   };
 
-  const reload = () => adminApi.listBookings().then(setBookings).catch(() => setBookings([]));
+  const [loadError, setLoadError] = useState(false);
+  const reload = () =>
+    adminApi
+      .listBookings()
+      .then((b) => {
+        setBookings(b);
+        setLoadError(false);
+      })
+      .catch(() => setLoadError(true));
   useEffect(() => {
     reload();
   }, []);
@@ -81,12 +90,15 @@ export default function ReservationsPage() {
       confirmLabel: "Clôturer",
     });
     if (!ok) return;
+    setPending(reference);
     try {
       await adminApi.releaseCaution(reference);
       toast.success("Caution clôturée.");
       reload();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      setPending(null);
     }
   };
 
@@ -106,12 +118,15 @@ export default function ReservationsPage() {
       toast.error(`Le montant dépasse la caution (max ${max} €).`);
       return;
     }
+    setPending(b.reference);
     try {
       await adminApi.captureCaution(b.reference, amount);
-      toast.success(`${(amount / 100).toFixed(2)} € débités sur la caution.`);
+      toast.success(`${fmtEur(amount)} débités sur la caution.`);
       reload();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      setPending(null);
     }
   };
 
@@ -129,21 +144,25 @@ export default function ReservationsPage() {
       toast.error("Type invalide (deposit ou balance).");
       return;
     }
+    const maxCents = t === "balance" ? b.balanceCents : b.depositCents;
     const amount = parseEuros(
       await prompt({
         title: "Montant à rembourser",
         label: "Montant (€)",
-        defaultValue: (b.depositCents / 100).toFixed(0),
+        defaultValue: (maxCents / 100).toFixed(0),
         confirmLabel: "Rembourser",
       }),
     );
     if (amount === null) return;
+    setPending(b.reference);
     try {
       await adminApi.refundPayment(b.reference, amount, t);
-      toast.success(`${(amount / 100).toFixed(2)} € remboursés.`);
+      toast.success(`${fmtEur(amount)} remboursés.`);
       reload();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      setPending(null);
     }
   };
 
@@ -170,14 +189,21 @@ export default function ReservationsPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {bookings === null && (
+            {loadError && (
+              <TableRow>
+                <TableCell colSpan={8} className="text-destructive py-6 text-center">
+                  Impossible de charger les réservations. Rechargez la page.
+                </TableCell>
+              </TableRow>
+            )}
+            {!loadError && bookings === null && (
               <TableRow>
                 <TableCell colSpan={8} className="text-muted-foreground py-6 text-center">
                   Chargement…
                 </TableCell>
               </TableRow>
             )}
-            {bookings?.length === 0 && (
+            {!loadError && bookings?.length === 0 && (
               <TableRow>
                 <TableCell colSpan={8} className="text-muted-foreground py-6 text-center">
                   Aucune réservation pour le moment.
@@ -243,10 +269,10 @@ export default function ReservationsPage() {
                       b.cautionCents > 0 &&
                       !b.cautionReleasedAt && (
                         <>
-                          <Button size="sm" variant="ghost" onClick={() => captureCaution(b)}>
+                          <Button size="sm" variant="ghost" disabled={pending === b.reference} onClick={() => captureCaution(b)}>
                             Débiter dégâts
                           </Button>
-                          <Button size="sm" variant="ghost" onClick={() => releaseCaution(b.reference)}>
+                          <Button size="sm" variant="ghost" disabled={pending === b.reference} onClick={() => releaseCaution(b.reference)}>
                             Clôturer caution
                           </Button>
                         </>
@@ -259,7 +285,7 @@ export default function ReservationsPage() {
                       </span>
                     )}
                     {b.depositPaidAt && b.status !== "cancelled" && (
-                      <Button size="sm" variant="ghost" onClick={() => refund(b)}>
+                      <Button size="sm" variant="ghost" disabled={pending === b.reference} onClick={() => refund(b)}>
                         Rembourser
                       </Button>
                     )}

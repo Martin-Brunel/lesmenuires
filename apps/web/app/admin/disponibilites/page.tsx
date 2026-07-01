@@ -29,7 +29,7 @@ import {
 const SLUG = "ladret";
 const STATUS_LABEL: Record<string, string> = {
   available: "Disponible",
-  booked: "Complet",
+  booked: "Réservé",
   blocked: "Bloqué",
 };
 const selectBase =
@@ -59,6 +59,7 @@ export default function DisponibilitesPage() {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const [saveErr, setSaveErr] = useState(false);
 
   const load = (sid: string) => {
     if (!sid) {
@@ -101,6 +102,7 @@ export default function DisponibilitesPage() {
   const saveAll = async () => {
     setSaving(true);
     setSaveMsg(null);
+    setSaveErr(false);
     try {
       await Promise.all(
         dirtyWeeks.map((w) => {
@@ -117,6 +119,7 @@ export default function DisponibilitesPage() {
       setTimeout(() => setSaveMsg(null), 2500);
       reload();
     } catch (e) {
+      setSaveErr(true);
       setSaveMsg(e instanceof Error ? e.message : "Erreur");
     } finally {
       setSaving(false);
@@ -226,7 +229,7 @@ export default function DisponibilitesPage() {
               {dirtyWeeks.length === 0
                 ? "Aucune modification en attente"
                 : `${dirtyWeeks.length} semaine(s) modifiée(s)`}
-              {saveMsg && <span className="ml-2 text-emerald-600">{saveMsg}</span>}
+              {saveMsg && <span className={"ml-2 " + (saveErr ? "text-destructive" : "text-emerald-600")}>{saveMsg}</span>}
             </div>
             <Button onClick={saveAll} disabled={saving || dirtyWeeks.length === 0}>
               {saving ? "Enregistrement…" : "Enregistrer les modifications"}

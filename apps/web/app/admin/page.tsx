@@ -34,6 +34,7 @@ export default function DashboardPage() {
   const [weeks, setWeeks] = useState<AdminWeek[]>([]);
   const [bookings, setBookings] = useState<AdminBooking[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     Promise.all([adminApi.listWeeks(SLUG), adminApi.listBookings()])
@@ -41,7 +42,7 @@ export default function DashboardPage() {
         setWeeks(w);
         setBookings(b);
       })
-      .catch(() => {})
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
   }, []);
 
@@ -53,7 +54,7 @@ export default function DashboardPage() {
     { label: "Réservations", value: loading ? "…" : String(bookings.length) },
     { label: "Valeur cumulée", value: loading ? "…" : fmtEur(pipeline) },
     { label: "Semaines disponibles", value: loading ? "…" : String(available) },
-    { label: "Semaines complètes", value: loading ? "…" : String(booked) },
+    { label: "Semaines réservées", value: loading ? "…" : String(booked) },
   ];
 
   const attention = bookings
@@ -66,6 +67,11 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Tableau de bord</h1>
         <p className="text-sm text-muted-foreground">Vue d&apos;ensemble de la location.</p>
       </div>
+      {loadError && (
+        <p className="text-sm text-destructive">
+          Impossible de charger les données. Rechargez la page.
+        </p>
+      )}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {stats.map((s) => (
           <Card key={s.label}>
