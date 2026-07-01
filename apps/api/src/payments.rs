@@ -37,6 +37,16 @@ pub trait PaymentProvider: Send + Sync {
     /// Read the deposit intent status + saved card (after the buyer paid).
     async fn retrieve_deposit(&self, intent_id: &str) -> Result<DepositResult, AppError>;
 
+    /// On-session PaymentIntent for the remaining balance, so a customer whose
+    /// off-session charge failed (SCA/3DS, expired card) can pay in the browser.
+    /// Reuses the booking's existing Stripe customer when known.
+    async fn create_balance_intent(
+        &self,
+        reference: &str,
+        amount_cents: i64,
+        customer_ref: Option<&str>,
+    ) -> Result<DepositIntent, AppError>;
+
     /// Off-session charge on the saved card (balance). `idem` is a stable
     /// idempotency key so a retried tick never double-charges.
     async fn charge_off_session(
@@ -104,6 +114,19 @@ impl PaymentProvider for MockProvider {
             paid: true,
             customer_id: Some("mock_cus".into()),
             payment_method_id: Some("mock_pm".into()),
+        })
+    }
+    async fn create_balance_intent(
+        &self,
+        _reference: &str,
+        _amount_cents: i64,
+        _customer_ref: Option<&str>,
+    ) -> Result<DepositIntent, AppError> {
+        let intent_id = fake("mock_pi");
+        Ok(DepositIntent {
+            client_secret: format!("{intent_id}_secret"),
+            intent_id,
+            customer_id: Some("mock_cus".into()),
         })
     }
     async fn charge_off_session(
@@ -274,6 +297,39 @@ impl PaymentProvider for StripeProvider {
             intent_id: jstr(&pi, "id"),
             client_secret: jstr(&pi, "client_secret"),
             customer_id: Some(customer_id),
+        })
+    }
+
+    async fn create_balance_intent(
+        &self,
+        reference: &str,
+        amount_cents: i64,
+        customer_ref: Option<&str>,
+    ) -> Result<DepositIntent, AppError> {
+        // Reuse the existing customer when known (keeps the saved card). Stable key
+        // per reference: the balance is fixed, so a retried pay-balance reuses the
+        // same intent instead of spawning orphans.
+        let mut params = vec![
+            ("amount", amount_cents.to_string()),
+            ("currency", "eur".to_string()),
+            ("automatic_payment_methods[enabled]", "true".to_string()),
+            ("metadata[reference]", reference.to_string()),
+            ("metadata[kind]", "balance".to_string()),
+        ];
+        if let Some(cus) = customer_ref.filter(|c| !c.is_empty()) {
+            params.push(("customer", cus.to_string()));
+        }
+        let pi = self
+            .post_idem(
+                "/payment_intents",
+                &params,
+                Some(&format!("pi-balance-{reference}")),
+            )
+            .await?;
+        Ok(DepositIntent {
+            intent_id: jstr(&pi, "id"),
+            client_secret: jstr(&pi, "client_secret"),
+            customer_id: customer_ref.map(|c| c.to_string()),
         })
     }
 

@@ -119,6 +119,11 @@ async fn main() -> anyhow::Result<()> {
             "/api/bookings/:reference/confirm-deposit",
             post(confirm_deposit),
         )
+        .route("/api/bookings/:reference/pay-balance", post(pay_balance))
+        .route(
+            "/api/bookings/:reference/confirm-balance",
+            post(confirm_balance),
+        )
         .route("/api/payments/webhook", post(stripe_webhook))
         .with_state(state.clone())
         .nest("/api/admin", admin::routes(state.clone()))
@@ -1041,6 +1046,11 @@ struct MyBookingDto {
     balance_paid_at: Option<DateTime<Utc>>,
     caution_authorized_at: Option<DateTime<Utc>>,
     cancelled_at: Option<DateTime<Utc>>,
+    tourist_tax_cents: i64,
+    /// The balance can be settled online now (confirmed, unpaid, not disputed).
+    balance_payable: bool,
+    /// A previous automatic charge failed (dunning) — surfaced to the client.
+    balance_failed: bool,
     created_at: DateTime<Utc>,
 }
 
@@ -1097,6 +1107,10 @@ async fn customer_me(
         "select b.reference, b.status, aw.range_label as week_range, aw.arrival_label as arrival, \
                 aw.start_date, b.total_cents, b.deposit_cents, b.balance_cents, b.caution_cents, \
                 b.deposit_paid_at, b.balance_paid_at, b.caution_authorized_at, b.cancelled_at, \
+                b.tourist_tax_cents, \
+                (b.status = 'confirmed' and b.balance_paid_at is null and b.balance_cents > 0 \
+                    and b.payment_flag is null) as balance_payable, \
+                (b.balance_attempts > 0 and b.balance_paid_at is null) as balance_failed, \
                 b.created_at \
          from booking b join availability_week aw on aw.id = b.week_id \
          where b.customer_id = $1 order by aw.start_date desc",
@@ -1121,6 +1135,156 @@ async fn customer_me(
         property,
         bookings,
     }))
+}
+
+/// Resolve the logged-in customer from the `csession` cookie, or 401.
+async fn csession_customer(st: &AppState, headers: &HeaderMap) -> Result<Uuid, AppError> {
+    let token = headers
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(parse_csession)
+        .ok_or(AppError::Unauthorized)?;
+    sqlx::query_scalar(
+        "select customer_id from customer_session where token = $1 and expires_at > now()",
+    )
+    .bind(&token)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or(AppError::Unauthorized)
+}
+
+#[derive(FromRow)]
+struct BalancePayRow {
+    id: Uuid,
+    customer_id: Option<Uuid>,
+    status: String,
+    balance_cents: i64,
+    balance_paid_at: Option<DateTime<Utc>>,
+    payment_flag: Option<String>,
+    provider_customer_id: Option<String>,
+    balance_intent_id: Option<String>,
+}
+
+async fn load_owned_booking(
+    st: &AppState,
+    headers: &HeaderMap,
+    reference: &str,
+) -> Result<BalancePayRow, AppError> {
+    let cid = csession_customer(st, headers).await?;
+    let b = sqlx::query_as::<_, BalancePayRow>(
+        "select id, customer_id, status, balance_cents, balance_paid_at, payment_flag, \
+                provider_customer_id, balance_intent_id \
+         from booking where reference = $1",
+    )
+    .bind(reference)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("réservation".into()))?;
+    if b.customer_id != Some(cid) {
+        return Err(AppError::Unauthorized);
+    }
+    Ok(b)
+}
+
+/// Fallback online balance payment (on-session, so 3DS/SCA is handled in-browser)
+/// for a customer whose automatic off-session charge failed. Auth via csession.
+async fn pay_balance(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Path(reference): Path<String>,
+) -> Result<Json<PayDepositResponse>, AppError> {
+    let b = load_owned_booking(&st, &headers, &reference).await?;
+
+    if b.balance_paid_at.is_some() {
+        return Err(AppError::BadRequest("Le solde est déjà réglé.".into()));
+    }
+    if b.status != "confirmed" || b.balance_cents <= 0 {
+        return Err(AppError::BadRequest(
+            "Aucun solde à régler pour cette réservation.".into(),
+        ));
+    }
+    if b.payment_flag.is_some() {
+        return Err(AppError::BadRequest(
+            "Cette réservation est en cours de traitement (remboursement ou litige).".into(),
+        ));
+    }
+
+    let intent = st
+        .payments
+        .create_balance_intent(&reference, b.balance_cents, b.provider_customer_id.as_deref())
+        .await?;
+    let provider = st.payments.name().to_string();
+
+    let mut tx = st.pool.begin().await?;
+    sqlx::query(
+        "insert into payment (booking_id, type, provider, provider_intent_id, amount_cents, status) \
+         values ($1, 'balance', $2, $3, $4, 'pending')",
+    )
+    .bind(b.id)
+    .bind(&provider)
+    .bind(&intent.intent_id)
+    .bind(b.balance_cents)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("update booking set balance_intent_id = $2, updated_at = now() where id = $1")
+        .bind(b.id)
+        .bind(&intent.intent_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+
+    Ok(Json(PayDepositResponse {
+        provider,
+        client_secret: intent.client_secret,
+        publishable_key: st.payments.publishable_key(),
+        deposit_cents: b.balance_cents,
+    }))
+}
+
+/// Confirm a fallback balance payment once the buyer completed it in the browser.
+async fn confirm_balance(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Path(reference): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let b = load_owned_booking(&st, &headers, &reference).await?;
+    if b.balance_paid_at.is_some() {
+        return Ok(StatusCode::NO_CONTENT); // idempotent
+    }
+    let intent_id = b
+        .balance_intent_id
+        .ok_or_else(|| AppError::BadRequest("Aucun paiement de solde en cours.".into()))?;
+
+    let result = st.payments.retrieve_deposit(&intent_id).await?;
+    if !result.paid {
+        return Err(AppError::BadRequest("Paiement non finalisé.".into()));
+    }
+
+    settle_balance(&st.pool, b.id, &intent_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Mark a booking's balance as paid (idempotent). Shared by the online fallback
+/// confirm and the Stripe webhook.
+async fn settle_balance(pool: &PgPool, booking_id: Uuid, intent_id: &str) -> Result<(), AppError> {
+    let mut tx = pool.begin().await?;
+    sqlx::query(
+        "update payment set status = 'succeeded', updated_at = now() \
+         where provider_intent_id = $1",
+    )
+    .bind(intent_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "update booking set status = 'balance_paid', balance_paid_at = coalesce(balance_paid_at, now()), \
+            balance_last_error = null, updated_at = now() \
+         where id = $1 and balance_paid_at is null",
+    )
+    .bind(booking_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 // ----------------------------------------------------------------------------
@@ -1308,6 +1472,20 @@ async fn confirm_from_webhook(st: &AppState, pi: &serde_json::Value) -> Result<(
         }
     }
     tx.commit().await?;
+
+    // On-session balance payment (pay-balance fallback): settle idempotently so a
+    // succeeded balance intent marks the booking balance_paid even without the
+    // synchronous confirm-balance call.
+    let balance_bid: Option<Uuid> = sqlx::query_scalar(
+        "select id from booking where balance_intent_id = $1 and balance_paid_at is null",
+    )
+    .bind(intent_id)
+    .fetch_optional(&st.pool)
+    .await?;
+    if let Some(bid) = balance_bid {
+        settle_balance(&st.pool, bid, intent_id).await?;
+        tracing::info!("webhook: solde réglé en ligne (intent {intent_id})");
+    }
     Ok(())
 }
 

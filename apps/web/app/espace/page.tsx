@@ -2,9 +2,19 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getMe, requestEspaceLink, logoutEspace, type MeResponse, type MyBooking, type MeProperty } from "@/lib/api";
+import {
+  getMe,
+  requestEspaceLink,
+  logoutEspace,
+  payBalance,
+  confirmBalance,
+  type MeResponse,
+  type MyBooking,
+  type MeProperty,
+} from "@/lib/api";
 import { ACCENT, eur, balanceDueLabel } from "@/components/booking/data";
 import { css } from "@/components/booking/css";
+import { StripeCheckout } from "@/components/booking/StripeCheckout";
 
 const STATUS: Record<string, { label: string; color: string }> = {
   cart: { label: "Paiement en attente", color: "#B8860B" },
@@ -51,6 +61,8 @@ export default function EspacePage() {
     setSent(false);
     setEmail("");
   };
+
+  const reload = () => getMe().then(setMe).catch(() => {});
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -153,7 +165,7 @@ export default function EspacePage() {
             {upcoming.length > 0 && (
               <Section title="À venir">
                 {upcoming.map((b) => (
-                  <BookingCard key={b.reference} b={b} />
+                  <BookingCard key={b.reference} b={b} onReload={reload} />
                 ))}
               </Section>
             )}
@@ -161,7 +173,7 @@ export default function EspacePage() {
             {past.length > 0 && (
               <Section title="Séjours passés">
                 {past.map((b) => (
-                  <BookingCard key={b.reference} b={b} muted />
+                  <BookingCard key={b.reference} b={b} muted onReload={reload} />
                 ))}
               </Section>
             )}
@@ -228,9 +240,53 @@ function PrepareStay({ next, property }: { next: MyBooking; property: MeProperty
   );
 }
 
-function BookingCard({ b, muted = false }: { b: MyBooking; muted?: boolean }) {
+function BookingCard({
+  b,
+  muted = false,
+  onReload,
+}: {
+  b: MyBooking;
+  muted?: boolean;
+  onReload: () => void;
+}) {
   const st = STATUS[b.status] ?? { label: b.status, color: "#9A9C97" };
   const cancelled = b.status === "cancelled";
+  const [busy, setBusy] = useState(false);
+  const [payErr, setPayErr] = useState<string | null>(null);
+  const [stripeSession, setStripeSession] = useState<{ cs: string; pk: string } | null>(null);
+
+  const startBalance = async () => {
+    if (busy) return;
+    setBusy(true);
+    setPayErr(null);
+    try {
+      const p = await payBalance(b.reference);
+      if (p.provider === "stripe" && p.publishableKey) {
+        setStripeSession({ cs: p.clientSecret, pk: p.publishableKey });
+      } else {
+        await confirmBalance(b.reference);
+        onReload();
+      }
+    } catch (e) {
+      setPayErr(e instanceof Error ? e.message : "Une erreur est survenue.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onStripePaid = async () => {
+    try {
+      await confirmBalance(b.reference);
+      setStripeSession(null);
+      onReload();
+    } catch {
+      setStripeSession(null);
+      setPayErr(
+        "Votre paiement a été accepté. La confirmation est en cours ; rafraîchissez dans un instant.",
+      );
+    }
+  };
+
   return (
     <div style={css(`background:#FFF;border:1px solid rgba(0,0,0,.08);border-radius:18px;padding:22px 24px;margin-bottom:14px;box-shadow:0 10px 26px rgba(0,0,0,.04);${muted ? "opacity:.75;" : ""}`)}>
       <div style={css("display:flex;align-items:flex-start;justify-content:space-between;gap:16px")}>
@@ -279,6 +335,36 @@ function BookingCard({ b, muted = false }: { b: MyBooking; muted?: boolean }) {
           amount={eur(b.cautionCents)}
         />
       </div>
+
+      {b.balancePayable && (
+        <div style={css("margin-top:16px;padding-top:16px;border-top:1px solid rgba(0,0,0,.08)")}>
+          {b.balanceFailed && (
+            <div style={css("margin-bottom:10px;font:400 12.5px/1.5 'Hanken Grotesk';color:#B23B3B")}>
+              Le prélèvement automatique du solde n&apos;a pas abouti. Réglez-le en ligne ci-dessous
+              pour finaliser votre réservation.
+            </div>
+          )}
+          {payErr && (
+            <div style={css("margin-bottom:10px;font:400 12.5px 'Hanken Grotesk';color:#B23B3B")}>{payErr}</div>
+          )}
+          <div
+            onClick={startBalance}
+            style={css(`display:inline-block;padding:13px 22px;border-radius:12px;text-align:center;font:600 13.5px 'Hanken Grotesk';${busy ? "background:#D8D7D2;color:#fff;cursor:default;" : "background:#1A1B1A;color:#fff;cursor:pointer;"}`)}
+          >
+            {busy ? "Paiement en cours…" : `Régler le solde en ligne · ${eur(b.balanceCents)}`}
+          </div>
+        </div>
+      )}
+
+      {stripeSession && (
+        <StripeCheckout
+          publishableKey={stripeSession.pk}
+          clientSecret={stripeSession.cs}
+          amountLabel={eur(b.balanceCents)}
+          onPaid={onStripePaid}
+          onClose={() => setStripeSession(null)}
+        />
+      )}
     </div>
   );
 }

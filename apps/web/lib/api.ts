@@ -167,6 +167,31 @@ export async function confirmDeposit(reference: string): Promise<BookingResult> 
   return res.json();
 }
 
+/** Start an online balance payment (fallback for a failed off-session charge). */
+export async function payBalance(reference: string): Promise<PayDepositResult> {
+  const res = await fetch(`${API_URL}/api/bookings/${reference}/pay-balance`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? `pay-balance: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/** Confirm the online balance payment once completed in the browser. */
+export async function confirmBalance(reference: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/bookings/${reference}/confirm-balance`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? `confirm-balance: HTTP ${res.status}`);
+  }
+}
+
 export type MyBooking = {
   reference: string;
   status: string;
@@ -181,6 +206,9 @@ export type MyBooking = {
   balancePaidAt: string | null;
   cautionAuthorizedAt: string | null;
   cancelledAt: string | null;
+  touristTaxCents: number;
+  balancePayable: boolean;
+  balanceFailed: boolean;
   createdAt: string;
 };
 
