@@ -72,14 +72,14 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   return (
     <DialogProvider>
     <div className="min-h-screen flex bg-muted/20">
-      <aside className="w-64 shrink-0 border-r bg-background flex flex-col">
-        <div className="h-14 flex items-center px-5 border-b">
+      <aside className="w-64 shrink-0 border-r bg-background flex flex-col sticky top-0 h-screen">
+        <div className="h-14 flex items-center px-5 border-b shrink-0">
           <span className="text-lg" style={{ fontFamily: "'Marcellus',serif" }}>
             L&apos;Adret
           </span>
           <span className="ml-2 text-xs text-muted-foreground">admin</span>
         </div>
-        <nav className="flex-1 p-3 space-y-1">
+        <nav className="flex-1 overflow-y-auto p-3 space-y-1">
           {NAV.map((n) => {
             const active = n.exact ? pathname === n.href : pathname.startsWith(n.href);
             const Icon = n.icon;
