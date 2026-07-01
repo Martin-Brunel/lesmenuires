@@ -337,6 +337,10 @@ async fn update_property(
     if p.tourist_tax_cents < 0 {
         return Err(AppError::BadRequest("Taxe de séjour invalide.".into()));
     }
+    // Sanitize the rich-text description server-side: it is rendered on the public
+    // site via dangerouslySetInnerHTML, so a compromised admin session must not be
+    // able to inject executable HTML/JS. ammonia keeps the safe Tiptap subset.
+    let clean_description = ammonia::clean(&p.description);
     let dto = sqlx::query_as::<_, AdminPropertyDto>(
         "update property set name=$2, location_label=$3, description=$4, surface_label=$5, \
                 capacity=$6, bedrooms=$7, specs_label=$8, highlight_label=$9, hero_seed=$10, \
@@ -350,7 +354,7 @@ async fn update_property(
     .bind(&slug)
     .bind(&p.name)
     .bind(&p.location_label)
-    .bind(&p.description)
+    .bind(&clean_description)
     .bind(&p.surface_label)
     .bind(p.capacity)
     .bind(p.bedrooms)
