@@ -1,0 +1,28 @@
+# Reverse-proxy de production. TLS automatique (Let's Encrypt) via {$DOMAIN}.
+# /api/* et /media/* -> API Rust ; tout le reste -> front Next.js.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# API + fichiers médias servis par le back Rust.
+	@api path /api/* /media/*
+	handle @api {
+		reverse_proxy api:8080
+	}
+
+	# Front Next.js (SSR + assets).
+	handle {
+		reverse_proxy web:3000
+	}
+
+	# En-têtes de sécurité (le reste des CSP/headers applicatifs vient de Next).
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}

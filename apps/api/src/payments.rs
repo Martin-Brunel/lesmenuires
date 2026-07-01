@@ -142,10 +142,7 @@ impl StripeProvider {
         }
     }
 
-    async fn handle(
-        &self,
-        res: reqwest::Response,
-    ) -> Result<serde_json::Value, AppError> {
+    async fn handle(&self, res: reqwest::Response) -> Result<serde_json::Value, AppError> {
         let status = res.status();
         let body: serde_json::Value = res
             .json()
@@ -190,7 +187,10 @@ impl StripeProvider {
 }
 
 fn jstr(v: &serde_json::Value, key: &str) -> String {
-    v.get(key).and_then(|x| x.as_str()).unwrap_or_default().to_string()
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .unwrap_or_default()
+        .to_string()
 }
 
 #[async_trait]
@@ -208,7 +208,10 @@ impl PaymentProvider for StripeProvider {
         amount_cents: i64,
     ) -> Result<DepositIntent, AppError> {
         let customer = self
-            .post("/customers", &[("metadata[reference]", reference.to_string())])
+            .post(
+                "/customers",
+                &[("metadata[reference]", reference.to_string())],
+            )
             .await?;
         let customer_id = jstr(&customer, "id");
 
@@ -237,7 +240,10 @@ impl PaymentProvider for StripeProvider {
         let pi = self.get(&format!("/payment_intents/{intent_id}")).await?;
         Ok(DepositResult {
             paid: pi.get("status").and_then(|s| s.as_str()) == Some("succeeded"),
-            customer_id: pi.get("customer").and_then(|c| c.as_str()).map(String::from),
+            customer_id: pi
+                .get("customer")
+                .and_then(|c| c.as_str())
+                .map(String::from),
             payment_method_id: pi
                 .get("payment_method")
                 .and_then(|p| p.as_str())

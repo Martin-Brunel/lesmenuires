@@ -93,7 +93,11 @@ async fn charge_due_balances(
 
     for d in due {
         match payments
-            .charge_off_session(&d.provider_customer_id, &d.provider_payment_method_id, d.balance_cents)
+            .charge_off_session(
+                &d.provider_customer_id,
+                &d.provider_payment_method_id,
+                d.balance_cents,
+            )
             .await
         {
             Ok(intent_id) => {
@@ -122,7 +126,10 @@ async fn charge_due_balances(
             }
             Err(e) => {
                 r.balance_failures += 1;
-                tracing::warn!("échec solde {} (retry au prochain tick): {e:?}", d.reference);
+                tracing::warn!(
+                    "échec solde {} (retry au prochain tick): {e:?}",
+                    d.reference
+                );
             }
         }
     }
@@ -157,7 +164,11 @@ async fn authorize_due_cautions(
 
     for d in due {
         match payments
-            .authorize_hold(&d.provider_customer_id, &d.provider_payment_method_id, d.caution_cents)
+            .authorize_hold(
+                &d.provider_customer_id,
+                &d.provider_payment_method_id,
+                d.caution_cents,
+            )
             .await
         {
             Ok(intent_id) => {
@@ -195,7 +206,6 @@ async fn authorize_due_cautions(
 
 #[derive(sqlx::FromRow)]
 struct CartRow {
-    reference: String,
     email: String,
     first_name: String,
 }
@@ -207,8 +217,8 @@ async fn remind_abandoned_carts(pool: &PgPool, r: &mut TickReport) -> Result<(),
             update booking set cart_reminder_sent_at = now(), updated_at = now() \
             where status = 'cart' and cart_reminder_sent_at is null \
               and created_at < now() - interval '1 hour' \
-            returning reference, customer_id ) \
-         select u.reference, c.email, c.first_name \
+            returning customer_id ) \
+         select c.email, c.first_name \
          from updated u join customer c on c.id = u.customer_id \
          where coalesce(c.email, '') <> ''",
     )
@@ -232,7 +242,11 @@ async fn remind_abandoned_carts(pool: &PgPool, r: &mut TickReport) -> Result<(),
             "Finaliser ma réservation",
             &link,
         );
-        email::spawn(cart.email, "Votre réservation vous attend — L'Adret".into(), html);
+        email::spawn(
+            cart.email,
+            "Votre réservation vous attend — L'Adret".into(),
+            html,
+        );
         r.carts_reminded += 1;
     }
     Ok(())

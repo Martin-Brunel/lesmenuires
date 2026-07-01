@@ -38,8 +38,14 @@ pub fn routes(state: AppState) -> Router {
         .route("/products/:id", put(update_product).delete(delete_product))
         .route("/bookings", get(list_bookings))
         .route("/bookings/:reference/cancel", post(cancel_booking))
-        .route("/bookings/:reference/caution/capture", post(capture_caution))
-        .route("/bookings/:reference/caution/release", post(release_caution))
+        .route(
+            "/bookings/:reference/caution/capture",
+            post(capture_caution),
+        )
+        .route(
+            "/bookings/:reference/caution/release",
+            post(release_caution),
+        )
         .route("/bookings/:reference/refund", post(refund_payment))
         .route("/scheduler/run", post(run_scheduler))
         .layer(DefaultBodyLimit::max(12 * 1024 * 1024))
@@ -225,7 +231,11 @@ async fn logout(State(st): State<AppState>, req: Request) -> Result<Response, Ap
 
 fn cookie_value(token: &str, max_age: i64) -> axum::http::HeaderValue {
     // SameSite=Lax suffit : front et API partagent le site (localhost / domaine).
-    let v = format!("session={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age}");
+    // Secure ajouté en production (COOKIE_SECURE=true) — cf. crate::cookie_secure.
+    let v = format!(
+        "session={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age}{}",
+        crate::cookie_secure()
+    );
     axum::http::HeaderValue::from_str(&v).expect("valid cookie header")
 }
 
@@ -233,12 +243,11 @@ async fn me(
     State(st): State<AppState>,
     Extension(AdminId(id)): Extension<AdminId>,
 ) -> Result<Json<MeDto>, AppError> {
-    let dto = sqlx::query_as::<_, MeDto>(
-        "select email, display_name from admin_user where id = $1",
-    )
-    .bind(id)
-    .fetch_one(&st.pool)
-    .await?;
+    let dto =
+        sqlx::query_as::<_, MeDto>("select email, display_name from admin_user where id = $1")
+            .bind(id)
+            .fetch_one(&st.pool)
+            .await?;
     Ok(Json(dto))
 }
 
@@ -457,9 +466,7 @@ struct AdminProductDto {
     position: i32,
 }
 
-async fn list_products(
-    State(st): State<AppState>,
-) -> Result<Json<Vec<AdminProductDto>>, AppError> {
+async fn list_products(State(st): State<AppState>) -> Result<Json<Vec<AdminProductDto>>, AppError> {
     let products = sqlx::query_as::<_, AdminProductDto>(
         "select id, key, label, description, price_cents, active, position \
          from product order by position, label",
@@ -583,9 +590,7 @@ struct AdminBookingDto {
     created_at: DateTime<Utc>,
 }
 
-async fn list_bookings(
-    State(st): State<AppState>,
-) -> Result<Json<Vec<AdminBookingDto>>, AppError> {
+async fn list_bookings(State(st): State<AppState>) -> Result<Json<Vec<AdminBookingDto>>, AppError> {
     let rows = sqlx::query_as::<_, AdminBookingDto>(
         "select b.reference, b.status, aw.range_label as week_range, \
                 b.total_cents, b.deposit_cents, b.balance_cents, b.caution_cents, \
@@ -612,7 +617,9 @@ async fn list_bookings(
 async fn run_scheduler(
     State(st): State<AppState>,
 ) -> Result<Json<crate::scheduler::TickReport>, AppError> {
-    Ok(Json(crate::scheduler::run_tick(&st.pool, &st.payments).await))
+    Ok(Json(
+        crate::scheduler::run_tick(&st.pool, &st.payments).await,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -666,8 +673,16 @@ async fn cancel_booking(
         ));
     }
 
-    let deposit_paid = if b.deposit_paid_at.is_some() { b.deposit_cents } else { 0 };
-    let balance_paid = if b.balance_paid_at.is_some() { b.balance_cents } else { 0 };
+    let deposit_paid = if b.deposit_paid_at.is_some() {
+        b.deposit_cents
+    } else {
+        0
+    };
+    let balance_paid = if b.balance_paid_at.is_some() {
+        b.balance_cents
+    } else {
+        0
+    };
     if body.refund_deposit_cents < 0 || body.refund_deposit_cents > deposit_paid {
         return Err(AppError::BadRequest(
             "Remboursement d'acompte invalide (supérieur au montant réglé).".into(),
@@ -845,7 +860,9 @@ async fn do_refund(
     amount_cents: i64,
 ) -> Result<(), AppError> {
     if amount_cents <= 0 {
-        return Err(AppError::BadRequest("Montant à rembourser invalide.".into()));
+        return Err(AppError::BadRequest(
+            "Montant à rembourser invalide.".into(),
+        ));
     }
     let src: Option<(String, i64)> = sqlx::query_as(
         "select provider_intent_id, amount_cents from payment \
@@ -899,7 +916,9 @@ async fn refund_payment(
     Json(body): Json<RefundInput>,
 ) -> Result<StatusCode, AppError> {
     if body.amount_cents <= 0 {
-        return Err(AppError::BadRequest("Montant à rembourser invalide.".into()));
+        return Err(AppError::BadRequest(
+            "Montant à rembourser invalide.".into(),
+        ));
     }
     let ptype = body.payment_type.unwrap_or_else(|| "deposit".into());
     let bid: Uuid = sqlx::query_scalar("select id from booking where reference = $1")
@@ -962,7 +981,11 @@ async fn upload_media(
             Some("image/jpeg") => "jpg",
             Some("image/png") => "png",
             Some("image/webp") => "webp",
-            _ => return Err(AppError::BadRequest("Format accepté : JPEG, PNG ou WebP.".into())),
+            _ => {
+                return Err(AppError::BadRequest(
+                    "Format accepté : JPEG, PNG ou WebP.".into(),
+                ))
+            }
         };
         let data = field
             .bytes()
@@ -972,7 +995,9 @@ async fn upload_media(
             return Err(AppError::BadRequest("Fichier vide.".into()));
         }
         if data.len() > 10 * 1024 * 1024 {
-            return Err(AppError::BadRequest("Image trop lourde (max 10 Mo).".into()));
+            return Err(AppError::BadRequest(
+                "Image trop lourde (max 10 Mo).".into(),
+            ));
         }
 
         let filename = format!("{}.{}", Uuid::new_v4().simple(), ext);
@@ -1056,8 +1081,18 @@ fn fr_month_abbr(m: u32) -> &'static str {
 
 fn fr_month_full(m: u32) -> &'static str {
     [
-        "janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre",
-        "octobre", "novembre", "décembre",
+        "janvier",
+        "février",
+        "mars",
+        "avril",
+        "mai",
+        "juin",
+        "juillet",
+        "août",
+        "septembre",
+        "octobre",
+        "novembre",
+        "décembre",
     ][(m - 1) as usize]
 }
 
@@ -1135,7 +1170,9 @@ async fn generate_weeks(
     }
     let count = (g.end_date - g.start_date).num_weeks() + 1;
     if count > 52 {
-        return Err(AppError::BadRequest("Plage trop longue (max 52 semaines).".into()));
+        return Err(AppError::BadRequest(
+            "Plage trop longue (max 52 semaines).".into(),
+        ));
     }
 
     let season = sqlx::query_as::<_, (Uuid, serde_json::Value)>(

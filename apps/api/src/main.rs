@@ -54,10 +54,13 @@ async fn main() -> anyhow::Result<()> {
 
     // Credentialed CORS: the back-office sends its session cookie cross-origin,
     // so the origin must be explicit (no wildcard) and credentials allowed.
-    let front_origin =
-        env::var("FRONT_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into());
+    let front_origin = env::var("FRONT_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into());
     let cors = CorsLayer::new()
-        .allow_origin(front_origin.parse::<HeaderValue>().expect("valid FRONT_ORIGIN"))
+        .allow_origin(
+            front_origin
+                .parse::<HeaderValue>()
+                .expect("valid FRONT_ORIGIN"),
+        )
         .allow_credentials(true)
         .allow_methods([
             Method::GET,
@@ -68,9 +71,8 @@ async fn main() -> anyhow::Result<()> {
         ])
         .allow_headers([header::CONTENT_TYPE]);
 
-    let media_dir = std::path::PathBuf::from(
-        env::var("MEDIA_DIR").unwrap_or_else(|_| "./media".into()),
-    );
+    let media_dir =
+        std::path::PathBuf::from(env::var("MEDIA_DIR").unwrap_or_else(|_| "./media".into()));
     tokio::fs::create_dir_all(&media_dir).await?;
 
     let state = AppState {
@@ -83,7 +85,11 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(300);
-    scheduler::spawn(state.pool.clone(), state.payments.clone(), scheduler_interval);
+    scheduler::spawn(
+        state.pool.clone(),
+        state.payments.clone(),
+        scheduler_interval,
+    );
 
     let app = Router::new()
         .route("/api/health", get(health))
@@ -95,7 +101,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/espace/login", get(espace_login))
         .route("/api/espace/logout", post(espace_logout))
         .route("/api/bookings/:reference/pay-deposit", post(pay_deposit))
-        .route("/api/bookings/:reference/confirm-deposit", post(confirm_deposit))
+        .route(
+            "/api/bookings/:reference/confirm-deposit",
+            post(confirm_deposit),
+        )
         .route("/api/payments/webhook", post(stripe_webhook))
         .with_state(state.clone())
         .nest("/api/admin", admin::routes(state.clone()))
@@ -217,9 +226,9 @@ async fn booking_context(
     .fetch_optional(&st.pool)
     .await?;
 
-    let weeks = match &active {
-        Some(a) => {
-            sqlx::query_as::<_, WeekDto>(
+    let weeks =
+        match &active {
+            Some(a) => sqlx::query_as::<_, WeekDto>(
                 "select aw.id, aw.start_date, aw.range_label as \"range\", aw.sub_label as sub, \
                         aw.price_cents, aw.status, (aw.status = 'booked') as booked, \
                         aw.arrival_label as arrival, aw.arrival_short as arr_short, \
@@ -230,10 +239,9 @@ async fn booking_context(
             )
             .bind(a.id)
             .fetch_all(&st.pool)
-            .await?
-        }
-        None => Vec::new(),
-    };
+            .await?,
+            None => Vec::new(),
+        };
 
     let season = active.map(|a| PublicSeason {
         name: a.name,
@@ -534,7 +542,9 @@ async fn pay_deposit(
         return Err(AppError::BadRequest("Réservation déjà réglée.".into()));
     }
     if b.week_status != "available" {
-        return Err(AppError::BadRequest("Cette semaine n'est plus disponible.".into()));
+        return Err(AppError::BadRequest(
+            "Cette semaine n'est plus disponible.".into(),
+        ));
     }
 
     let intent = st
@@ -672,8 +682,24 @@ fn session_token() -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
+/// "; Secure" appended to Set-Cookie when COOKIE_SECURE=true (HTTPS production).
+/// Evaluated once; without it, cookies won't be sent over HTTPS-only contexts
+/// in some browsers and would be exposed if any plain-HTTP hop existed.
+pub(crate) fn cookie_secure() -> &'static str {
+    static SECURE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *SECURE.get_or_init(|| matches!(env::var("COOKIE_SECURE").as_deref(), Ok("true") | Ok("1")))
+    {
+        "; Secure"
+    } else {
+        ""
+    }
+}
+
 fn session_cookie(token: &str) -> String {
-    format!("csession={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000")
+    format!(
+        "csession={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000{}",
+        cookie_secure()
+    )
 }
 
 async fn create_customer_session(pool: &PgPool, cid: Uuid) -> Result<String, AppError> {
@@ -712,7 +738,9 @@ async fn send_welcome_email(pool: &PgPool, cid: Uuid, reference: &str) {
             .await
             .ok()
             .flatten();
-    let Some((mail, first_name)) = cust else { return };
+    let Some((mail, first_name)) = cust else {
+        return;
+    };
     if mail.trim().is_empty() {
         return;
     }
@@ -730,8 +758,17 @@ async fn send_welcome_email(pool: &PgPool, cid: Uuid, reference: &str) {
          Retrouvez le détail de votre séjour, les échéances de paiement et les consignes d'arrivée \
          dans votre espace personnel."
     );
-    let html = email::template("Votre réservation est confirmée", &body, "Accéder à mon espace", &link);
-    email::spawn(mail, "Votre réservation est confirmée — L'Adret".into(), html);
+    let html = email::template(
+        "Votre réservation est confirmée",
+        &body,
+        "Accéder à mon espace",
+        &link,
+    );
+    email::spawn(
+        mail,
+        "Votre réservation est confirmée — L'Adret".into(),
+        html,
+    );
 }
 
 #[derive(Deserialize)]
@@ -827,7 +864,11 @@ async fn espace_logout(
     let mut resp = StatusCode::NO_CONTENT.into_response();
     resp.headers_mut().insert(
         header::SET_COOKIE,
-        HeaderValue::from_static("csession=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"),
+        HeaderValue::from_str(&format!(
+            "csession=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0{}",
+            cookie_secure()
+        ))
+        .map_err(|_| AppError::Internal("cookie".into()))?,
     );
     Ok(resp)
 }
@@ -939,7 +980,11 @@ async fn customer_me(
     .fetch_optional(&st.pool)
     .await?;
 
-    Ok(Json(MeResponse { customer, property, bookings }))
+    Ok(Json(MeResponse {
+        customer,
+        property,
+        bookings,
+    }))
 }
 
 // ----------------------------------------------------------------------------
@@ -993,7 +1038,10 @@ async fn stripe_webhook(
 
     let event: serde_json::Value = serde_json::from_slice(&body)
         .map_err(|_| AppError::BadRequest("Payload webhook invalide.".into()))?;
-    let kind = event.get("type").and_then(|t| t.as_str()).unwrap_or_default();
+    let kind = event
+        .get("type")
+        .and_then(|t| t.as_str())
+        .unwrap_or_default();
 
     if kind == "payment_intent.succeeded" {
         let pi = &event["data"]["object"];
@@ -1050,12 +1098,14 @@ async fn seed_admin(pool: &PgPool) -> anyhow::Result<()> {
         .await?;
     if count == 0 {
         let hash = admin::hash_password(&password)?;
-        sqlx::query("insert into admin_user (email, password_hash, display_name) values ($1,$2,$3)")
-            .bind(email.trim().to_lowercase())
-            .bind(hash)
-            .bind("Admin")
-            .execute(pool)
-            .await?;
+        sqlx::query(
+            "insert into admin_user (email, password_hash, display_name) values ($1,$2,$3)",
+        )
+        .bind(email.trim().to_lowercase())
+        .bind(hash)
+        .bind("Admin")
+        .execute(pool)
+        .await?;
         tracing::info!("seeded initial admin user");
     }
     Ok(())

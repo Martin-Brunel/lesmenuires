@@ -1,0 +1,87 @@
+# =============================================================================
+# Déploiement production — Postgres + API Rust + Web Next.js + Caddy (TLS auto)
+# Lancer depuis la racine du repo :
+#   docker compose -f infra/docker-compose.prod.yml --env-file .env up -d --build
+#
+# Caddy termine le TLS et route : /api/* et /media/* -> api, tout le reste -> web.
+# Le front et l'API partagent donc la même origine (https://$DOMAIN) : cookies
+# de session et CORS "just work".
+# =============================================================================
+
+name: lesmenuires-prod
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-lesmenuires}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD requis}
+      POSTGRES_DB: ${POSTGRES_DB:-lesmenuires}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lesmenuires} -d ${POSTGRES_DB:-lesmenuires}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    # Pas de port exposé sur l'hôte : accès uniquement via le réseau interne.
+
+  api:
+    build:
+      context: ../apps/api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-lesmenuires}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lesmenuires}
+      BIND_ADDR: 0.0.0.0:8080
+      RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
+      API_BASE_URL: https://${DOMAIN}
+      FRONT_ORIGIN: https://${DOMAIN}
+      COOKIE_SECURE: "true"
+      MEDIA_DIR: /app/media
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      MAIL_FROM: ${MAIL_FROM}
+      SCHEDULER_INTERVAL_SECS: ${SCHEDULER_INTERVAL_SECS:-300}
+    volumes:
+      - media:/app/media
+
+  web:
+    build:
+      context: ../apps/web
+      args:
+        # Origine publique : le navigateur et le SSR passent par Caddy.
+        NEXT_PUBLIC_API_URL: https://${DOMAIN}
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+      - web
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  media:
+  caddy_data:
+  caddy_config:
