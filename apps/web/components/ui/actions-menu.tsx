@@ -40,13 +40,16 @@ export function ActionsMenu({ actions, label = "Actions" }: { actions: Action[];
       }
     };
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const dismiss = () => setOpen(false);
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", onKey);
-    window.addEventListener("scroll", () => setOpen(false), true);
-    window.addEventListener("resize", () => setOpen(false));
+    window.addEventListener("scroll", dismiss, true);
+    window.addEventListener("resize", dismiss);
     return () => {
       document.removeEventListener("mousedown", close);
       document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", dismiss, true);
+      window.removeEventListener("resize", dismiss);
     };
   }, [open]);
 
