@@ -72,6 +72,30 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "5" }
 
+  # Sauvegardes automatiques : dump Postgres + archive media, avec rétention.
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-lesmenuires}
+      POSTGRES_DB: ${POSTGRES_DB:-lesmenuires}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      BACKUP_INTERVAL_SECS: ${BACKUP_INTERVAL_SECS:-86400}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      TZ: Europe/Paris
+    entrypoint: ["/bin/sh", "/backup.sh"]
+    volumes:
+      - ./backup/backup.sh:/backup.sh:ro
+      - media:/media:ro
+      - backups:/backups
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
   web:
     build:
       context: ../apps/web
@@ -111,5 +135,6 @@ services:
 volumes:
   pgdata:
   media:
+  backups:
   caddy_data:
   caddy_config:
