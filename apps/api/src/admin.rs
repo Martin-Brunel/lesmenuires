@@ -605,9 +605,11 @@ struct AdminBookingDto {
     caution_cents: i64,
     deposit_paid_at: Option<DateTime<Utc>>,
     balance_paid_at: Option<DateTime<Utc>>,
-    caution_authorized_at: Option<DateTime<Utc>>,
     caution_released_at: Option<DateTime<Utc>>,
     caution_captured_cents: Option<i64>,
+    channel: String,
+    payment_method: Option<String>,
+    caution_method: Option<String>,
     deposit_refunded_cents: i64,
     balance_refunded_cents: i64,
     balance_attempts: i32,
@@ -630,8 +632,9 @@ async fn list_bookings(State(st): State<AppState>) -> Result<Json<Vec<AdminBooki
     let rows = sqlx::query_as::<_, AdminBookingDto>(
         "select b.reference, b.status, aw.range_label as week_range, \
                 b.total_cents, b.deposit_cents, b.balance_cents, b.caution_cents, \
-                b.deposit_paid_at, b.balance_paid_at, b.caution_authorized_at, \
+                b.deposit_paid_at, b.balance_paid_at, \
                 b.caution_released_at, b.caution_captured_cents, \
+                b.channel, b.payment_method, b.caution_method, \
                 coalesce((select sum(p.amount_cents) from payment p where p.booking_id = b.id \
                     and p.type = 'refund' and p.raw->>'source' = 'deposit'), 0)::bigint as deposit_refunded_cents, \
                 coalesce((select sum(p.amount_cents) from payment p where p.booking_id = b.id \

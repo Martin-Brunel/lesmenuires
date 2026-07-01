@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { adminApi, fmtEur, type AdminBooking, type SignatureInfo } from "@/lib/admin-api";
+import { adminApi, fmtEur, type AdminBooking, type AdminWeek, type SignatureInfo } from "@/lib/admin-api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -48,6 +48,7 @@ export default function ReservationsPage() {
   const [cancelTarget, setCancelTarget] = useState<AdminBooking | null>(null);
   const [sigTarget, setSigTarget] = useState<{ ref: string; info: SignatureInfo | null }>();
   const [pending, setPending] = useState<string | null>(null);
+  const [showManual, setShowManual] = useState(false);
   const confirm = useConfirm();
   const prompt = usePrompt();
 
@@ -166,13 +167,42 @@ export default function ReservationsPage() {
     }
   };
 
+  const markPaid = async (b: AdminBooking, kind: "deposit" | "balance") => {
+    const method = await prompt({
+      title: kind === "deposit" ? "Pointer l'acompte" : "Pointer le solde",
+      description: "Moyen de règlement reçu.",
+      label: "Méthode — cheque ou virement",
+      defaultValue: b.paymentMethod ?? "cheque",
+      confirmLabel: "Pointer",
+    });
+    if (method === null) return;
+    const m = method.trim().toLowerCase();
+    if (m !== "cheque" && m !== "virement") {
+      toast.error("Méthode invalide (cheque ou virement).");
+      return;
+    }
+    setPending(b.reference);
+    try {
+      await adminApi.markPaid(b.reference, kind, m);
+      toast.success(kind === "deposit" ? "Acompte pointé." : "Solde pointé.");
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      setPending(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Réservations</h1>
-        <p className="text-sm text-muted-foreground">
-          Réservations reçues, les plus récentes en premier.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Réservations</h1>
+          <p className="text-sm text-muted-foreground">
+            Réservations reçues, les plus récentes en premier.
+          </p>
+        </div>
+        <Button onClick={() => setShowManual(true)}>Nouvelle réservation</Button>
       </div>
       <Card>
         <Table>
@@ -225,6 +255,11 @@ export default function ReservationsPage() {
                     <Badge variant={STATUS_VARIANT[b.status] ?? "muted"}>
                       {STATUS_LABEL[b.status] ?? b.status}
                     </Badge>
+                    {b.channel === "manual" && (
+                      <Badge variant="secondary" title={`Réservation manuelle · ${b.paymentMethod ?? ""}`}>
+                        Manuel{b.paymentMethod ? ` · ${b.paymentMethod}` : ""}
+                      </Badge>
+                    )}
                     {b.balanceOverdue && (
                       <Badge variant="destructive" title="Solde impayé alors que l'arrivée est passée">
                         Solde en retard
@@ -265,6 +300,19 @@ export default function ReservationsPage() {
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-1">
+                    {b.channel === "manual" && !b.depositPaidAt && b.status !== "cancelled" && (
+                      <Button size="sm" variant="ghost" disabled={pending === b.reference} onClick={() => markPaid(b, "deposit")}>
+                        Pointer acompte
+                      </Button>
+                    )}
+                    {b.channel === "manual" &&
+                      b.depositPaidAt &&
+                      !b.balancePaidAt &&
+                      b.status !== "cancelled" && (
+                        <Button size="sm" variant="ghost" disabled={pending === b.reference} onClick={() => markPaid(b, "balance")}>
+                          Pointer solde
+                        </Button>
+                      )}
                     {(b.status === "confirmed" || b.status === "balance_paid") &&
                       b.cautionCents > 0 &&
                       !b.cautionReleasedAt && (
@@ -307,6 +355,15 @@ export default function ReservationsPage() {
         </Table>
       </Card>
 
+      {showManual && (
+        <ManualBookingDialog
+          onClose={() => setShowManual(false)}
+          onDone={() => {
+            setShowManual(false);
+            reload();
+          }}
+        />
+      )}
       {cancelTarget && (
         <CancelDialog
           booking={cancelTarget}
@@ -527,5 +584,154 @@ function RefundField({
         </div>
       )}
     </div>
+  );
+}
+
+function ManualBookingDialog({
+  onClose,
+  onDone,
+}: {
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [weeks, setWeeks] = useState<AdminWeek[] | null>(null);
+  const [weekId, setWeekId] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [addressLine, setAddressLine] = useState("");
+  const [postalCode, setPostalCode] = useState("");
+  const [city, setCity] = useState("");
+  const [adults, setAdults] = useState(2);
+  const [children, setChildren] = useState(0);
+  const [paymentMethod, setPaymentMethod] = useState<"cheque" | "virement">("cheque");
+  const [cautionMethod, setCautionMethod] = useState<"cheque" | "card">("cheque");
+  const [depositPaid, setDepositPaid] = useState(false);
+  const [balancePaid, setBalancePaid] = useState(false);
+  const [adminNotes, setAdminNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    adminApi
+      .listWeeks("ladret")
+      .then((w) => setWeeks(w.filter((x) => x.status === "available")))
+      .catch(() => setWeeks([]));
+  }, []);
+
+  const valid = weekId && /.+@.+\..+/.test(email) && firstName.trim() && lastName.trim();
+
+  const submit = async () => {
+    if (!valid || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await adminApi.createManualBooking({
+        weekId,
+        customer: { firstName, lastName, email, phone, addressLine, postalCode, city },
+        adults,
+        children,
+        paymentMethod,
+        cautionMethod,
+        depositPaid,
+        balancePaid,
+        adminNotes,
+      });
+      toast.success("Réservation manuelle créée.");
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const field = "w-full rounded-md border bg-background px-3 py-2 text-sm";
+
+  return (
+    <Modal open onClose={onClose} title="Nouvelle réservation manuelle">
+      <div className="space-y-3">
+        <div>
+          <label className="text-xs text-muted-foreground">Semaine</label>
+          <select className={field} value={weekId} onChange={(e) => setWeekId(e.target.value)}>
+            <option value="">— Choisir une semaine disponible —</option>
+            {(weeks ?? []).map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.rangeLabel} · {fmtEur(w.priceCents)}
+              </option>
+            ))}
+          </select>
+          {weeks && weeks.length === 0 && (
+            <p className="mt-1 text-xs text-muted-foreground">Aucune semaine disponible.</p>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <Input placeholder="Prénom" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
+          <Input placeholder="Nom" value={lastName} onChange={(e) => setLastName(e.target.value)} />
+        </div>
+        <Input placeholder="E-mail" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <div className="grid grid-cols-2 gap-2">
+          <Input placeholder="Téléphone" value={phone} onChange={(e) => setPhone(e.target.value)} />
+          <Input placeholder="Adresse" value={addressLine} onChange={(e) => setAddressLine(e.target.value)} />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <Input placeholder="Code postal" value={postalCode} onChange={(e) => setPostalCode(e.target.value)} />
+          <Input placeholder="Ville" value={city} onChange={(e) => setCity(e.target.value)} />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-xs text-muted-foreground">Adultes</label>
+            <Input type="number" min={1} value={adults} onChange={(e) => setAdults(Number(e.target.value))} />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground">Enfants</label>
+            <Input type="number" min={0} value={children} onChange={(e) => setChildren(Number(e.target.value))} />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-xs text-muted-foreground">Règlement</label>
+            <select className={field} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as "cheque" | "virement")}>
+              <option value="cheque">Chèque</option>
+              <option value="virement">Virement</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground">Caution</label>
+            <select className={field} value={cautionMethod} onChange={(e) => setCautionMethod(e.target.value as "cheque" | "card")}>
+              <option value="cheque">Chèque de caution</option>
+              <option value="card">Carte</option>
+            </select>
+          </div>
+        </div>
+        <div className="flex gap-4 text-sm">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={depositPaid} onChange={(e) => setDepositPaid(e.target.checked)} />
+            Acompte déjà reçu
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={balancePaid} onChange={(e) => setBalancePaid(e.target.checked)} />
+            Solde déjà reçu
+          </label>
+        </div>
+        <textarea
+          className={field}
+          placeholder="Notes internes (facultatif)"
+          rows={2}
+          value={adminNotes}
+          onChange={(e) => setAdminNotes(e.target.value)}
+        />
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Annuler
+          </Button>
+          <Button onClick={submit} disabled={!valid || busy}>
+            {busy ? "…" : "Créer la réservation"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }

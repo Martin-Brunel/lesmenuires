@@ -23,9 +23,12 @@ const nextConfig = {
     } catch {
       apiOrigin = "";
     }
+    // React en mode dev utilise eval() (debugging) ; la prod ne l'utilise jamais.
+    // On n'autorise 'unsafe-eval' qu'en développement.
+    const devEval = process.env.NODE_ENV !== "production" ? " 'unsafe-eval'" : "";
     const csp = [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' https://js.stripe.com",
+      `script-src 'self' 'unsafe-inline'${devEval} https://js.stripe.com`,
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       `img-src 'self' data: ${apiOrigin} https://*.stripe.com https://picsum.photos https://*.picsum.photos`,

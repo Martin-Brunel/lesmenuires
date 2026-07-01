@@ -73,9 +73,11 @@ export type AdminBooking = {
   cautionCents: number;
   depositPaidAt: string | null;
   balancePaidAt: string | null;
-  cautionAuthorizedAt: string | null;
   cautionReleasedAt: string | null;
   cautionCapturedCents: number | null;
+  channel: string;
+  paymentMethod: string | null;
+  cautionMethod: string | null;
   depositRefundedCents: number;
   balanceRefundedCents: number;
   balanceAttempts: number;
@@ -215,6 +217,34 @@ export const adminApi = {
   deleteProduct: (id: string) => req<void>(`/products/${id}`, { method: "DELETE" }),
 
   listBookings: () => req<AdminBooking[]>("/bookings"),
+  createManualBooking: (data: {
+    weekId: string;
+    customer: {
+      firstName: string;
+      lastName: string;
+      email: string;
+      phone: string;
+      addressLine: string;
+      postalCode: string;
+      city: string;
+    };
+    adults: number;
+    children: number;
+    paymentMethod: "cheque" | "virement";
+    cautionMethod: "cheque" | "card";
+    depositPaid: boolean;
+    balancePaid: boolean;
+    adminNotes: string;
+  }) =>
+    req<{ reference: string }>("/bookings/manual", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  markPaid: (reference: string, kind: "deposit" | "balance", method: "cheque" | "virement") =>
+    req<void>(`/bookings/${reference}/mark-paid`, {
+      method: "POST",
+      body: JSON.stringify({ kind, method }),
+    }),
   finances: () => req<FinancesResponse>("/finances"),
   listContacts: () => req<Contact[]>("/contacts"),
   getSignature: (reference: string) =>
