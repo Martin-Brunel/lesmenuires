@@ -1413,19 +1413,18 @@ async fn stripe_webhook(
             }
         }
         "charge.refunded" => {
-            // Refund initiated from the Stripe dashboard: flag the booking so the
-            // scheduler stops charging its balance/caution, and record it.
+            // Stripe raises charge.refunded for EVERY refund on the charge, including
+            // the ones we initiate from the admin (which already recorded their own
+            // 'refund' row). Reconcile by amount so our own refunds are not double-
+            // counted or wrongly flagged: only the still-unaccounted delta is a
+            // genuinely external (dashboard) refund → record it and flag the booking.
             let pi = obj.get("payment_intent").and_then(|v| v.as_str());
+            let refunded_total = obj
+                .get("amount_refunded")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
             if let Some(intent_id) = pi.filter(|s| !s.is_empty()) {
-                flag_booking_by_intent(&st, intent_id, "refunded_externally").await?;
-                sqlx::query(
-                    "update payment set status = 'refunded', updated_at = now() \
-                     where provider_intent_id = $1 and status = 'succeeded'",
-                )
-                .bind(intent_id)
-                .execute(&st.pool)
-                .await?;
-                tracing::warn!("webhook: remboursement externe (intent {intent_id})");
+                reconcile_external_refund(&st, intent_id, refunded_total).await?;
             }
         }
         "charge.dispute.created" | "charge.dispute.funds_withdrawn" => {
@@ -1461,6 +1460,66 @@ async fn flag_booking_by_intent(
     .bind(flag)
     .execute(&st.pool)
     .await?;
+    Ok(())
+}
+
+/// Reconcile a `charge.refunded` event against the refunds we already recorded.
+/// `refunded_total` is Stripe's cumulative amount refunded on the charge; we only
+/// act on the part not already covered by our own admin-initiated 'refund' rows —
+/// that delta is a genuinely external (dashboard) refund, which we record and flag.
+async fn reconcile_external_refund(
+    st: &AppState,
+    intent_id: &str,
+    refunded_total: i64,
+) -> Result<(), AppError> {
+    // Which booking + source (deposit/balance) does this charge back?
+    let row: Option<(Uuid, String)> = sqlx::query_as(
+        "select booking_id, type from payment \
+         where provider_intent_id = $1 and type in ('deposit', 'balance') limit 1",
+    )
+    .bind(intent_id)
+    .fetch_optional(&st.pool)
+    .await?;
+    let Some((booking_id, source)) = row else {
+        return Ok(()); // unknown/caution intent — nothing to reconcile
+    };
+
+    let recorded: i64 = sqlx::query_scalar(
+        "select coalesce(sum(amount_cents), 0)::bigint from payment \
+         where booking_id = $1 and type = 'refund' and raw->>'source' = $2",
+    )
+    .bind(booking_id)
+    .bind(&source)
+    .fetch_one(&st.pool)
+    .await?;
+
+    let delta = refunded_total - recorded;
+    if delta <= 0 {
+        return Ok(()); // fully accounted for by our own refund(s)
+    }
+
+    // Genuinely external refund of `delta`: record it and flag for admin attention
+    // (the scheduler then skips this booking).
+    let mut tx = st.pool.begin().await?;
+    sqlx::query(
+        "insert into payment (booking_id, type, provider, amount_cents, status, raw) \
+         values ($1, 'refund', 'stripe', $2, 'refunded', \
+                 jsonb_build_object('source', $3::text, 'origin', 'dashboard'))",
+    )
+    .bind(booking_id)
+    .bind(delta)
+    .bind(&source)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "update booking set payment_flag = coalesce(payment_flag, 'refunded_externally'), \
+            flagged_at = coalesce(flagged_at, now()), updated_at = now() where id = $1",
+    )
+    .bind(booking_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    tracing::warn!("webhook: remboursement externe de {delta}c (intent {intent_id}, {source})");
     Ok(())
 }
 
