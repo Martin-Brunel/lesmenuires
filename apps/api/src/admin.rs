@@ -41,6 +41,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/finances", get(finances))
         .route("/contacts", get(list_contacts))
         .route("/contacts/:id", get(contact_detail).put(update_contact))
+        .route("/contacts/:id/email", post(send_contact_email))
         .route("/bookings/:reference/detail", get(booking_detail))
         .route("/bookings/:reference/clear-flag", post(clear_payment_flag))
         .route("/bookings/:reference/note", post(add_note))
@@ -992,6 +993,36 @@ async fn send_booking_email(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// E-mail libre à un contact, hors dossier de réservation (relance CRM).
+/// Journalisé dans email_log sans booking_id ; visible sur la fiche contact.
+async fn send_contact_email(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<SendEmailInput>,
+) -> Result<StatusCode, AppError> {
+    let subject = input.subject.trim().to_string();
+    let message = input.message.trim();
+    if subject.is_empty() || message.is_empty() {
+        return Err(AppError::BadRequest("Sujet et message requis.".into()));
+    }
+    let email = sqlx::query_scalar::<_, String>("select email from customer where id = $1")
+        .bind(id)
+        .fetch_optional(&st.pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound("contact".into()))?;
+    if email.trim().is_empty() {
+        return Err(AppError::BadRequest("Ce contact n'a pas d'e-mail.".into()));
+    }
+    let safe = message
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\n', "<br>");
+    let html = crate::email::template(&subject, &safe, "", "");
+    crate::email::spawn(st.pool.clone(), None, "manual", email, subject, html);
+    Ok(StatusCode::NO_CONTENT)
+}
+
 // ---------------------------------------------------------------------------
 // Réservations manuelles (hors ligne) : échéances chèque/virement pointées à la
 // main, caution par chèque. Ignorées par le scheduler (channel='manual').
@@ -1383,6 +1414,9 @@ struct ContactDto {
     confirmed_count: i64,
     /// Paniers en cours / abandonnés (prospect).
     cart_count: i64,
+    /// Réservations actives dont l'arrivée est aujourd'hui ou plus tard —
+    /// un client fidèle avec 0 ici est un candidat à la relance.
+    upcoming_count: i64,
     total_paid_cents: i64,
     last_activity: DateTime<Utc>,
     created_at: DateTime<Utc>,
@@ -1397,12 +1431,15 @@ async fn list_contacts(State(st): State<AppState>) -> Result<Json<Vec<ContactDto
                 count(b.id) as bookings_count, \
                 count(b.id) filter (where b.status in ('confirmed','balance_paid')) as confirmed_count, \
                 count(b.id) filter (where b.status in ('cart','expired')) as cart_count, \
+                count(b.id) filter (where b.status in ('confirmed','balance_paid') \
+                    and aw.start_date >= current_date) as upcoming_count, \
                 (coalesce(sum(b.deposit_cents) filter (where b.deposit_paid_at is not null),0) \
                  + coalesce(sum(b.balance_cents) filter (where b.balance_paid_at is not null),0))::bigint as total_paid_cents, \
                 coalesce(max(b.updated_at), c.created_at) as last_activity, \
                 c.created_at \
          from customer c \
          left join booking b on b.customer_id = c.id \
+         left join availability_week aw on aw.id = b.week_id \
          group by c.id \
          order by last_activity desc",
     )
@@ -1506,12 +1543,18 @@ async fn contact_detail(
     .fetch_all(&st.pool)
     .await?;
 
+    // Inclut aussi les e-mails envoyés au contact hors dossier (booking_id null,
+    // rapprochés par adresse) — ex. relance commerciale depuis la fiche.
     let emails = sqlx::query_as::<_, ContactEmailDto>(
-        "select b.reference as booking_reference, e.kind, e.subject, e.status, e.created_at, e.opened_at \
-         from email_log e join booking b on b.id = e.booking_id \
-         where b.customer_id = $1 order by e.created_at desc",
+        "select coalesce(b.reference, '') as booking_reference, e.kind, e.subject, e.status, \
+                e.created_at, e.opened_at \
+         from email_log e left join booking b on b.id = e.booking_id \
+         where b.customer_id = $1 \
+            or (e.booking_id is null and lower(e.recipient) = lower($2)) \
+         order by e.created_at desc",
     )
     .bind(id)
+    .bind(&contact.email)
     .fetch_all(&st.pool)
     .await?;
 

@@ -279,6 +279,8 @@ export type Contact = {
   bookingsCount: number;
   confirmedCount: number;
   cartCount: number;
+  /** Réservations actives à venir — 0 pour un client passé = à relancer. */
+  upcomingCount: number;
   totalPaidCents: number;
   lastActivity: string;
   createdAt: string;
@@ -420,6 +422,11 @@ export const adminApi = {
       city: string;
     },
   ) => req<ContactInfo>(`/contacts/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  sendContactEmail: (id: string, subject: string, message: string) =>
+    req<void>(`/contacts/${id}/email`, {
+      method: "POST",
+      body: JSON.stringify({ subject, message }),
+    }),
   getSignature: (reference: string) =>
     req<SignatureInfo>(`/bookings/${reference}/signature`),
   cancelBooking: (

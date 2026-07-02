@@ -19,7 +19,17 @@ import {
 
 const frDate = (iso: string) => new Date(iso).toLocaleDateString("fr-FR");
 
-type Filter = "all" | "clients" | "prospects";
+type Filter = "all" | "clients" | "prospects" | "relance";
+
+/** Client fidèle sans séjour à venir : cible naturelle d'une relance saison. */
+const needsFollowUp = (c: Contact) => c.confirmedCount > 0 && c.upcomingCount === 0;
+
+const FILTER_LABEL: Record<Filter, string> = {
+  all: "Tous",
+  clients: "Clients",
+  prospects: "Prospects",
+  relance: "À relancer",
+};
 
 export default function ContactsPage() {
   const [contacts, setContacts] = useState<Contact[] | null>(null);
@@ -37,6 +47,7 @@ export default function ContactsPage() {
     return all.filter((c) => {
       if (filter === "clients" && c.confirmedCount === 0) return false;
       if (filter === "prospects" && c.confirmedCount > 0) return false;
+      if (filter === "relance" && !needsFollowUp(c)) return false;
       if (!needle) return true;
       return (
         c.email.toLowerCase().includes(needle) ||
@@ -74,7 +85,7 @@ export default function ContactsPage() {
           className="max-w-xs"
         />
         <div className="flex gap-1">
-          {(["all", "clients", "prospects"] as Filter[]).map((f) => (
+          {(["all", "clients", "prospects", "relance"] as Filter[]).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -83,7 +94,7 @@ export default function ContactsPage() {
                 (filter === f ? "bg-primary text-primary-foreground" : "bg-background")
               }
             >
-              {f === "all" ? "Tous" : f === "clients" ? "Clients" : "Prospects"}
+              {FILTER_LABEL[f]}
             </button>
           ))}
         </div>
@@ -94,14 +105,15 @@ export default function ContactsPage() {
           onClick={() =>
             downloadCsv(
               "contacts.csv",
-              ["Nom", "E-mail", "Téléphone", "Ville", "Statut", "Résas confirmées", "Paniers", "Total réglé (€)", "Dernière activité"],
+              ["Nom", "E-mail", "Téléphone", "Ville", "Statut", "Résas confirmées", "Résas à venir", "Paniers", "Total réglé (€)", "Dernière activité"],
               rows.map((c) => [
                 c.name ?? "",
                 c.email,
                 c.phone,
                 c.city,
-                c.confirmedCount > 0 ? "Client" : "Prospect",
+                c.confirmedCount > 0 ? (needsFollowUp(c) ? "Client à relancer" : "Client") : "Prospect",
                 c.confirmedCount,
+                c.upcomingCount,
                 c.cartCount,
                 csvEur(c.totalPaidCents),
                 csvDate(c.lastActivity),
@@ -164,11 +176,14 @@ export default function ContactsPage() {
                   {frDate(c.lastActivity)}
                 </TableCell>
                 <TableCell>
-                  {c.confirmedCount > 0 ? (
-                    <Badge variant="success">Client</Badge>
-                  ) : (
-                    <Badge variant="muted">Prospect</Badge>
-                  )}
+                  <div className="flex flex-wrap gap-1">
+                    {c.confirmedCount > 0 ? (
+                      <Badge variant="success">Client</Badge>
+                    ) : (
+                      <Badge variant="muted">Prospect</Badge>
+                    )}
+                    {needsFollowUp(c) && <Badge variant="warning">À relancer</Badge>}
+                  </div>
                 </TableCell>
               </TableRow>
             ))

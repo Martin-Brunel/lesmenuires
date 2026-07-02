@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Modal } from "@/components/ui/modal";
 import { toast } from "@/components/ui/toast";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -46,6 +47,7 @@ export default function ContactDetailPage() {
   const [data, setData] = useState<ContactDetail | null>(null);
   const [error, setError] = useState(false);
   const [edit, setEdit] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
 
   const reload = useCallback(() => {
     adminApi
@@ -97,6 +99,9 @@ export default function ContactDetailPage() {
           <h1 className="text-2xl font-semibold tracking-tight">{name}</h1>
           <div className="flex items-center gap-2">
             <Badge variant={isClient ? "success" : "muted"}>{isClient ? "Client" : "Prospect"}</Badge>
+            <Button size="sm" disabled={!c.email} onClick={() => setEmailOpen(true)}>
+              Envoyer un e-mail
+            </Button>
             {!edit && (
               <Button size="sm" variant="secondary" onClick={() => setEdit(true)}>
                 Modifier
@@ -187,9 +192,78 @@ export default function ContactDetailPage() {
           )}
         </CardContent>
       </Card>
+      {emailOpen && c.email && (
+        <ContactEmailDialog
+          contactId={c.id}
+          to={c.email}
+          onClose={() => setEmailOpen(false)}
+          onSent={() => {
+            setEmailOpen(false);
+            reload();
+          }}
+        />
+      )}
       {/* totalPaid placeholder retained for future KPI */}
       <span className="hidden">{totalPaid}</span>
     </div>
+  );
+}
+
+function ContactEmailDialog({
+  contactId,
+  to,
+  onClose,
+  onSent,
+}: {
+  contactId: string;
+  to: string;
+  onClose: () => void;
+  onSent: () => void;
+}) {
+  const [subject, setSubject] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const send = async () => {
+    if (!subject.trim() || !message.trim() || busy) return;
+    setBusy(true);
+    try {
+      await adminApi.sendContactEmail(contactId, subject, message);
+      toast.success("E-mail envoyé.");
+      onSent();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Envoyer un e-mail au contact"
+      footer={
+        <>
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>Annuler</Button>
+          <Button size="sm" onClick={send} disabled={busy || !subject.trim() || !message.trim()}>
+            {busy ? "…" : "Envoyer"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <p className="text-xs text-muted-foreground">Destinataire : {to}</p>
+        <Input placeholder="Sujet" value={subject} onChange={(e) => setSubject(e.target.value)} />
+        <textarea
+          className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+          rows={6}
+          placeholder="Votre message…"
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+        />
+        <p className="text-xs text-muted-foreground">
+          Le message est habillé du modèle L&apos;Adret et journalisé sur la fiche.
+        </p>
+      </div>
+    </Modal>
   );
 }
 
