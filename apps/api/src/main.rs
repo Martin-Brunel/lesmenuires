@@ -1330,6 +1330,8 @@ struct MyBookingDto {
     balance_payable: bool,
     /// A previous automatic charge failed (dunning) — surfaced to the client.
     balance_failed: bool,
+    /// Jeton du contrat signé — le front construit /contrat/{token} (copie).
+    contract_token: Option<String>,
     created_at: DateTime<Utc>,
 }
 
@@ -1382,6 +1384,25 @@ async fn customer_me(
     .fetch_one(&st.pool)
     .await?;
 
+    // Copie du contrat : les dossiers signés au checkout (web) n'ont pas de
+    // jeton — on le crée paresseusement pour que chaque client retrouve son
+    // contrat depuis l'espace, comme les dossiers manuels signés par lien.
+    let missing: Vec<Uuid> = sqlx::query_scalar(
+        "select id from booking \
+         where customer_id = $1 and contract_accepted_at is not null \
+           and contract_sign_token is null and status in ('confirmed','balance_paid')",
+    )
+    .bind(cid)
+    .fetch_all(&st.pool)
+    .await?;
+    for id in missing {
+        sqlx::query("update booking set contract_sign_token = $2 where id = $1")
+            .bind(id)
+            .bind(admin::new_token())
+            .execute(&st.pool)
+            .await?;
+    }
+
     let bookings = sqlx::query_as::<_, MyBookingDto>(
         "select b.reference, b.status, aw.range_label as week_range, aw.arrival_label as arrival, \
                 aw.start_date, b.total_cents, b.deposit_cents, b.balance_cents, b.caution_cents, \
@@ -1390,6 +1411,9 @@ async fn customer_me(
                 (b.status = 'confirmed' and b.balance_paid_at is null and b.balance_cents > 0 \
                     and b.payment_flag is null) as balance_payable, \
                 (b.balance_attempts > 0 and b.balance_paid_at is null) as balance_failed, \
+                case when b.contract_accepted_at is not null \
+                      and b.status in ('confirmed','balance_paid') \
+                     then b.contract_sign_token end as contract_token, \
                 b.created_at \
          from booking b join availability_week aw on aw.id = b.week_id \
          where b.customer_id = $1 order by aw.start_date desc",

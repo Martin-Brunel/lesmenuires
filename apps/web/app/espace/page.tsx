@@ -354,6 +354,17 @@ function BookingCard({
         </div>
       )}
 
+      {b.contractToken && (
+        <div style={css("margin-top:14px")}>
+          <a
+            href={`/contrat/${b.contractToken}`}
+            style={css("font:400 12.5px 'Hanken Grotesk';color:#6B6E6B;text-decoration:underline;text-underline-offset:3px")}
+          >
+            Voir mon contrat signé (imprimable)
+          </a>
+        </div>
+      )}
+
       {stripeSession && (
         <StripeCheckout
           publishableKey={stripeSession.pk}

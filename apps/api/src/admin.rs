@@ -111,7 +111,7 @@ fn verify_password(hash: &str, password: &str) -> bool {
     }
 }
 
-fn new_token() -> String {
+pub(crate) fn new_token() -> String {
     let mut bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()

@@ -229,6 +229,8 @@ export type MyBooking = {
   touristTaxCents: number;
   balancePayable: boolean;
   balanceFailed: boolean;
+  /** Jeton du contrat signé — copie consultable sur /contrat/{token}. */
+  contractToken: string | null;
   createdAt: string;
 };
 
