@@ -286,6 +286,24 @@ export type Contact = {
   createdAt: string;
 };
 
+export type EmailAutomation = {
+  id: string;
+  name: string;
+  /** reservation | arrival | departure | cancellation */
+  event: string;
+  /** Décalage en jours par rapport à l'événement (négatif = avant). */
+  offsetDays: number;
+  /** all | online | manual */
+  channel: string;
+  subject: string;
+  body: string;
+  active: boolean;
+  sentCount: number;
+  createdAt: string;
+};
+
+export type EmailAutomationInput = Omit<EmailAutomation, "id" | "sentCount" | "createdAt">;
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -427,6 +445,16 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify({ subject, message }),
     }),
+  listEmailAutomations: () => req<EmailAutomation[]>("/email-automations"),
+  createEmailAutomation: (data: EmailAutomationInput) =>
+    req<EmailAutomation>("/email-automations", { method: "POST", body: JSON.stringify(data) }),
+  updateEmailAutomation: (id: string, data: EmailAutomationInput) =>
+    req<EmailAutomation>(`/email-automations/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteEmailAutomation: (id: string) =>
+    req<void>(`/email-automations/${id}`, { method: "DELETE" }),
   getSignature: (reference: string) =>
     req<SignatureInfo>(`/bookings/${reference}/signature`),
   cancelBooking: (

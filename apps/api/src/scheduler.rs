@@ -41,7 +41,7 @@ pub struct TickReport {
     pub carts_expired: i64,
     pub tokens_purged: i64,
     pub balances_prenotified: i64,
-    pub arrivals_reminded: i64,
+    pub automations_sent: i64,
 }
 
 impl TickReport {
@@ -54,7 +54,7 @@ impl TickReport {
             + self.carts_expired
             + self.tokens_purged
             + self.balances_prenotified
-            + self.arrivals_reminded
+            + self.automations_sent
             > 0
     }
 }
@@ -64,8 +64,8 @@ pub async fn run_tick(pool: &PgPool, payments: &Arc<dyn PaymentProvider>) -> Tic
     if let Err(e) = prenotify_balances(pool, &mut r).await {
         tracing::error!("job pré-notif solde: {e:?}");
     }
-    if let Err(e) = remind_upcoming_arrivals(pool, &mut r).await {
-        tracing::error!("job rappel arrivée: {e:?}");
+    if let Err(e) = run_email_automations(pool, &mut r).await {
+        tracing::error!("job transactionnels: {e:?}");
     }
     if let Err(e) = charge_due_balances(pool, payments, &mut r).await {
         tracing::error!("job solde: {e:?}");
@@ -246,84 +246,127 @@ struct PrenotifyRow {
 /// A few days before the automatic balance charge (J-14), warn the customer so
 /// they can check their card or pay early — cuts down SCA failures. Sent once.
 #[derive(FromRow)]
-struct ArrivalReminderRow {
-    id: Uuid,
+struct AutomationDue {
+    automation_id: Uuid,
+    subject: String,
+    body: String,
+    booking_id: Uuid,
     reference: String,
     week_range: String,
     arrival: String,
+    end_date: chrono::NaiveDate,
+    total_cents: i64,
+    deposit_cents: i64,
+    balance_cents: i64,
     email: Option<String>,
     first_name: Option<String>,
+    last_name: Option<String>,
     arrival_instructions: String,
 }
 
-/// Rappel avant arrivée (J-7) : récap du séjour + instructions d'accès, une
-/// seule fois par dossier. Concerne aussi les réservations manuelles — c'est
-/// un e-mail de service, pas un flux de paiement.
-async fn remind_upcoming_arrivals(pool: &PgPool, r: &mut TickReport) -> Result<(), sqlx::Error> {
-    let due: Vec<ArrivalReminderRow> = sqlx::query_as(
-        "select b.id, b.reference, aw.range_label as week_range, aw.arrival_label as arrival, \
-                c.email, c.first_name, p.arrival_instructions \
-         from booking b \
+/// Substitue les variables {{...}} d'un gabarit. `escape` = true pour un corps
+/// HTML (les valeurs viennent des données client), false pour un sujet texte.
+fn render_template(tpl: &str, vars: &[(&str, String)], escape: bool) -> String {
+    let mut out = tpl.to_string();
+    for (key, value) in vars {
+        let v = if escape {
+            value
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+        } else {
+            value.clone()
+        };
+        out = out.replace(&format!("{{{{{key}}}}}"), &v);
+    }
+    out
+}
+
+/// Moteur des transactionnels éditables : pour chaque automatisation active,
+/// envoie l'e-mail aux dossiers dont la date d'événement + offset est atteinte.
+/// Garde-fous : une seule fois par (automatisation, dossier) ; pas de
+/// rétroactif antérieur à la création de l'automatisation ; fenêtre de grâce
+/// de 3 jours au-delà de laquelle un envoi manqué est abandonné.
+async fn run_email_automations(pool: &PgPool, r: &mut TickReport) -> Result<(), sqlx::Error> {
+    let due: Vec<AutomationDue> = sqlx::query_as(
+        "select a.id as automation_id, a.subject, a.body, \
+                b.id as booking_id, b.reference, aw.range_label as week_range, \
+                aw.arrival_label as arrival, aw.end_date, \
+                b.total_cents, b.deposit_cents, b.balance_cents, \
+                c.email, c.first_name, c.last_name, p.arrival_instructions \
+         from email_automation a \
+         join booking b on (a.channel = 'all' or b.channel = a.channel) \
+           and case when a.event = 'cancellation' then b.status = 'cancelled' \
+                    else b.status in ('confirmed','balance_paid') end \
          join availability_week aw on aw.id = b.week_id \
          join property p on p.id = b.property_id \
          left join customer c on c.id = b.customer_id \
-         where b.status in ('confirmed','balance_paid') \
-           and b.arrival_reminder_sent_at is null \
-           and aw.start_date - 7 <= current_date and current_date < aw.start_date",
+         cross join lateral (select case a.event \
+                when 'reservation' then coalesce(b.deposit_paid_at::date, b.created_at::date) \
+                when 'arrival' then aw.start_date \
+                when 'departure' then aw.end_date \
+                else b.cancelled_at::date end as event_date) ev \
+         where a.active \
+           and ev.event_date is not null \
+           and ev.event_date + a.offset_days <= current_date \
+           and current_date <= ev.event_date + a.offset_days + 3 \
+           and ev.event_date + a.offset_days >= a.created_at::date \
+           and not exists (select 1 from email_automation_send s \
+                           where s.automation_id = a.id and s.booking_id = b.id)",
     )
     .fetch_all(pool)
     .await?;
 
     for d in due {
         // Mark first (idempotent even if the e-mail send is best-effort).
-        sqlx::query(
-            "update booking set arrival_reminder_sent_at = now(), updated_at = now() where id = $1",
+        let inserted = sqlx::query(
+            "insert into email_automation_send (automation_id, booking_id) values ($1, $2) \
+             on conflict do nothing",
         )
-        .bind(d.id)
+        .bind(d.automation_id)
+        .bind(d.booking_id)
         .execute(pool)
         .await?;
-        r.arrivals_reminded += 1;
-
-        if let Some(to) = d.email.clone().filter(|e| !e.is_empty()) {
-            let instructions = d
-                .arrival_instructions
-                .replace('&', "&amp;")
-                .replace('<', "&lt;")
-                .replace('>', "&gt;")
-                .replace('\n', "<br>");
-            let access = if instructions.trim().is_empty() {
-                String::new()
-            } else {
-                format!("<br><br><strong>Accès au logement</strong><br>{instructions}")
-            };
-            let body = format!(
-                "{}<br><br>Votre séjour à L'Adret approche : arrivée <strong>{}</strong> \
-                 (semaine du {}), réservation {}.{}<br><br>Vous retrouvez toutes les \
-                 informations de votre séjour dans votre espace.",
-                greeting(d.first_name.as_deref()),
-                d.arrival,
-                d.week_range,
-                d.reference,
-                access,
-            );
-            let html = email::template(
-                "Votre séjour approche",
-                &body,
-                "Mon espace",
-                &format!("{}/espace", email::front_url()),
-            );
-            email::spawn(
-                pool.clone(),
-                Some(d.id),
-                "arrival_reminder",
-                to,
-                "Votre séjour à L'Adret approche".into(),
-                html,
-            );
+        if inserted.rows_affected() == 0 {
+            continue;
         }
+        r.automations_sent += 1;
+
+        let Some(to) = d.email.clone().filter(|e| !e.is_empty()) else {
+            continue;
+        };
+        let access = d.arrival_instructions.trim().to_string();
+        let vars: Vec<(&str, String)> = vec![
+            ("prenom", d.first_name.clone().unwrap_or_default()),
+            ("nom", d.last_name.clone().unwrap_or_default()),
+            ("reference", d.reference.clone()),
+            ("semaine", d.week_range.clone()),
+            ("arrivee", d.arrival.clone()),
+            ("depart", d.end_date.format("%d/%m/%Y").to_string()),
+            ("total", eur(d.total_cents)),
+            ("acompte", eur(d.deposit_cents)),
+            ("solde", eur(d.balance_cents)),
+            ("acces", access),
+        ];
+        let subject = render_template(&d.subject, &vars, false);
+        let body = render_template(&d.body, &vars, true).replace('\n', "<br>");
+        let html = email::template(
+            &subject,
+            &body,
+            "Mon espace",
+            &format!("{}/espace", email::front_url()),
+        );
+        email::spawn(
+            pool.clone(),
+            Some(d.booking_id),
+            "automation",
+            to,
+            subject,
+            html,
+        );
     }
-    if r.arrivals_reminded > 0 {
-        tracing::info!("{} rappel(s) d'arrivée envoyé(s)", r.arrivals_reminded);
+    if r.automations_sent > 0 {
+        tracing::info!("{} transactionnel(s) automatique(s) envoyé(s)", r.automations_sent);
     }
     Ok(())
 }

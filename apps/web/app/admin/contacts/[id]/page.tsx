@@ -33,6 +33,7 @@ const EMAIL_KIND: Record<string, string> = {
   payment_issue: "Incident de paiement",
   cart_reminder: "Relance panier",
   arrival_reminder: "Rappel avant arrivée",
+  automation: "E-mail automatique",
   cancellation: "Annulation",
   manual: "E-mail manuel",
 };

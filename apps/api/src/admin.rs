@@ -42,6 +42,14 @@ pub fn routes(state: AppState) -> Router {
         .route("/contacts", get(list_contacts))
         .route("/contacts/:id", get(contact_detail).put(update_contact))
         .route("/contacts/:id/email", post(send_contact_email))
+        .route(
+            "/email-automations",
+            get(list_email_automations).post(create_email_automation),
+        )
+        .route(
+            "/email-automations/:id",
+            put(update_email_automation).delete(delete_email_automation),
+        )
         .route("/bookings/:reference/detail", get(booking_detail))
         .route("/bookings/:reference/clear-flag", post(clear_payment_flag))
         .route("/bookings/:reference/note", post(add_note))
@@ -990,6 +998,137 @@ async fn send_booking_email(
         .replace('\n', "<br>");
     let html = crate::email::template(&subject, &safe, "", "");
     crate::email::spawn(st.pool.clone(), Some(row.0), "manual", to, subject, html);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------------------------------------------------------------------------
+// Transactionnels éditables : e-mails automatiques rattachés à un événement du
+// séjour (réservation / arrivée / départ / annulation) à J+offset, exécutés
+// par le scheduler (voir scheduler::run_email_automations).
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct EmailAutomationDto {
+    id: Uuid,
+    name: String,
+    event: String,
+    offset_days: i32,
+    channel: String,
+    subject: String,
+    body: String,
+    active: bool,
+    /// Nombre d'envois déjà effectués (suivi).
+    sent_count: i64,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EmailAutomationInput {
+    name: String,
+    event: String,
+    offset_days: i32,
+    channel: String,
+    subject: String,
+    body: String,
+    active: bool,
+}
+
+fn validate_automation(p: &EmailAutomationInput) -> Result<(), AppError> {
+    if p.name.trim().is_empty() || p.subject.trim().is_empty() || p.body.trim().is_empty() {
+        return Err(AppError::BadRequest("Nom, sujet et message requis.".into()));
+    }
+    if !["reservation", "arrival", "departure", "cancellation"].contains(&p.event.as_str()) {
+        return Err(AppError::BadRequest("Événement inconnu.".into()));
+    }
+    if !["all", "online", "manual"].contains(&p.channel.as_str()) {
+        return Err(AppError::BadRequest("Canal inconnu.".into()));
+    }
+    if !(-60..=365).contains(&p.offset_days) {
+        return Err(AppError::BadRequest("Décalage entre J-60 et J+365.".into()));
+    }
+    // On ne peut pas envoyer avant un événement qui n'a pas encore eu lieu.
+    if ["reservation", "cancellation"].contains(&p.event.as_str()) && p.offset_days < 0 {
+        return Err(AppError::BadRequest(
+            "Pour la réservation et l'annulation, le décalage doit être J0 ou plus.".into(),
+        ));
+    }
+    Ok(())
+}
+
+const AUTOMATION_COLS: &str = "id, name, event, offset_days, channel, subject, body, active, \
+     (select count(*) from email_automation_send s where s.automation_id = email_automation.id) as sent_count, \
+     created_at";
+
+async fn list_email_automations(
+    State(st): State<AppState>,
+) -> Result<Json<Vec<EmailAutomationDto>>, AppError> {
+    let rows = sqlx::query_as::<_, EmailAutomationDto>(&format!(
+        "select {AUTOMATION_COLS} from email_automation order by event, offset_days, name"
+    ))
+    .fetch_all(&st.pool)
+    .await?;
+    Ok(Json(rows))
+}
+
+async fn create_email_automation(
+    State(st): State<AppState>,
+    Json(p): Json<EmailAutomationInput>,
+) -> Result<Json<EmailAutomationDto>, AppError> {
+    validate_automation(&p)?;
+    let row = sqlx::query_as::<_, EmailAutomationDto>(&format!(
+        "insert into email_automation (name, event, offset_days, channel, subject, body, active) \
+         values ($1, $2, $3, $4, $5, $6, $7) returning {AUTOMATION_COLS}"
+    ))
+    .bind(p.name.trim())
+    .bind(&p.event)
+    .bind(p.offset_days)
+    .bind(&p.channel)
+    .bind(p.subject.trim())
+    .bind(&p.body)
+    .bind(p.active)
+    .fetch_one(&st.pool)
+    .await?;
+    Ok(Json(row))
+}
+
+async fn update_email_automation(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(p): Json<EmailAutomationInput>,
+) -> Result<Json<EmailAutomationDto>, AppError> {
+    validate_automation(&p)?;
+    let row = sqlx::query_as::<_, EmailAutomationDto>(&format!(
+        "update email_automation set name=$2, event=$3, offset_days=$4, channel=$5, \
+                subject=$6, body=$7, active=$8, updated_at=now() \
+         where id=$1 returning {AUTOMATION_COLS}"
+    ))
+    .bind(id)
+    .bind(p.name.trim())
+    .bind(&p.event)
+    .bind(p.offset_days)
+    .bind(&p.channel)
+    .bind(p.subject.trim())
+    .bind(&p.body)
+    .bind(p.active)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("transactionnel".into()))?;
+    Ok(Json(row))
+}
+
+async fn delete_email_automation(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    let res = sqlx::query("delete from email_automation where id = $1")
+        .bind(id)
+        .execute(&st.pool)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(AppError::NotFound("transactionnel".into()));
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

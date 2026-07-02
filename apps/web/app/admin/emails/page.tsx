@@ -1,0 +1,333 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import {
+  adminApi,
+  type EmailAutomation,
+  type EmailAutomationInput,
+} from "@/lib/admin-api";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Modal } from "@/components/ui/modal";
+import { toast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/admin/dialogs";
+import { cn } from "@/lib/utils";
+
+const EVENT_LABEL: Record<string, string> = {
+  reservation: "Réservation confirmée",
+  arrival: "Arrivée",
+  departure: "Départ",
+  cancellation: "Annulation",
+};
+
+const CHANNEL_LABEL: Record<string, string> = {
+  all: "Tous les dossiers",
+  online: "Site uniquement",
+  manual: "Manuelles uniquement",
+};
+
+const VARIABLES =
+  "{{prenom}} {{nom}} {{reference}} {{semaine}} {{arrivee}} {{depart}} {{total}} {{acompte}} {{solde}} {{acces}}";
+
+const selectBase =
+  "w-full h-9 rounded-md border border-input bg-background text-foreground px-2 text-sm";
+
+/** "J-7 · Arrivée" / "Jour J · Départ" — planning humain d'une automatisation. */
+function timingLabel(a: { event: string; offsetDays: number }): string {
+  const ev = EVENT_LABEL[a.event] ?? a.event;
+  if (a.offsetDays === 0) return `Jour J · ${ev}`;
+  const j = a.offsetDays > 0 ? `J+${a.offsetDays}` : `J${a.offsetDays}`;
+  return `${j} · ${ev}`;
+}
+
+const EMPTY: EmailAutomationInput = {
+  name: "",
+  event: "arrival",
+  offsetDays: -7,
+  channel: "all",
+  subject: "",
+  body: "",
+  active: true,
+};
+
+export default function EmailsPage() {
+  const confirm = useConfirm();
+  const [rows, setRows] = useState<EmailAutomation[] | null>(null);
+  const [error, setError] = useState(false);
+  // null = fermé ; "new" = création ; sinon l'automatisation en édition.
+  const [editing, setEditing] = useState<EmailAutomation | "new" | null>(null);
+
+  const reload = () =>
+    adminApi.listEmailAutomations().then(setRows).catch(() => setError(true));
+  useEffect(() => {
+    reload();
+  }, []);
+
+  const toggleActive = async (a: EmailAutomation) => {
+    try {
+      await adminApi.updateEmailAutomation(a.id, { ...a, active: !a.active });
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    }
+  };
+
+  const remove = async (a: EmailAutomation) => {
+    if (
+      !(await confirm({
+        title: "Supprimer ce transactionnel ?",
+        description: `« ${a.name} » ne sera plus envoyé. L'historique des envois est conservé sur les dossiers.`,
+        danger: true,
+        confirmLabel: "Supprimer",
+      }))
+    )
+      return;
+    try {
+      await adminApi.deleteEmailAutomation(a.id);
+      toast.success("Transactionnel supprimé.");
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    }
+  };
+
+  if (error)
+    return <p className="text-sm text-destructive">Impossible de charger les e-mails.</p>;
+  if (rows === null)
+    return <p className="text-sm text-muted-foreground">Chargement…</p>;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">E-mails automatiques</h1>
+          <p className="text-sm text-muted-foreground">
+            Transactionnels rattachés aux événements du séjour (réservation, arrivée, départ,
+            annulation), envoyés à J±n. Les e-mails système (paiements, liens de connexion)
+            restent gérés automatiquement.
+          </p>
+        </div>
+        <Button onClick={() => setEditing("new")}>Nouveau transactionnel</Button>
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Aucun transactionnel. Créez-en un pour automatiser vos communications.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((a) => (
+            <Card key={a.id} className={cn(!a.active && "opacity-60")}>
+              <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">{a.name}</span>
+                    <Badge variant="secondary">{timingLabel(a)}</Badge>
+                    {a.channel !== "all" && (
+                      <Badge variant="muted">{CHANNEL_LABEL[a.channel]}</Badge>
+                    )}
+                    <Badge variant={a.active ? "success" : "muted"}>
+                      {a.active ? "Actif" : "En pause"}
+                    </Badge>
+                  </div>
+                  <div className="mt-1 text-sm text-muted-foreground truncate">
+                    « {a.subject} » — {a.sentCount} envoi(s)
+                  </div>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <Button size="sm" variant="secondary" onClick={() => setEditing(a)}>
+                    Modifier
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => toggleActive(a)}>
+                    {a.active ? "Mettre en pause" : "Activer"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => remove(a)}
+                  >
+                    Supprimer
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {editing && (
+        <AutomationDialog
+          initial={editing === "new" ? null : editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            reload();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function AutomationDialog({
+  initial,
+  onClose,
+  onSaved,
+}: {
+  initial: EmailAutomation | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState<EmailAutomationInput>(
+    initial
+      ? {
+          name: initial.name,
+          event: initial.event,
+          offsetDays: initial.offsetDays,
+          channel: initial.channel,
+          subject: initial.subject,
+          body: initial.body,
+          active: initial.active,
+        }
+      : EMPTY,
+  );
+  const [busy, setBusy] = useState(false);
+  const set = (patch: Partial<EmailAutomationInput>) => setForm((f) => ({ ...f, ...patch }));
+
+  // Avant l'événement n'a de sens que pour l'arrivée et le départ.
+  const allowBefore = form.event === "arrival" || form.event === "departure";
+
+  const save = async () => {
+    if (busy) return;
+    if (!form.name.trim() || !form.subject.trim() || !form.body.trim()) {
+      toast.error("Nom, sujet et message requis.");
+      return;
+    }
+    setBusy(true);
+    try {
+      if (initial) await adminApi.updateEmailAutomation(initial.id, form);
+      else await adminApi.createEmailAutomation(form);
+      toast.success(initial ? "Transactionnel mis à jour." : "Transactionnel créé.");
+      onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={initial ? `Modifier « ${initial.name} »` : "Nouveau transactionnel"}
+      footer={
+        <>
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>
+            Annuler
+          </Button>
+          <Button size="sm" onClick={save} disabled={busy}>
+            {busy ? "…" : "Enregistrer"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <Label>Nom interne</Label>
+          <Input
+            placeholder="Ex. Rappel avant arrivée"
+            value={form.name}
+            onChange={(e) => set({ name: e.target.value })}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1.5">
+            <Label>Événement</Label>
+            <select
+              value={form.event}
+              onChange={(e) => {
+                const event = e.target.value;
+                const before = event === "arrival" || event === "departure";
+                set({
+                  event,
+                  offsetDays: !before && form.offsetDays < 0 ? 0 : form.offsetDays,
+                });
+              }}
+              className={selectBase}
+            >
+              {Object.entries(EVENT_LABEL).map(([v, label]) => (
+                <option key={v} value={v}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Décalage (jours)</Label>
+            <Input
+              type="number"
+              min={allowBefore ? -60 : 0}
+              max={365}
+              value={String(form.offsetDays)}
+              onChange={(e) => set({ offsetDays: parseInt(e.target.value || "0", 10) })}
+            />
+            <p className="text-xs text-muted-foreground">
+              {form.offsetDays === 0
+                ? "Le jour de l'événement"
+                : form.offsetDays < 0
+                  ? `${-form.offsetDays} jour(s) avant`
+                  : `${form.offsetDays} jour(s) après`}
+            </p>
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label>Dossiers concernés</Label>
+          <select
+            value={form.channel}
+            onChange={(e) => set({ channel: e.target.value })}
+            className={selectBase}
+          >
+            {Object.entries(CHANNEL_LABEL).map(([v, label]) => (
+              <option key={v} value={v}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-1.5">
+          <Label>Sujet</Label>
+          <Input
+            placeholder="Sujet de l'e-mail"
+            value={form.subject}
+            onChange={(e) => set({ subject: e.target.value })}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Message</Label>
+          <textarea
+            className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+            rows={8}
+            placeholder="Bonjour {{prenom}},…"
+            value={form.body}
+            onChange={(e) => set({ body: e.target.value })}
+          />
+          <p className="text-xs text-muted-foreground">
+            Variables disponibles : <code className="text-[11px]">{VARIABLES}</code>
+          </p>
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={form.active}
+            onChange={(e) => set({ active: e.target.checked })}
+          />
+          Actif (envoyé par le planificateur)
+        </label>
+      </div>
+    </Modal>
+  );
+}

@@ -10,6 +10,7 @@ import {
   FileText,
   LayoutDashboard,
   LogOut,
+  Mail,
   Package,
   Snowflake,
   Users,
@@ -31,6 +32,7 @@ const NAV = [
   { href: "/admin/reservations", label: "Réservations", icon: ClipboardList },
   { href: "/admin/finances", label: "Finances", icon: Wallet },
   { href: "/admin/contacts", label: "Contacts", icon: Users },
+  { href: "/admin/emails", label: "E-mails auto", icon: Mail },
 ];
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
