@@ -884,8 +884,10 @@ async fn confirm_deposit(
     // regress its status; a cancelled one (e.g. the loser of a double-booking already
     // handled by the webhook) must NOT be refunded again (duplicate refund line).
     match b.status.as_str() {
+        // Idempotent: re-establish the session cookie (so a lost-response retry still
+        // logs the buyer in) but don't re-run the claim or re-send the welcome e-mail.
         "confirmed" | "balance_paid" => {
-            return Ok(Json(fetch_booking(&st.pool, &reference).await?).into_response())
+            return confirmed_session_response(&st, &reference, b.customer_id).await
         }
         "cancelled" => {
             return Err(AppError::BadRequest(
@@ -935,16 +937,30 @@ async fn confirm_deposit(
     .await?;
     tx.commit().await?;
 
-    let dto = fetch_booking(&st.pool, &reference).await?;
-    let mut resp = Json(dto).into_response();
+    // Fresh confirmation: open the session (cookie) and send the welcome e-mail once.
+    let resp = confirmed_session_response(&st, &reference, b.customer_id).await?;
     if let Some(cid) = b.customer_id {
+        send_welcome_email(&st.pool, b.id, cid, &reference).await;
+    }
+    Ok(resp)
+}
+
+/// Booking JSON + a fresh customer-session cookie (when the booking has a customer).
+/// Shared by the fresh confirm and the idempotent re-confirm so both log the buyer in.
+async fn confirmed_session_response(
+    st: &AppState,
+    reference: &str,
+    customer_id: Option<Uuid>,
+) -> Result<Response, AppError> {
+    let dto = fetch_booking(&st.pool, reference).await?;
+    let mut resp = Json(dto).into_response();
+    if let Some(cid) = customer_id {
         let token = create_customer_session(&st.pool, cid).await?;
         resp.headers_mut().insert(
             header::SET_COOKIE,
             HeaderValue::from_str(&session_cookie(&token))
                 .map_err(|_| AppError::Internal("cookie".into()))?,
         );
-        send_welcome_email(&st.pool, b.id, cid, &reference).await;
     }
     Ok(resp)
 }
