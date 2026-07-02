@@ -592,8 +592,10 @@ async fn sign_contract(
     if !body.accepted {
         return Err(AppError::BadRequest("Le contrat doit être accepté.".into()));
     }
-    // Basic shape check on the signature image (PNG data URL, non-trivial size).
-    if !body.signature_png.starts_with("data:image/") || body.signature_png.len() < 200 {
+    // Shape check: the signature is a canvas PNG data URL of non-trivial size.
+    // Pinning the type to PNG (what the funnel produces) keeps the legal-evidence
+    // artifact to a known raster format — no SVG/other payloads stored as a signature.
+    if !body.signature_png.starts_with("data:image/png") || body.signature_png.len() < 200 {
         return Err(AppError::BadRequest(
             "Signature manquante ou invalide.".into(),
         ));
