@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { adminApi, fmtEur, PAYMENT_FLAG_LABEL, type AdminBooking, type AdminWeek, type Contact, type SignatureInfo } from "@/lib/admin-api";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { adminApi, fmtEur, PAYMENT_FLAG_LABEL, type AdminBooking, type AdminSeason, type AdminWeek, type Contact, type SignatureInfo } from "@/lib/admin-api";
 import { csvDate, csvEur, downloadCsv } from "@/lib/csv";
 import { todayIso } from "@/lib/dates";
 import { Badge } from "@/components/ui/badge";
@@ -49,7 +50,21 @@ export default function ReservationsPage() {
   const [bookings, setBookings] = useState<AdminBooking[] | null>(null);
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  // "" = toutes les saisons ; sinon l'id de la saison affichée.
+  const [seasons, setSeasons] = useState<AdminSeason[]>([]);
+  const [seasonFilter, setSeasonFilter] = useState<string>("");
   const [page, setPage] = useState(0);
+
+  useEffect(() => {
+    adminApi
+      .listSeasons("ladret")
+      .then((ss) => {
+        const sorted = [...ss].sort((a, b) => a.startDate.localeCompare(b.startDate));
+        setSeasons(sorted);
+        setSeasonFilter(sorted.find((s) => s.isActive)?.id ?? "");
+      })
+      .catch(() => {});
+  }, []);
   const [cancelTarget, setCancelTarget] = useState<AdminBooking | null>(null);
   const [sigTarget, setSigTarget] = useState<{ ref: string; info: SignatureInfo | null }>();
   const [pending, setPending] = useState<string | null>(null);
@@ -231,6 +246,7 @@ export default function ReservationsPage() {
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return (bookings ?? []).filter((b) => {
+      if (seasonFilter && b.seasonId !== seasonFilter) return false;
       if (statusFilter === "active") {
         if (b.status !== "confirmed" && b.status !== "balance_paid") return false;
       } else if (statusFilter !== "all" && b.status !== statusFilter) return false;
@@ -242,7 +258,7 @@ export default function ReservationsPage() {
         b.weekRange.toLowerCase().includes(needle)
       );
     });
-  }, [bookings, q, statusFilter]);
+  }, [bookings, q, statusFilter, seasonFilter]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
   const pageRows = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
@@ -292,6 +308,60 @@ export default function ReservationsPage() {
         </div>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-1">
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-9 w-9"
+            disabled={!seasonFilter || seasons.findIndex((s) => s.id === seasonFilter) <= 0}
+            onClick={() => {
+              const i = seasons.findIndex((s) => s.id === seasonFilter);
+              if (i > 0) {
+                setSeasonFilter(seasons[i - 1].id);
+                setPage(0);
+              }
+            }}
+            title="Saison précédente"
+          >
+            <ChevronLeft className="size-4" />
+          </Button>
+          <select
+            aria-label="Saison affichée"
+            value={seasonFilter}
+            onChange={(e) => {
+              setSeasonFilter(e.target.value);
+              setPage(0);
+            }}
+            className="h-9 rounded-md border bg-background px-2 text-sm min-w-[190px]"
+          >
+            <option value="">Toutes les saisons</option>
+            {seasons.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+                {s.isActive ? " — active" : ""}
+              </option>
+            ))}
+          </select>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-9 w-9"
+            disabled={
+              !seasonFilter ||
+              seasons.findIndex((s) => s.id === seasonFilter) >= seasons.length - 1
+            }
+            onClick={() => {
+              const i = seasons.findIndex((s) => s.id === seasonFilter);
+              if (i >= 0 && i < seasons.length - 1) {
+                setSeasonFilter(seasons[i + 1].id);
+                setPage(0);
+              }
+            }}
+            title="Saison suivante"
+          >
+            <ChevronRight className="size-4" />
+          </Button>
+        </div>
         <Input
           placeholder="Rechercher (référence, nom, e-mail, semaine)…"
           value={q}

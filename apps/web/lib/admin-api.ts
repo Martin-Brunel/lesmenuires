@@ -90,6 +90,7 @@ export type AdminBooking = {
   weekRange: string;
   startDate: string;
   endDate: string;
+  seasonId: string | null;
   adults: number;
   children: number;
   totalCents: number;
