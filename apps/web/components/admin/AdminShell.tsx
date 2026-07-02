@@ -80,7 +80,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   return (
     <DialogProvider>
     <div className="min-h-screen flex bg-muted/20">
-      <aside className="w-64 shrink-0 border-r bg-background flex flex-col sticky top-0 h-screen">
+      <aside className="w-64 shrink-0 border-r bg-background flex flex-col sticky top-0 h-screen print:hidden">
         <div className="h-14 flex items-center px-5 border-b shrink-0">
           <span className="text-lg" style={{ fontFamily: "'Marcellus',serif" }}>
             L&apos;Adret
@@ -117,7 +117,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
       <main className="flex-1 min-w-0">
-        <div className="mx-auto max-w-5xl p-8">{children}</div>
+        <div className="mx-auto max-w-5xl p-8 print:max-w-none print:p-0">{children}</div>
       </main>
     </div>
     <Toaster />

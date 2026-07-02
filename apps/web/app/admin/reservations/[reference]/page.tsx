@@ -257,6 +257,12 @@ export default function ReservationDetailPage() {
         <Button size="sm" disabled={!b.customerEmail} onClick={() => setEmailOpen(true)}>
           Envoyer un e-mail
         </Button>
+        <Link
+          href={`/admin/reservations/${b.reference}/facture`}
+          className="inline-flex h-8 items-center rounded-md bg-secondary px-3 text-sm font-medium text-secondary-foreground hover:bg-secondary/80"
+        >
+          Facture / quittance
+        </Link>
         {actionBtns.map((a) => (
           <Button
             key={a.label}
