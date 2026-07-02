@@ -21,6 +21,48 @@ enum SendOutcome {
     Failed(String),
 }
 
+/// Result of one Resend attempt: retryable (network/429/5xx) vs permanent (4xx —
+/// a retry won't help, e.g. invalid recipient).
+enum Attempt {
+    Sent(Option<String>),
+    Retry(String),
+    Permanent(String),
+}
+
+async fn send_once(
+    client: &reqwest::Client,
+    key: &str,
+    from: &str,
+    to: &str,
+    subject: &str,
+    html: &str,
+) -> Attempt {
+    let res = client
+        .post("https://api.resend.com/emails")
+        .bearer_auth(key)
+        .json(&json!({ "from": from, "to": [to], "subject": subject, "html": html }))
+        .send()
+        .await;
+    match res {
+        Ok(r) if r.status().is_success() => {
+            let body: serde_json::Value = r.json().await.unwrap_or_default();
+            Attempt::Sent(body.get("id").and_then(|v| v.as_str()).map(String::from))
+        }
+        Ok(r) => {
+            let code = r.status();
+            let body = r.text().await.unwrap_or_default();
+            let msg = format!("HTTP {code}: {body}");
+            // 429 (rate limit) and 5xx are transient; other 4xx are permanent.
+            if code.as_u16() == 429 || code.is_server_error() {
+                Attempt::Retry(msg)
+            } else {
+                Attempt::Permanent(msg)
+            }
+        }
+        Err(e) => Attempt::Retry(e.to_string()), // network / timeout → retry
+    }
+}
+
 async fn do_send(to: &str, subject: &str, html: &str) -> SendOutcome {
     let key = match std::env::var("RESEND_API_KEY") {
         Ok(k) if !k.is_empty() => k,
@@ -34,30 +76,38 @@ async fn do_send(to: &str, subject: &str, html: &str) -> SendOutcome {
         .timeout(std::time::Duration::from_secs(20))
         .build()
         .unwrap_or_default();
-    let res = client
-        .post("https://api.resend.com/emails")
-        .bearer_auth(&key)
-        .json(&json!({ "from": from, "to": [to], "subject": subject, "html": html }))
-        .send()
-        .await;
-    match res {
-        Ok(r) if r.status().is_success() => {
-            let body: serde_json::Value = r.json().await.unwrap_or_default();
-            let id = body.get("id").and_then(|v| v.as_str()).map(String::from);
-            tracing::info!("email envoyé → {to} : {subject}");
-            SendOutcome::Sent(id)
-        }
-        Ok(r) => {
-            let code = r.status();
-            let body = r.text().await.unwrap_or_default();
-            tracing::error!("email échec ({code}) → {to} : {body}");
-            SendOutcome::Failed(format!("HTTP {code}: {body}"))
-        }
-        Err(e) => {
-            tracing::error!("email erreur → {to} : {e}");
-            SendOutcome::Failed(e.to_string())
+
+    // Retry transient failures with backoff so a Resend hiccup doesn't silently
+    // drop a transactional e-mail. Permanent (4xx) failures are not retried.
+    let backoffs = [
+        std::time::Duration::from_millis(500),
+        std::time::Duration::from_millis(2000),
+    ];
+    let mut last_err = String::from("échec inconnu");
+    for attempt in 0..=backoffs.len() {
+        match send_once(&client, &key, &from, to, subject, html).await {
+            Attempt::Sent(id) => {
+                tracing::info!("email envoyé → {to} : {subject}");
+                return SendOutcome::Sent(id);
+            }
+            Attempt::Permanent(msg) => {
+                tracing::error!("email échec définitif → {to} : {msg}");
+                return SendOutcome::Failed(msg);
+            }
+            Attempt::Retry(msg) => {
+                last_err = msg;
+                if attempt < backoffs.len() {
+                    tracing::warn!(
+                        "email tentative {} échouée ({last_err}), nouvel essai → {to}",
+                        attempt + 1
+                    );
+                    tokio::time::sleep(backoffs[attempt]).await;
+                }
+            }
         }
     }
+    tracing::error!("email échec après retries → {to} : {last_err}");
+    SendOutcome::Failed(last_err)
 }
 
 /// Send and journal the e-mail (never blocks the caller). `booking_id`/`kind`
