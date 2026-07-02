@@ -8,9 +8,13 @@
 	encode zstd gzip
 
 	# API + fichiers médias servis par le back Rust.
+	# On écrase X-Forwarded-For avec l'IP réelle du pair : le client ne peut pas
+	# usurper l'en-tête pour contourner le rate-limiting applicatif.
 	@api path /api/* /media/*
 	handle @api {
-		reverse_proxy api:8080
+		reverse_proxy api:8080 {
+			header_up X-Forwarded-For {http.request.remote.host}
+		}
 	}
 
 	# Front Next.js (SSR + assets).

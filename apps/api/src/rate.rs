@@ -62,14 +62,18 @@ impl RateLimiter {
     }
 }
 
-/// Best-effort client identifier for rate limiting. Behind Caddy the real client
-/// IP is the first hop in `X-Forwarded-For`; fall back to a constant so an absent
-/// header still shares a bucket (fails safe toward limiting) rather than bypassing.
+/// Best-effort client identifier for rate limiting. Behind a single trusted proxy
+/// (Caddy) that appends the real peer IP to `X-Forwarded-For`, the spoof-resistant
+/// value is the LAST hop: a client may prepend fake entries but cannot stop Caddy
+/// from appending its true peer IP on the right. Taking the first hop instead would
+/// let an attacker rotate a fake `X-Forwarded-For` to get a fresh bucket per request
+/// and bypass every limit. Falls back to a shared constant so an absent header still
+/// shares one bucket (fails toward limiting, never bypass).
 pub fn client_ip(headers: &HeaderMap) -> String {
     headers
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
+        .and_then(|s| s.rsplit(',').next())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "unknown".to_string())
@@ -125,12 +129,13 @@ mod tests {
     }
 
     #[test]
-    fn client_ip_takes_first_hop_trimmed() {
-        assert_eq!(
-            client_ip(&hdrs(Some("203.0.113.7, 10.0.0.1"))),
-            "203.0.113.7"
-        );
+    fn client_ip_takes_last_hop_trimmed() {
+        // The trusted proxy (Caddy) appends the real peer IP on the right; a client
+        // may only prepend fake entries on the left, which we must ignore.
+        assert_eq!(client_ip(&hdrs(Some("203.0.113.7, 10.0.0.1"))), "10.0.0.1");
         assert_eq!(client_ip(&hdrs(Some("  198.51.100.2  "))), "198.51.100.2");
+        // A spoofed leftmost entry cannot change the bucket.
+        assert_eq!(client_ip(&hdrs(Some("1.1.1.1, 9.9.9.9"))), "9.9.9.9");
     }
 
     #[test]
