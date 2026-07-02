@@ -761,6 +761,61 @@ async fn try_claim_week(
     Ok(taken.is_none())
 }
 
+/// Loser of a double-booking race: the buyer's deposit succeeded but the week was
+/// claimed by someone else. Refund the deposit (idempotent key) and void the cart so
+/// nothing lingers and the promise "votre acompte vous sera remboursé" is kept.
+async fn refund_lost_deposit(st: &AppState, booking_id: Uuid, intent_id: &str) {
+    let outcome: Result<(), AppError> = async {
+        let amount: i64 = sqlx::query_scalar(
+            "select amount_cents from payment \
+             where booking_id = $1 and type = 'deposit' order by created_at desc limit 1",
+        )
+        .bind(booking_id)
+        .fetch_one(&st.pool)
+        .await?;
+        let refund_id = st
+            .payments
+            .refund(intent_id, amount, &format!("refund-lost-{intent_id}"))
+            .await?;
+        let mut tx = st.pool.begin().await?;
+        sqlx::query(
+            "update payment set status = 'succeeded', updated_at = now() \
+             where booking_id = $1 and type = 'deposit'",
+        )
+        .bind(booking_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "insert into payment (booking_id, type, provider, provider_intent_id, amount_cents, status, raw) \
+             values ($1, 'refund', $2, $3, $4, 'refunded', \
+                     jsonb_build_object('source', 'deposit', 'origin', 'double_booking'))",
+        )
+        .bind(booking_id)
+        .bind(st.payments.name())
+        .bind(&refund_id)
+        .bind(amount)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "update booking set status = 'cancelled', cancelled_at = now(), \
+                cancel_reason = 'Double réservation — acompte remboursé', updated_at = now() \
+             where id = $1 and status <> 'cancelled'",
+        )
+        .bind(booking_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+    .await;
+    if let Err(e) = outcome {
+        // Never lose the signal: if the auto-refund fails, an admin must act.
+        tracing::error!(
+            "ÉCHEC remboursement acompte perdu (booking {booking_id}, intent {intent_id}): {e:?}"
+        );
+    }
+}
+
 async fn confirm_deposit(
     State(st): State<AppState>,
     Path(reference): Path<String>,
@@ -785,6 +840,8 @@ async fn confirm_deposit(
     let mut tx = st.pool.begin().await?;
     // Atomically claim the week; refuse if another confirmed booking already holds it.
     if !try_claim_week(&mut tx, b.id).await? {
+        drop(tx); // release the (no-op) claim tx before refunding
+        refund_lost_deposit(&st, b.id, &intent_id).await;
         return Err(AppError::BadRequest(
             "Cette semaine vient d'être réservée par un autre client. Votre acompte vous sera remboursé.".into(),
         ));
@@ -1545,6 +1602,7 @@ async fn confirm_from_webhook(st: &AppState, pi: &serde_json::Value) -> Result<(
     .bind(intent_id)
     .fetch_optional(&mut *tx)
     .await?;
+    let mut lost: Option<Uuid> = None;
     if let Some(bid) = bid {
         // Same anti-double-booking guard as the synchronous confirm path.
         if try_claim_week(&mut tx, bid).await? {
@@ -1564,12 +1622,18 @@ async fn confirm_from_webhook(st: &AppState, pi: &serde_json::Value) -> Result<(
             tracing::info!("webhook: acompte confirmé (intent {intent_id})");
         } else {
             tracing::error!(
-                "webhook: double-réservation évitée — acompte à rembourser \
+                "webhook: double-réservation évitée — acompte remboursé \
                      (intent {intent_id}, booking {bid})"
             );
+            lost = Some(bid);
         }
     }
     tx.commit().await?;
+
+    // Loser of the race: refund the deposit and void the cart (outside the tx).
+    if let Some(bid) = lost {
+        refund_lost_deposit(st, bid, intent_id).await;
+    }
 
     // On-session balance payment (pay-balance fallback): settle idempotently so a
     // succeeded balance intent marks the booking balance_paid even without the
