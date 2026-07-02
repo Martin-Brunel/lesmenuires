@@ -126,6 +126,74 @@ export type FinancesResponse = {
   taxDeclaration: TaxDeclarationRow[];
 };
 
+export type BookingDetailInfo = {
+  reference: string;
+  status: string;
+  channel: string;
+  weekRange: string;
+  arrival: string;
+  startDate: string;
+  adults: number;
+  children: number;
+  totalCents: number;
+  depositCents: number;
+  balanceCents: number;
+  cautionCents: number;
+  touristTaxCents: number;
+  depositPct: number;
+  paymentMethod: string | null;
+  cautionMethod: string | null;
+  adminNotes: string | null;
+  depositPaidAt: string | null;
+  balancePaidAt: string | null;
+  cautionReleasedAt: string | null;
+  cautionCapturedCents: number | null;
+  depositRefundedCents: number;
+  balanceRefundedCents: number;
+  paymentFlag: string | null;
+  balanceAttempts: number;
+  balanceLastError: string | null;
+  cautionAttempts: number;
+  cautionLastError: string | null;
+  contractVersion: string | null;
+  contractSignedAt: string | null;
+  hasSignature: boolean;
+  createdAt: string;
+  customerName: string | null;
+  customerEmail: string | null;
+  customerPhone: string | null;
+  customerAddress: string | null;
+  arrivalInstructions: string;
+  houseRules: string;
+};
+
+export type PaymentEntry = {
+  kind: string;
+  method: string | null;
+  provider: string;
+  amountCents: number;
+  status: string;
+  createdAt: string;
+};
+
+export type EmailEntry = {
+  kind: string;
+  subject: string;
+  recipient: string;
+  status: string;
+  error: string | null;
+  createdAt: string;
+  sentAt: string | null;
+  deliveredAt: string | null;
+  openedAt: string | null;
+};
+
+export type BookingDetail = {
+  booking: BookingDetailInfo;
+  payments: PaymentEntry[];
+  emails: EmailEntry[];
+};
+
 export type Contact = {
   id: string;
   email: string;
@@ -217,6 +285,8 @@ export const adminApi = {
   deleteProduct: (id: string) => req<void>(`/products/${id}`, { method: "DELETE" }),
 
   listBookings: () => req<AdminBooking[]>("/bookings"),
+  bookingDetail: (reference: string) =>
+    req<BookingDetail>(`/bookings/${reference}/detail`),
   createManualBooking: (data: {
     weekId: string;
     customer: {

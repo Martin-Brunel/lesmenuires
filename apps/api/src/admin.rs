@@ -735,6 +735,8 @@ struct BookingDetailRow {
     balance_paid_at: Option<DateTime<Utc>>,
     caution_released_at: Option<DateTime<Utc>>,
     caution_captured_cents: Option<i64>,
+    deposit_refunded_cents: i64,
+    balance_refunded_cents: i64,
     payment_flag: Option<String>,
     balance_attempts: i32,
     balance_last_error: Option<String>,
@@ -795,7 +797,12 @@ async fn booking_detail(
                 b.total_cents, b.deposit_cents, b.balance_cents, b.caution_cents, \
                 b.tourist_tax_cents, b.deposit_pct, b.payment_method, b.caution_method, \
                 b.admin_notes, b.deposit_paid_at, b.balance_paid_at, b.caution_released_at, \
-                b.caution_captured_cents, b.payment_flag, b.balance_attempts, \
+                b.caution_captured_cents, \
+                coalesce((select sum(p.amount_cents) from payment p where p.booking_id = b.id \
+                    and p.type = 'refund' and p.raw->>'source' = 'deposit'), 0)::bigint as deposit_refunded_cents, \
+                coalesce((select sum(p.amount_cents) from payment p where p.booking_id = b.id \
+                    and p.type = 'refund' and p.raw->>'source' = 'balance'), 0)::bigint as balance_refunded_cents, \
+                b.payment_flag, b.balance_attempts, \
                 b.balance_last_error, b.caution_attempts, b.caution_last_error, \
                 b.contract_version, b.contract_accepted_at as contract_signed_at, \
                 (b.signature_png is not null) as has_signature, b.created_at, \
