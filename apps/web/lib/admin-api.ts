@@ -161,6 +161,7 @@ export type BookingDetailInfo = {
   cautionLastError: string | null;
   contractVersion: string | null;
   contractSignedAt: string | null;
+  contractText: string | null;
   hasSignature: boolean;
   createdAt: string;
   cancelledAt: string | null;

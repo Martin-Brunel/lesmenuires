@@ -306,6 +306,16 @@ export default function ReservationDetailPage() {
               <>
                 <Row label="Signé le" value={dt(b.contractSignedAt)} />
                 <Row label="Version" value={b.contractVersion ?? "—"} />
+                {b.contractText && (
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-xs text-primary underline underline-offset-2">
+                      Voir le texte signé
+                    </summary>
+                    <p className="mt-2 whitespace-pre-line rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+                      {b.contractText}
+                    </p>
+                  </details>
+                )}
                 {b.hasSignature && (
                   <Button size="sm" variant="secondary" className="mt-2" onClick={viewSignature}>
                     Voir la signature
