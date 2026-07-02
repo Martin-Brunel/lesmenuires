@@ -2,8 +2,10 @@
 
 // Signature électronique du contrat par lien e-mail (réservations manuelles),
 // puis copie consultable / imprimable du contrat signé — le lien reste valable.
+// Page publique : stylée en inline comme le reste du site (Tailwind est
+// réservé à /admin).
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useParams } from "next/navigation";
 import {
   SignaturePad,
@@ -37,6 +39,82 @@ const buildText = (d: ContractView) =>
     cautionCents: d.cautionCents,
     capacity: d.capacity,
   });
+
+const S: Record<string, CSSProperties> = {
+  page: { maxWidth: 680, margin: "0 auto", padding: "40px 20px 64px" },
+  card: {
+    background: "#fff",
+    border: "1px solid #E5E4DF",
+    borderRadius: 12,
+    padding: "36px 40px",
+    boxShadow: "0 1px 3px rgba(26,27,26,.06)",
+  },
+  header: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 16,
+    borderBottom: "1px solid #E5E4DF",
+    paddingBottom: 20,
+    flexWrap: "wrap",
+  },
+  title: { font: "400 28px 'Marcellus', serif", color: "#1A1B1A" },
+  subtitle: { fontSize: 14, color: "#8A8B86", marginTop: 2 },
+  meta: { fontSize: 13, color: "#8A8B86", textAlign: "right", lineHeight: 1.6 },
+  parties: { fontSize: 14, marginTop: 20, lineHeight: 1.6 },
+  text: {
+    whiteSpace: "pre-line",
+    fontSize: 14,
+    lineHeight: 1.7,
+    color: "#3A3B38",
+    marginTop: 20,
+  },
+  section: { borderTop: "1px solid #E5E4DF", marginTop: 28, paddingTop: 20 },
+  signedNote: { fontSize: 14, fontWeight: 600, color: "#1F7A46" },
+  sigImg: {
+    height: 96,
+    marginTop: 12,
+    border: "1px solid #E5E4DF",
+    borderRadius: 8,
+    background: "#fff",
+    display: "block",
+  },
+  checkboxRow: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 8,
+    fontSize: 14,
+    lineHeight: 1.5,
+    cursor: "pointer",
+  },
+  padWrap: { marginTop: 16 },
+  actions: { display: "flex", alignItems: "center", gap: 14, marginTop: 14 },
+  primaryBtn: {
+    background: "#1A1B1A",
+    color: "#fff",
+    border: "none",
+    borderRadius: 8,
+    padding: "10px 18px",
+    fontSize: 14,
+    fontWeight: 600,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  linkBtn: {
+    background: "none",
+    border: "none",
+    padding: 0,
+    fontSize: 14,
+    color: "#8A8B86",
+    textDecoration: "underline",
+    textUnderlineOffset: 3,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  error: { color: "#B3261E", fontSize: 14, marginTop: 12 },
+  muted: { color: "#8A8B86", fontSize: 12, marginTop: 8 },
+  center: { maxWidth: 480, margin: "0 auto", padding: "80px 20px", textAlign: "center" },
+};
 
 export default function ContratPage() {
   const params = useParams<{ token: string }>();
@@ -89,15 +167,15 @@ export default function ContratPage() {
 
   if (error && !data) {
     return (
-      <main className="mx-auto max-w-2xl px-6 py-16 text-center">
-        <p className="text-sm text-red-700">{error}</p>
+      <main style={S.center}>
+        <p style={{ color: "#B3261E", fontSize: 14 }}>{error}</p>
       </main>
     );
   }
   if (!data) {
     return (
-      <main className="mx-auto max-w-2xl px-6 py-16 text-center">
-        <p className="text-sm text-neutral-500">Chargement…</p>
+      <main style={S.center}>
+        <p style={{ color: "#8A8B86", fontSize: 14 }}>Chargement…</p>
       </main>
     );
   }
@@ -105,36 +183,38 @@ export default function ContratPage() {
   const text = buildText(data);
 
   return (
-    <main className="mx-auto max-w-2xl px-6 py-10">
-      <div className="rounded-lg border bg-white p-8 shadow-sm print:border-0 print:p-0 print:shadow-none">
-        <div className="flex items-start justify-between gap-4 border-b pb-5">
+    <main style={S.page}>
+      {/* Impression : ne garder que le contrat, sur fond blanc. */}
+      <style>{`
+        @media print {
+          body { background: #fff !important; }
+          .no-print { display: none !important; }
+          .contract-card { border: none !important; box-shadow: none !important; padding: 0 !important; }
+        }
+      `}</style>
+      <div style={S.card} className="contract-card">
+        <div style={S.header}>
           <div>
-            <div className="text-2xl" style={{ fontFamily: "'Marcellus',serif" }}>
-              {data.propertyName}
-            </div>
-            <div className="text-sm text-neutral-500">Contrat de location saisonnière</div>
+            <div style={S.title}>{data.propertyName}</div>
+            <div style={S.subtitle}>Contrat de location saisonnière</div>
           </div>
-          <div className="text-right text-sm text-neutral-500">
+          <div style={S.meta}>
             Réservation {data.reference}
             <br />
             Semaine du {data.weekRange}
           </div>
         </div>
 
-        <div className="mt-5 text-sm">
-          <p>
-            <strong>Preneur :</strong> {data.customerName ?? "—"} ·{" "}
-            <strong>Arrivée :</strong> {data.arrival}
-          </p>
-        </div>
+        <p style={S.parties}>
+          <strong>Preneur :</strong> {data.customerName ?? "—"} ·{" "}
+          <strong>Arrivée :</strong> {data.arrival}
+        </p>
 
-        <div className="mt-5 whitespace-pre-line text-sm leading-relaxed text-neutral-800">
-          {text}
-        </div>
+        <div style={S.text}>{text}</div>
 
         {data.signed ? (
-          <div className="mt-8 border-t pt-5">
-            <p className="text-sm font-medium text-emerald-700">
+          <div style={S.section}>
+            <p style={S.signedNote}>
               Contrat signé électroniquement
               {data.signedAt
                 ? ` le ${new Date(data.signedAt).toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })}`
@@ -143,34 +223,29 @@ export default function ContratPage() {
             </p>
             {data.signaturePng && (
               // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={data.signaturePng}
-                alt="Signature du preneur"
-                className="mt-3 h-24 rounded border bg-white"
-              />
+              <img src={data.signaturePng} alt="Signature du preneur" style={S.sigImg} />
             )}
-            <button
-              onClick={() => window.print()}
-              className="mt-5 rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white print:hidden"
-            >
-              Imprimer / Enregistrer en PDF
-            </button>
-            <p className="mt-2 text-xs text-neutral-400 print:hidden">
-              Conservez ce lien : il reste votre copie du contrat signé.
-            </p>
+            <div className="no-print">
+              <div style={S.actions}>
+                <button style={S.primaryBtn} onClick={() => window.print()}>
+                  Imprimer / Enregistrer en PDF
+                </button>
+              </div>
+              <p style={S.muted}>Conservez ce lien : il reste votre copie du contrat signé.</p>
+            </div>
           </div>
         ) : (
-          <div className="mt-8 border-t pt-5 print:hidden">
-            <label className="flex items-start gap-2 text-sm">
+          <div style={S.section} className="no-print">
+            <label style={S.checkboxRow}>
               <input
                 type="checkbox"
-                className="mt-0.5"
+                style={{ marginTop: 3 }}
                 checked={accepted}
                 onChange={(e) => setAccepted(e.target.checked)}
               />
-              J&apos;ai lu le contrat et les conditions générales, et je les accepte.
+              <span>J&apos;ai lu le contrat et les conditions générales, et je les accepte.</span>
             </label>
-            <div className="mt-4">
+            <div style={S.padWrap}>
               <SignaturePad
                 ref={padRef}
                 width={560}
@@ -180,22 +255,23 @@ export default function ContratPage() {
                 onEmptyChange={setSigEmpty}
               />
             </div>
-            <div className="mt-3 flex items-center gap-3">
+            <div style={S.actions}>
               <button
-                onClick={sign}
+                style={{
+                  ...S.primaryBtn,
+                  opacity: busy || !accepted || sigEmpty ? 0.5 : 1,
+                  cursor: busy || !accepted || sigEmpty ? "default" : "pointer",
+                }}
                 disabled={busy || !accepted || sigEmpty}
-                className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                onClick={sign}
               >
                 {busy ? "…" : "Signer le contrat"}
               </button>
-              <button
-                onClick={() => padRef.current?.clear()}
-                className="text-sm text-neutral-500 underline underline-offset-2"
-              >
+              <button style={S.linkBtn} onClick={() => padRef.current?.clear()}>
                 Effacer
               </button>
             </div>
-            {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
+            {error && <p style={S.error}>{error}</p>}
           </div>
         )}
       </div>
