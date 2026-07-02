@@ -171,6 +171,10 @@ Volumes persistants : `pgdata` (base), `media` (photos), `backups` (sauvegardes)
 - [ ] Vérifier un domaine sur resend.com et pointer `MAIL_FROM` dessus (sinon
       Resend en mode test ne délivre qu'à l'adresse du compte).
 - [ ] `API_BASE_URL` / `FRONT_ORIGIN` = `https://$DOMAIN` (liens des e-mails).
+- [ ] (Optionnel, pour le suivi des ouvertures dans le dossier de réservation)
+      créer un webhook Resend vers `https://$DOMAIN/api/emails/webhook` (events
+      `email.delivered`, `email.opened`, `email.bounced`, `email.complained`) et
+      activer l'open tracking sur le domaine.
 
 ### Identité légale & contenu (inlinés au build du front → reconstruire `web`)
 - [ ] Renseigner `NEXT_PUBLIC_EDITOR_*` et `NEXT_PUBLIC_HOST_*` (mentions légales)
