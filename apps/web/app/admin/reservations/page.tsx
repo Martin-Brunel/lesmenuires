@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { adminApi, fmtEur, PAYMENT_FLAG_LABEL, type AdminBooking, type AdminWeek, type SignatureInfo } from "@/lib/admin-api";
 import { csvDate, csvEur, downloadCsv } from "@/lib/csv";
@@ -41,8 +41,13 @@ const STATUS_VARIANT: Record<
   expired: "muted",
 };
 
+const PAGE_SIZE = 20;
+
 export default function ReservationsPage() {
   const [bookings, setBookings] = useState<AdminBooking[] | null>(null);
+  const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [page, setPage] = useState(0);
   const [cancelTarget, setCancelTarget] = useState<AdminBooking | null>(null);
   const [sigTarget, setSigTarget] = useState<{ ref: string; info: SignatureInfo | null }>();
   const [pending, setPending] = useState<string | null>(null);
@@ -221,6 +226,23 @@ export default function ReservationsPage() {
     return acts;
   };
 
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return (bookings ?? []).filter((b) => {
+      if (statusFilter !== "all" && b.status !== statusFilter) return false;
+      if (!needle) return true;
+      return (
+        b.reference.toLowerCase().includes(needle) ||
+        (b.customerName ?? "").toLowerCase().includes(needle) ||
+        (b.customerEmail ?? "").toLowerCase().includes(needle) ||
+        b.weekRange.toLowerCase().includes(needle)
+      );
+    });
+  }, [bookings, q, statusFilter]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageRows = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
@@ -233,12 +255,12 @@ export default function ReservationsPage() {
         <div className="flex items-center gap-2">
           <Button
             variant="secondary"
-            disabled={!bookings || bookings.length === 0}
+            disabled={filtered.length === 0}
             onClick={() =>
               downloadCsv(
                 "reservations.csv",
                 ["Référence", "Statut", "Canal", "Semaine", "Arrivée", "Départ", "Client", "E-mail", "Téléphone", "Adultes", "Enfants", "Total (€)", "Acompte (€)", "Solde (€)", "Acompte payé le", "Solde payé le", "Créée le"],
-                (bookings ?? []).map((b) => [
+                filtered.map((b) => [
                   b.reference,
                   STATUS_LABEL[b.status] ?? b.status,
                   b.channel === "manual" ? "Manuel" : "Site",
@@ -264,6 +286,36 @@ export default function ReservationsPage() {
           </Button>
           <Button onClick={() => setShowManual(true)}>Nouvelle réservation</Button>
         </div>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <Input
+          placeholder="Rechercher (référence, nom, e-mail, semaine)…"
+          value={q}
+          onChange={(e) => {
+            setQ(e.target.value);
+            setPage(0);
+          }}
+          className="max-w-xs"
+        />
+        <select
+          aria-label="Filtrer par statut"
+          value={statusFilter}
+          onChange={(e) => {
+            setStatusFilter(e.target.value);
+            setPage(0);
+          }}
+          className="h-9 rounded-md border bg-background px-3 text-sm"
+        >
+          <option value="all">Tous les statuts</option>
+          {Object.entries(STATUS_LABEL).map(([v, label]) => (
+            <option key={v} value={v}>{label}</option>
+          ))}
+        </select>
+        {(q || statusFilter !== "all") && (
+          <span className="text-sm text-muted-foreground">
+            {filtered.length} résultat(s)
+          </span>
+        )}
       </div>
       <Card className="overflow-hidden">
         <Table>
@@ -294,14 +346,16 @@ export default function ReservationsPage() {
                 </TableCell>
               </TableRow>
             )}
-            {!loadError && bookings?.length === 0 && (
+            {!loadError && bookings !== null && filtered.length === 0 && (
               <TableRow>
                 <TableCell colSpan={8} className="text-muted-foreground py-6 text-center">
-                  Aucune réservation pour le moment.
+                  {bookings.length === 0
+                    ? "Aucune réservation pour le moment."
+                    : "Aucune réservation ne correspond à la recherche."}
                 </TableCell>
               </TableRow>
             )}
-            {bookings?.map((b) => (
+            {pageRows.map((b) => (
               <TableRow key={b.reference} className={b.status === "cancelled" ? "opacity-60" : undefined}>
                 <TableCell className="font-mono text-xs">
                   <Link
@@ -379,6 +433,31 @@ export default function ReservationsPage() {
             ))}
           </TableBody>
         </Table>
+        {pageCount > 1 && (
+          <div className="flex items-center justify-between gap-3 border-t p-3 text-sm">
+            <span className="text-muted-foreground">
+              Page {safePage + 1} / {pageCount} — {filtered.length} réservation(s)
+            </span>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={safePage === 0}
+                onClick={() => setPage(safePage - 1)}
+              >
+                ‹ Précédent
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={safePage >= pageCount - 1}
+                onClick={() => setPage(safePage + 1)}
+              >
+                Suivant ›
+              </Button>
+            </div>
+          </div>
+        )}
       </Card>
 
       {showManual && (
