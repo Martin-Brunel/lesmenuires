@@ -325,12 +325,14 @@ export default function ReservationDetailPage() {
               label="Acompte"
               amount={b.depositCents}
               paidAt={b.depositPaidAt}
+              cancelled={!active}
               onPoint={b.channel === "manual" && !b.depositPaidAt && active ? () => setMarkKind("deposit") : undefined}
             />
             <Milestone
               label="Solde"
               amount={b.balanceCents}
               paidAt={b.balancePaidAt}
+              cancelled={!active}
               onPoint={b.channel === "manual" && b.depositPaidAt && !b.balancePaidAt && active ? () => setMarkKind("balance") : undefined}
             />
             <div className="flex items-center justify-between border-t pt-2">
@@ -451,11 +453,13 @@ function Milestone({
   label,
   amount,
   paidAt,
+  cancelled,
   onPoint,
 }: {
   label: string;
   amount: number;
   paidAt: string | null;
+  cancelled?: boolean;
   onPoint?: () => void;
 }) {
   return (
@@ -465,6 +469,8 @@ function Milestone({
         <span className="font-medium">{fmtEur(amount)}</span>
         {paidAt ? (
           <Badge variant="success">Réglé le {new Date(paidAt).toLocaleDateString("fr-FR")}</Badge>
+        ) : cancelled ? (
+          <Badge variant="muted">Non dû (annulée)</Badge>
         ) : onPoint ? (
           <Button size="sm" variant="secondary" className="h-6 px-2 text-xs" onClick={onPoint}>
             Pointer

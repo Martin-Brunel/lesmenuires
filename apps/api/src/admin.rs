@@ -2221,14 +2221,22 @@ async fn generate_weeks(
         ));
     }
 
-    let season = sqlx::query_as::<_, (Uuid, serde_json::Value)>(
-        "select property_id, rate_tiers from season where id = $1",
+    let season = sqlx::query_as::<_, (Uuid, serde_json::Value, NaiveDate, NaiveDate)>(
+        "select property_id, rate_tiers, start_date, end_date from season where id = $1",
     )
     .bind(g.season_id)
     .fetch_optional(&st.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("saison".into()))?;
     let prop_id = season.0;
+    // Stay within the season's world: weeks must fall inside its date range.
+    let (season_start, season_end) = (season.2, season.3);
+    if g.start_date < season_start || g.end_date > season_end {
+        return Err(AppError::BadRequest(format!(
+            "Les semaines doivent rester dans la saison ({} → {}).",
+            season_start, season_end
+        )));
+    }
 
     // Resolve price + label: from the chosen tier, else from a flat price.
     let (price_cents, sub_label) = match &g.tier_key {
