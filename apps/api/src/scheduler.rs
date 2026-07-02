@@ -1,12 +1,14 @@
-//! Background scheduler: automated money jobs driven by the payment provider.
+//! Background scheduler: automated jobs run every `SCHEDULER_INTERVAL_SECS` (300s).
 //!
-//! - Solde (balance) charged off-session at J-14 (two weeks before arrival),
-//!   retried each tick until arrival if it fails.
-//! - Caution authorized (manual-capture hold) at J-5.
-//! - Abandoned-cart reminder marker (email à brancher).
+//! - Balance pre-notification e-mail in the 3-day window before J-14 (once).
+//! - Solde (balance) charged off-session from J-14 to arrival; transient failures
+//!   retry every tick, definitive declines are capped (see charge_due_balances) and
+//!   trigger a one-time dunning e-mail — the customer then settles via /espace.
+//! - Abandoned-cart reminder e-mail after 1h, cart expiry (+ intent release) after 48h.
+//! - Expired auth-token purge (RGPD).
 //!
-//! Cancelled bookings are never picked up (status filter), honouring the rule
-//! "acompte gardé, solde non prélevé".
+//! Only online, unflagged, active bookings are picked up; cancelled/manual bookings
+//! are never touched, honouring the rule "acompte gardé, solde non prélevé".
 
 use crate::email;
 use crate::payments::PaymentProvider;
@@ -108,6 +110,11 @@ async fn charge_due_balances(
     payments: &Arc<dyn PaymentProvider>,
     r: &mut TickReport,
 ) -> Result<(), sqlx::Error> {
+    // `balance_attempts` counts only *definitive* declines (see record_failure), so
+    // capping on it stops hammering a hard-declined card every tick (~288×/day) while
+    // still retrying transient/network failures indefinitely until arrival. After the
+    // cap the customer settles via /espace (they got the dunning e-mail) or the admin
+    // steps in — we never set payment_flag here, which would block that recovery path.
     let due = sqlx::query_as::<_, BalanceDue>(
         "select b.id, b.reference, b.balance_cents, b.provider_customer_id, \
                 b.provider_payment_method_id, b.balance_attempts as attempts, \
@@ -115,7 +122,7 @@ async fn charge_due_balances(
          from booking b join availability_week aw on aw.id = b.week_id \
          left join customer c on c.id = b.customer_id \
          where b.status = 'confirmed' and b.balance_paid_at is null and b.balance_cents > 0 \
-           and b.payment_flag is null and b.channel = 'online' \
+           and b.payment_flag is null and b.channel = 'online' and b.balance_attempts < 3 \
            and b.provider_customer_id is not null and b.provider_payment_method_id is not null \
            and aw.start_date - 14 <= current_date and aw.start_date >= current_date",
     )
