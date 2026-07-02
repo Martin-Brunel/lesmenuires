@@ -135,7 +135,12 @@ export async function createBooking(
 /** Persist the signed contract (version + drawn signature) before payment. */
 export async function saveContract(
   reference: string,
-  input: { contractVersion: string; signaturePng: string; accepted: boolean },
+  input: {
+    contractVersion: string;
+    signaturePng: string;
+    accepted: boolean;
+    contractText: string;
+  },
 ): Promise<void> {
   const res = await fetch(`${API_URL}/api/bookings/${reference}/contract`, {
     method: "POST",

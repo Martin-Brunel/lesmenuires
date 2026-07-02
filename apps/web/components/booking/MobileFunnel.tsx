@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { BookingContext } from "@/lib/api";
 import { mediaUrl } from "@/lib/api";
+import { contractText } from "@/lib/contract";
 import { useBookingFlow } from "./useBookingFlow";
 import {
   ACCENT,
@@ -378,11 +379,8 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
 
               {/* contract text */}
               <div style={css("margin-top:16px;font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>CONTRAT DE LOCATION SAISONNIÈRE</div>
-              <div style={css("margin-top:8px;max-height:120px;overflow:auto;background:#FFF;border:1px solid rgba(0,0,0,.07);border-radius:12px;padding:14px;font:400 11.5px/1.6 'Hanken Grotesk';color:#6B6E6B")}>
-                Entre le propriétaire de {name}, ci-après « le Bailleur », et le signataire, ci-après « le Preneur ». Le présent contrat a pour objet la location meublée à usage saisonnier du logement situé à {location}, pour la période indiquée ci-dessus.
-                <br />
-                <br />
-                Le Preneur s&apos;engage à occuper les lieux paisiblement, à hauteur de {capacity} personnes maximum, et à restituer le logement en bon état. L&apos;acompte versé à la signature vaut réservation ferme. Le solde est prélevé deux semaines avant l&apos;arrivée. Une caution de {eur(caution)} est demandée à titre de garantie : aucun montant n&apos;est bloqué ni débité — la carte enregistrée ne serait débitée qu&apos;en cas de dégâts constatés à l&apos;état des lieux de sortie. Toute annulation est régie par les conditions générales annexées.
+              <div style={css("margin-top:8px;max-height:120px;overflow:auto;white-space:pre-line;background:#FFF;border:1px solid rgba(0,0,0,.07);border-radius:12px;padding:14px;font:400 11.5px/1.6 'Hanken Grotesk';color:#6B6E6B")}>
+                {contractText({ propertyName: name, locationLabel: location, cautionCents: caution, capacity })}
               </div>
 
               {/* accept */}

@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { BookingContext } from "@/lib/api";
 import { mediaUrl } from "@/lib/api";
+import { contractText } from "@/lib/contract";
 import { useBookingFlow } from "./useBookingFlow";
 import { GuestPicker } from "./GuestPicker";
 import {
@@ -349,11 +350,8 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
               {checkoutStep === "contrat" && (
                 <>
                   <div style={css("font:500 11px 'Hanken Grotesk';letter-spacing:.06em;color:#9A9C97")}>CONTRAT DE LOCATION SAISONNIÈRE</div>
-                  <div style={css("margin-top:12px;max-height:220px;overflow:auto;background:#FFF;border:1px solid rgba(0,0,0,.08);border-radius:13px;padding:18px;font:400 12.5px/1.7 'Hanken Grotesk';color:#6B6E6B")}>
-                    Entre le propriétaire de {name}, ci-après « le Bailleur », et le signataire, ci-après « le Preneur ». Le présent contrat a pour objet la location meublée à usage saisonnier situé à {property.locationLabel}, pour la période indiquée dans le récapitulatif ci-contre.
-                    <br />
-                    <br />
-                    Le Preneur s&apos;engage à occuper les lieux paisiblement et à restituer le logement en bon état. L&apos;acompte versé à la signature vaut réservation ferme. Le solde est prélevé deux semaines avant l&apos;arrivée. Une caution de {eur(caution)} est demandée à titre de garantie : aucun montant n&apos;est bloqué ni débité — la carte enregistrée ne serait débitée qu&apos;en cas de dégâts constatés à l&apos;état des lieux de sortie. Toute annulation est régie par les conditions générales annexées au présent contrat.
+                  <div style={css("margin-top:12px;max-height:220px;overflow:auto;white-space:pre-line;background:#FFF;border:1px solid rgba(0,0,0,.08);border-radius:13px;padding:18px;font:400 12.5px/1.7 'Hanken Grotesk';color:#6B6E6B")}>
+                    {contractText({ propertyName: name, locationLabel: property.locationLabel, cautionCents: caution, capacity })}
                   </div>
                   <div onClick={() => setAccepted((a) => !a)} style={css("margin-top:14px;display:flex;align-items:center;gap:11px;cursor:pointer")}>
                     <div style={css(`flex:none;width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;color:#fff;transition:background .15s;${accepted ? `background:${ACCENT};border:1.5px solid ${ACCENT};` : "background:#FFF;border:1.5px solid rgba(0,0,0,.2);"}`)}>{accepted ? "✓" : ""}</div>

@@ -643,6 +643,8 @@ struct ContractInput {
     contract_version: String,
     signature_png: String,
     accepted: bool,
+    #[serde(default)]
+    contract_text: String,
 }
 
 /// Store the signed contract (version + drawn signature + acceptance timestamp)
@@ -667,14 +669,17 @@ async fn sign_contract(
     if body.signature_png.len() > 1_000_000 {
         return Err(AppError::BadRequest("Signature trop volumineuse.".into()));
     }
+    let contract_text =
+        (!body.contract_text.trim().is_empty()).then_some(body.contract_text.as_str());
     let updated = sqlx::query(
         "update booking set contract_version = $2, signature_png = $3, \
-            contract_accepted_at = now(), updated_at = now() \
+            contract_text = $4, contract_accepted_at = now(), updated_at = now() \
          where reference = $1 and status = 'cart'",
     )
     .bind(&reference)
     .bind(&body.contract_version)
     .bind(&body.signature_png)
+    .bind(contract_text)
     .execute(&st.pool)
     .await?;
     if updated.rows_affected() == 0 {

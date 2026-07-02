@@ -763,6 +763,7 @@ struct BookingDetailRow {
     caution_last_error: Option<String>,
     contract_version: Option<String>,
     contract_signed_at: Option<DateTime<Utc>>,
+    contract_text: Option<String>,
     has_signature: bool,
     created_at: DateTime<Utc>,
     cancelled_at: Option<DateTime<Utc>>,
@@ -834,7 +835,7 @@ async fn booking_detail(
                     and p.type = 'refund' and p.raw->>'source' = 'balance'), 0)::bigint as balance_refunded_cents, \
                 b.payment_flag, b.balance_attempts, \
                 b.balance_last_error, b.caution_attempts, b.caution_last_error, \
-                b.contract_version, b.contract_accepted_at as contract_signed_at, \
+                b.contract_version, b.contract_accepted_at as contract_signed_at, b.contract_text, \
                 (b.signature_png is not null) as has_signature, b.created_at, b.cancelled_at, \
                 b.customer_id, \
                 nullif(trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')), '') as customer_name, \

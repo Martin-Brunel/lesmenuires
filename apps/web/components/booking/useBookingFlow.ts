@@ -9,6 +9,7 @@ import { useRef, useState } from "react";
 import type { BookingContext } from "@/lib/api";
 import { ApiError, confirmDeposit, createBooking, payDeposit, saveContract } from "@/lib/api";
 import { CONTRACT_VERSION } from "@/lib/site";
+import { contractText } from "@/lib/contract";
 import {
   computeTotals,
   defaultExtras,
@@ -173,6 +174,13 @@ export function useBookingFlow(ctx: BookingContext) {
         contractVersion: CONTRACT_VERSION,
         signaturePng,
         accepted,
+        // Exact text the buyer signs — archived server-side as legal proof.
+        contractText: contractText({
+          propertyName: property.name,
+          locationLabel: property.locationLabel,
+          cautionCents: property.cautionCents,
+          capacity,
+        }),
       });
       return true;
     } catch (e) {
