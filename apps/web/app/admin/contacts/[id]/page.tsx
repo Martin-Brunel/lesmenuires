@@ -10,6 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { toast } from "@/components/ui/toast";
+import { CountryField } from "@/components/admin/CountryField";
+import { countryName } from "@/lib/countries";
 
 const STATUS_LABEL: Record<string, string> = {
   cart: "Panier",
@@ -143,7 +145,7 @@ export default function ContactDetailPage() {
                 <Row label="Téléphone" value={c.phone || "—"} />
                 <Row
                   label="Adresse"
-                  value={[c.addressLine, [c.postalCode, c.city].filter(Boolean).join(" "), c.country].filter(Boolean).join(", ") || "—"}
+                  value={[c.addressLine, [c.postalCode, c.city].filter(Boolean).join(" "), countryName(c.country)].filter(Boolean).join(", ") || "—"}
                 />
                 <Row label="Fiche créée le" value={dt(c.createdAt)} muted />
               </div>
@@ -381,7 +383,7 @@ function ContactForm({
         <Input placeholder="Code postal" value={postalCode} onChange={(e) => setPostalCode(e.target.value)} />
         <Input placeholder="Ville" value={city} onChange={(e) => setCity(e.target.value)} />
       </div>
-      <Input placeholder="Pays" value={country} onChange={(e) => setCountry(e.target.value)} />
+      <CountryField value={country} onChange={setCountry} />
       <div className="flex justify-end gap-2">
         <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy}>
           Annuler

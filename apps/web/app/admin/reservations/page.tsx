@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { ActionsMenu, type Action } from "@/components/ui/actions-menu";
 import { CancelDialog } from "@/components/admin/CancelDialog";
+import { CountryField } from "@/components/admin/CountryField";
 import {
   Table,
   TableBody,
@@ -530,7 +531,7 @@ function ManualBookingDialog({
   const [addressLine, setAddressLine] = useState("");
   const [postalCode, setPostalCode] = useState("");
   const [city, setCity] = useState("");
-  const [country, setCountry] = useState("France");
+  const [country, setCountry] = useState("FR");
   // Sélection d'un contact existant : préremplit tous les champs client.
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [contactId, setContactId] = useState("");
@@ -744,7 +745,7 @@ function ManualBookingDialog({
             </div>
             <div>
               <label className="text-xs text-muted-foreground">Pays</label>
-              <Input value={country} onChange={(e) => setCountry(e.target.value)} />
+              <CountryField value={country} onChange={setCountry} />
             </div>
           </div>
         </div>

@@ -1848,7 +1848,7 @@ async fn create_manual_booking(
     .bind(&c.address_line)
     .bind(&c.postal_code)
     .bind(&c.city)
-    .bind(if c.country.trim().is_empty() { "France" } else { c.country.trim() })
+    .bind(if c.country.trim().is_empty() { "FR" } else { c.country.trim() })
     .fetch_one(&mut *tx)
     .await?
     .0;

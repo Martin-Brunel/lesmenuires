@@ -132,7 +132,7 @@ export function useBookingFlow(ctx: BookingContext) {
       extras: selectedExtras.map((p) => p.key),
       adults,
       children,
-      customer: { ...info, country: "France" },
+      customer: { ...info, country: "FR" },
     });
     setReference(res.reference);
     return res.reference;
