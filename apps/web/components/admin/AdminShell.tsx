@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
+  CalendarDays,
   CalendarRange,
   ClipboardList,
   FileText,
@@ -22,6 +23,7 @@ import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/admin", label: "Tableau de bord", icon: LayoutDashboard, exact: true },
+  { href: "/admin/planning", label: "Planning", icon: CalendarDays },
   { href: "/admin/saisons", label: "Saisons", icon: Snowflake },
   { href: "/admin/disponibilites", label: "Dispos & tarifs", icon: CalendarRange },
   { href: "/admin/editorial", label: "Contenu éditorial", icon: FileText },
