@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { adminApi, fmtEur, PAYMENT_FLAG_LABEL, type AdminBooking, type AdminWeek, type SignatureInfo } from "@/lib/admin-api";
 import { csvDate, csvEur, downloadCsv } from "@/lib/csv";
+import { todayIso } from "@/lib/dates";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -542,9 +543,18 @@ function ManualBookingDialog({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Seules les semaines encore disponibles de la saison active ont un sens
+    // pour une réservation manuelle (pas les saisons passées ni écoulées).
+    const today = todayIso();
     adminApi
-      .listWeeks("ladret")
-      .then((w) => setWeeks(w.filter((x) => x.status === "available")))
+      .listSeasons("ladret")
+      .then((ss) => {
+        const active = ss.find((s) => s.isActive) ?? ss[0];
+        return adminApi.listWeeks("ladret", active?.id);
+      })
+      .then((w) =>
+        setWeeks(w.filter((x) => x.status === "available" && x.startDate >= today)),
+      )
       .catch(() => setWeeks([]));
   }, []);
 
