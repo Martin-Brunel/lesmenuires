@@ -1516,3 +1516,66 @@ async fn seed_admin(pool: &PgPool) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    fn sign(payload: &[u8], t: &str, secret: &str) -> String {
+        let signed = format!("{t}.{}", std::str::from_utf8(payload).unwrap());
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(signed.as_bytes());
+        hex::encode(mac.finalize().into_bytes())
+    }
+
+    #[test]
+    fn accepts_a_valid_signature() {
+        let payload = br#"{"type":"payment_intent.succeeded"}"#;
+        let secret = "whsec_test";
+        let v1 = sign(payload, "1700000000", secret);
+        let header = format!("t=1700000000,v1={v1}");
+        assert!(verify_stripe_signature(payload, &header, secret));
+    }
+
+    #[test]
+    fn rejects_wrong_secret_or_tampered_payload() {
+        let payload = br#"{"amount":100}"#;
+        let v1 = sign(payload, "1700000000", "whsec_test");
+        let header = format!("t=1700000000,v1={v1}");
+        // Wrong secret.
+        assert!(!verify_stripe_signature(payload, &header, "whsec_other"));
+        // Tampered payload, signature unchanged.
+        assert!(!verify_stripe_signature(
+            br#"{"amount":999}"#,
+            &header,
+            "whsec_test"
+        ));
+    }
+
+    #[test]
+    fn rejects_malformed_headers() {
+        let payload = b"x";
+        assert!(!verify_stripe_signature(payload, "", "whsec_test"));
+        assert!(!verify_stripe_signature(
+            payload,
+            "v1=deadbeef",
+            "whsec_test"
+        )); // no t
+        assert!(!verify_stripe_signature(
+            payload,
+            "t=1700000000",
+            "whsec_test"
+        )); // no v1
+    }
+
+    #[test]
+    fn accepts_when_any_v1_matches() {
+        // Stripe may send multiple v1 signatures during secret rotation.
+        let payload = b"body";
+        let good = sign(payload, "1700000000", "whsec_test");
+        let header = format!("t=1700000000,v1=deadbeef,v1={good}");
+        assert!(verify_stripe_signature(payload, &header, "whsec_test"));
+    }
+}
