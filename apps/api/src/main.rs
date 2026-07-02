@@ -135,8 +135,37 @@ async fn main() -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!("API listening on http://{bind}");
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    tracing::info!("arrêt terminé");
     Ok(())
+}
+
+/// Resolve on SIGTERM (docker stop / deploy) or Ctrl-C so in-flight requests —
+/// e.g. a payment confirmation mid-transaction — drain before the process exits
+/// instead of being cut off.
+async fn shutdown_signal() {
+    use tokio::signal;
+    let ctrl_c = async {
+        let _ = signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(e) => tracing::error!("handler SIGTERM: {e:?}"),
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = terminate => {}
+    }
+    tracing::info!("arrêt gracieux demandé — drainage des requêtes en cours");
 }
 
 /// Readiness probe (used as the API container healthcheck): verifies the database
