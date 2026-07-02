@@ -163,7 +163,9 @@ Volumes persistants : `pgdata` (base), `media` (photos), `backups` (sauvegardes)
       copier le secret dans `STRIPE_WEBHOOK_SECRET` (`whsec_…`). **Obligatoire** :
       sans lui, l'API rejette les webhooks (fail-closed) → les confirmations
       asynchrones ne passeraient pas. Events utiles : `payment_intent.succeeded`,
-      `payment_intent.payment_failed`, `charge.refunded`, `charge.dispute.created`.
+      `payment_intent.payment_failed`, `payment_intent.canceled`, `charge.refunded`,
+      `charge.dispute.created`, `charge.dispute.funds_withdrawn`,
+      `charge.dispute.closed` (lève automatiquement le blocage si le litige est gagné).
 - [ ] Tester un vrai paiement d'acompte de bout en bout, puis vérifier qu'un
       remboursement fait depuis le dashboard Stripe remonte bien (badge admin).
 
