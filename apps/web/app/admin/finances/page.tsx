@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { adminApi, fmtEur, type FinancesResponse } from "@/lib/admin-api";
+import { csvDate, csvEur, downloadCsv } from "@/lib/csv";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -95,16 +97,39 @@ export default function FinancesPage() {
               collectée {fmtEur(taxCollected)} / total {fmtEur(taxTotal)}.
             </p>
           </div>
-          <select
-            value={year}
-            onChange={(e) => setYear(e.target.value)}
-            className="h-9 rounded-md border bg-background px-3 text-sm"
-          >
-            <option value="all">Toutes les années</option>
-            {years.map((y) => (
-              <option key={y} value={y}>{y}</option>
-            ))}
-          </select>
+          <div className="flex items-center gap-2">
+            <select
+              value={year}
+              onChange={(e) => setYear(e.target.value)}
+              className="h-9 rounded-md border bg-background px-3 text-sm"
+            >
+              <option value="all">Toutes les années</option>
+              {years.map((y) => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+            <Button
+              variant="secondary"
+              disabled={rows.length === 0}
+              onClick={() =>
+                downloadCsv(
+                  year === "all" ? "taxe-de-sejour.csv" : `taxe-de-sejour-${year}.csv`,
+                  ["Référence", "Client", "Arrivée", "Adultes", "Nuits", "Taxe (€)", "Statut"],
+                  rows.map((r) => [
+                    r.reference,
+                    r.customerName ?? "",
+                    csvDate(r.startDate),
+                    r.adults,
+                    r.nights,
+                    csvEur(r.touristTaxCents),
+                    r.collected ? "Collectée" : "À venir",
+                  ]),
+                )
+              }
+            >
+              Exporter CSV
+            </Button>
+          </div>
         </div>
 
         <Card className="overflow-hidden">

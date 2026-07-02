@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { adminApi, fmtEur, type Contact } from "@/lib/admin-api";
+import { csvDate, csvEur, downloadCsv } from "@/lib/csv";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
@@ -85,6 +87,30 @@ export default function ContactsPage() {
             </button>
           ))}
         </div>
+        <Button
+          variant="secondary"
+          className="ml-auto"
+          disabled={rows.length === 0}
+          onClick={() =>
+            downloadCsv(
+              "contacts.csv",
+              ["Nom", "E-mail", "Téléphone", "Ville", "Statut", "Résas confirmées", "Paniers", "Total réglé (€)", "Dernière activité"],
+              rows.map((c) => [
+                c.name ?? "",
+                c.email,
+                c.phone,
+                c.city,
+                c.confirmedCount > 0 ? "Client" : "Prospect",
+                c.confirmedCount,
+                c.cartCount,
+                csvEur(c.totalPaidCents),
+                csvDate(c.lastActivity),
+              ]),
+            )
+          }
+        >
+          Exporter CSV
+        </Button>
       </div>
 
       <Card className="overflow-hidden">

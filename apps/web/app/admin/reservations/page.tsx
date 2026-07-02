@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { adminApi, fmtEur, PAYMENT_FLAG_LABEL, type AdminBooking, type AdminWeek, type SignatureInfo } from "@/lib/admin-api";
+import { csvDate, csvEur, downloadCsv } from "@/lib/csv";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -229,7 +230,40 @@ export default function ReservationsPage() {
             Réservations reçues, les plus récentes en premier.
           </p>
         </div>
-        <Button onClick={() => setShowManual(true)}>Nouvelle réservation</Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="secondary"
+            disabled={!bookings || bookings.length === 0}
+            onClick={() =>
+              downloadCsv(
+                "reservations.csv",
+                ["Référence", "Statut", "Canal", "Semaine", "Arrivée", "Départ", "Client", "E-mail", "Téléphone", "Adultes", "Enfants", "Total (€)", "Acompte (€)", "Solde (€)", "Acompte payé le", "Solde payé le", "Créée le"],
+                (bookings ?? []).map((b) => [
+                  b.reference,
+                  STATUS_LABEL[b.status] ?? b.status,
+                  b.channel === "manual" ? "Manuel" : "Site",
+                  b.weekRange,
+                  csvDate(b.startDate),
+                  csvDate(b.endDate),
+                  b.customerName ?? "",
+                  b.customerEmail ?? "",
+                  b.customerPhone ?? "",
+                  b.adults,
+                  b.children,
+                  csvEur(b.totalCents),
+                  csvEur(b.depositCents),
+                  csvEur(b.balanceCents),
+                  csvDate(b.depositPaidAt),
+                  csvDate(b.balancePaidAt),
+                  csvDate(b.createdAt),
+                ]),
+              )
+            }
+          >
+            Exporter CSV
+          </Button>
+          <Button onClick={() => setShowManual(true)}>Nouvelle réservation</Button>
+        </div>
       </div>
       <Card className="overflow-hidden">
         <Table>
