@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { adminApi, fmtEur, type Contact } from "@/lib/admin-api";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -109,7 +110,9 @@ export default function ContactsPage() {
             rows.map((c) => (
               <TableRow key={c.id}>
                 <TableCell>
-                  <div className="font-medium">{c.name ?? "—"}</div>
+                  <Link href={`/admin/contacts/${c.id}`} className="font-medium text-primary underline underline-offset-2 hover:text-foreground">
+                    {c.name ?? c.email}
+                  </Link>
                   <div className="text-xs text-muted-foreground">{c.email}</div>
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">

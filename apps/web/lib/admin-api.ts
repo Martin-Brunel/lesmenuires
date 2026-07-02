@@ -70,6 +70,7 @@ export type AdminBooking = {
   reference: string;
   status: string;
   weekRange: string;
+  startDate: string;
   totalCents: number;
   depositCents: number;
   balanceCents: number;
@@ -163,6 +164,7 @@ export type BookingDetailInfo = {
   hasSignature: boolean;
   createdAt: string;
   cancelledAt: string | null;
+  customerId: string | null;
   customerName: string | null;
   customerEmail: string | null;
   customerPhone: string | null;
@@ -203,6 +205,55 @@ export type BookingDetail = {
   payments: PaymentEntry[];
   emails: EmailEntry[];
   notes: NoteEntry[];
+};
+
+export type ContactInfo = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  addressLine: string;
+  postalCode: string;
+  city: string;
+  country: string;
+  createdAt: string;
+};
+
+export type ContactBooking = {
+  reference: string;
+  status: string;
+  channel: string;
+  weekRange: string;
+  startDate: string;
+  totalCents: number;
+  depositPaidAt: string | null;
+  balancePaidAt: string | null;
+  createdAt: string;
+  cancelledAt: string | null;
+};
+
+export type ContactNote = {
+  bookingReference: string;
+  body: string;
+  author: string | null;
+  createdAt: string;
+};
+
+export type ContactEmail = {
+  bookingReference: string;
+  kind: string;
+  subject: string;
+  status: string;
+  createdAt: string;
+  openedAt: string | null;
+};
+
+export type ContactDetail = {
+  contact: ContactInfo;
+  bookings: ContactBooking[];
+  notes: ContactNote[];
+  emails: ContactEmail[];
 };
 
 export type Contact = {
@@ -340,6 +391,19 @@ export const adminApi = {
     }),
   finances: () => req<FinancesResponse>("/finances"),
   listContacts: () => req<Contact[]>("/contacts"),
+  contactDetail: (id: string) => req<ContactDetail>(`/contacts/${id}`),
+  updateContact: (
+    id: string,
+    data: {
+      firstName: string;
+      lastName: string;
+      email: string;
+      phone: string;
+      addressLine: string;
+      postalCode: string;
+      city: string;
+    },
+  ) => req<ContactInfo>(`/contacts/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   getSignature: (reference: string) =>
     req<SignatureInfo>(`/bookings/${reference}/signature`),
   cancelBooking: (

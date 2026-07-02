@@ -89,6 +89,12 @@ export default function ReservationDetailPage() {
 
   const b = data.booking;
   const active = b.status !== "cancelled";
+  // Damages assessed at check-out: no caution action before the stay begins.
+  const stayStarted = new Date(b.startDate + "T00:00:00") <= new Date();
+  // Refundable amount still owed (works even after cancellation).
+  const refundable =
+    Math.max(0, (b.depositPaidAt ? b.depositCents : 0) - b.depositRefundedCents) +
+    Math.max(0, (b.balancePaidAt ? b.balanceCents : 0) - b.balanceRefundedCents);
   const parseEuros = (s: string | null): number | null => {
     if (s === null) return null;
     const n = Math.round(parseFloat(s.replace(",", ".")) * 100);
@@ -166,11 +172,17 @@ export default function ReservationDetailPage() {
     actionBtns.push({ label: "Pointer l'acompte", onClick: () => setMarkKind("deposit") });
   if (b.channel === "manual" && b.depositPaidAt && !b.balancePaidAt && active)
     actionBtns.push({ label: "Pointer le solde", onClick: () => setMarkKind("balance") });
-  if ((b.status === "confirmed" || b.status === "balance_paid") && b.cautionCents > 0 && !b.cautionReleasedAt) {
+  if (
+    (b.status === "confirmed" || b.status === "balance_paid") &&
+    b.cautionCents > 0 &&
+    !b.cautionReleasedAt &&
+    stayStarted
+  ) {
     actionBtns.push({ label: "Débiter des dégâts", onClick: captureCaution });
     actionBtns.push({ label: "Clôturer la caution", onClick: releaseCaution });
   }
-  if (b.depositPaidAt && active) actionBtns.push({ label: "Rembourser", onClick: refund });
+  // Refund stays available after cancellation as long as something remains refundable.
+  if (refundable > 0) actionBtns.push({ label: "Rembourser", onClick: refund });
   if (active && b.status !== "cart")
     actionBtns.push({ label: "Annuler la réservation", onClick: () => setCancelOpen(true), danger: true });
 
@@ -265,7 +277,16 @@ export default function ReservationDetailPage() {
         </Card>
 
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-base">Client & accès</CardTitle></CardHeader>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center justify-between">
+              Client & accès
+              {b.customerId && (
+                <Link href={`/admin/contacts/${b.customerId}`} className="text-xs font-normal text-primary underline underline-offset-2">
+                  Voir la fiche contact
+                </Link>
+              )}
+            </CardTitle>
+          </CardHeader>
           <CardContent className="space-y-1.5 text-sm">
             <Row label="Nom" value={b.customerName ?? "—"} />
             <Row label="E-mail" value={b.customerEmail ?? "—"} />

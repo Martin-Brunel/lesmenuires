@@ -618,6 +618,7 @@ struct AdminBookingDto {
     reference: String,
     status: String,
     week_range: String,
+    start_date: NaiveDate,
     total_cents: i64,
     deposit_cents: i64,
     balance_cents: i64,
@@ -649,7 +650,7 @@ struct AdminBookingDto {
 
 async fn list_bookings(State(st): State<AppState>) -> Result<Json<Vec<AdminBookingDto>>, AppError> {
     let rows = sqlx::query_as::<_, AdminBookingDto>(
-        "select b.reference, b.status, aw.range_label as week_range, \
+        "select b.reference, b.status, aw.range_label as week_range, aw.start_date, \
                 b.total_cents, b.deposit_cents, b.balance_cents, b.caution_cents, \
                 b.deposit_paid_at, b.balance_paid_at, \
                 b.caution_released_at, b.caution_captured_cents, \
@@ -1733,6 +1734,7 @@ struct CautionRow {
     provider_payment_method_id: Option<String>,
     caution_method: Option<String>,
     caution_released_at: Option<chrono::DateTime<chrono::Utc>>,
+    stay_started: bool,
 }
 
 /// Caution model = card-on-file + charge-on-demand (Option B) : no Stripe hold is
@@ -1740,9 +1742,11 @@ struct CautionRow {
 /// caution is "settled" (caution_released_at) once the operator charges or waives it.
 async fn load_caution(st: &AppState, reference: &str) -> Result<CautionRow, AppError> {
     let b = sqlx::query_as::<_, CautionRow>(
-        "select id, caution_cents, provider_customer_id, provider_payment_method_id, \
-                caution_method, caution_released_at \
-         from booking where reference = $1",
+        "select b.id, b.caution_cents, b.provider_customer_id, b.provider_payment_method_id, \
+                b.caution_method, b.caution_released_at, \
+                (aw.start_date <= current_date) as stay_started \
+         from booking b join availability_week aw on aw.id = b.week_id \
+         where b.reference = $1",
     )
     .bind(reference)
     .fetch_optional(&st.pool)
@@ -1750,6 +1754,12 @@ async fn load_caution(st: &AppState, reference: &str) -> Result<CautionRow, AppE
     .ok_or_else(|| AppError::NotFound("réservation".into()))?;
     if b.caution_released_at.is_some() {
         return Err(AppError::BadRequest("Caution déjà traitée.".into()));
+    }
+    // Damages are assessed at check-out: no caution action before the stay begins.
+    if !b.stay_started {
+        return Err(AppError::BadRequest(
+            "La caution ne peut être traitée qu'à partir du début du séjour.".into(),
+        ));
     }
     Ok(b)
 }

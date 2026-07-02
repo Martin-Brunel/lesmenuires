@@ -194,15 +194,24 @@ export default function ReservationsPage() {
     const acts: Action[] = [];
     const busy = pending === b.reference;
     const active = b.status !== "cancelled";
+    const stayStarted = new Date(b.startDate + "T00:00:00") <= new Date();
+    const refundable =
+      Math.max(0, (b.depositPaidAt ? b.depositCents : 0) - b.depositRefundedCents) +
+      Math.max(0, (b.balancePaidAt ? b.balanceCents : 0) - b.balanceRefundedCents);
     if (b.channel === "manual" && !b.depositPaidAt && active)
       acts.push({ label: "Pointer l'acompte", onClick: () => markPaid(b, "deposit"), disabled: busy });
     if (b.channel === "manual" && b.depositPaidAt && !b.balancePaidAt && active)
       acts.push({ label: "Pointer le solde", onClick: () => markPaid(b, "balance"), disabled: busy });
-    if ((b.status === "confirmed" || b.status === "balance_paid") && b.cautionCents > 0 && !b.cautionReleasedAt) {
+    if (
+      (b.status === "confirmed" || b.status === "balance_paid") &&
+      b.cautionCents > 0 &&
+      !b.cautionReleasedAt &&
+      stayStarted
+    ) {
       acts.push({ label: "Débiter des dégâts", onClick: () => captureCaution(b), disabled: busy });
       acts.push({ label: "Clôturer la caution", onClick: () => releaseCaution(b.reference), disabled: busy });
     }
-    if (b.depositPaidAt && active)
+    if (refundable > 0)
       acts.push({ label: "Rembourser", onClick: () => refund(b), disabled: busy });
     if (b.contractSignedAt)
       acts.push({ label: "Voir la signature", onClick: () => viewSignature(b.reference) });
