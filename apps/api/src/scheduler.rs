@@ -41,6 +41,7 @@ pub struct TickReport {
     pub carts_expired: i64,
     pub tokens_purged: i64,
     pub balances_prenotified: i64,
+    pub arrivals_reminded: i64,
 }
 
 impl TickReport {
@@ -53,6 +54,7 @@ impl TickReport {
             + self.carts_expired
             + self.tokens_purged
             + self.balances_prenotified
+            + self.arrivals_reminded
             > 0
     }
 }
@@ -61,6 +63,9 @@ pub async fn run_tick(pool: &PgPool, payments: &Arc<dyn PaymentProvider>) -> Tic
     let mut r = TickReport::default();
     if let Err(e) = prenotify_balances(pool, &mut r).await {
         tracing::error!("job pré-notif solde: {e:?}");
+    }
+    if let Err(e) = remind_upcoming_arrivals(pool, &mut r).await {
+        tracing::error!("job rappel arrivée: {e:?}");
     }
     if let Err(e) = charge_due_balances(pool, payments, &mut r).await {
         tracing::error!("job solde: {e:?}");
@@ -240,6 +245,89 @@ struct PrenotifyRow {
 
 /// A few days before the automatic balance charge (J-14), warn the customer so
 /// they can check their card or pay early — cuts down SCA failures. Sent once.
+#[derive(FromRow)]
+struct ArrivalReminderRow {
+    id: Uuid,
+    reference: String,
+    week_range: String,
+    arrival: String,
+    email: Option<String>,
+    first_name: Option<String>,
+    arrival_instructions: String,
+}
+
+/// Rappel avant arrivée (J-7) : récap du séjour + instructions d'accès, une
+/// seule fois par dossier. Concerne aussi les réservations manuelles — c'est
+/// un e-mail de service, pas un flux de paiement.
+async fn remind_upcoming_arrivals(pool: &PgPool, r: &mut TickReport) -> Result<(), sqlx::Error> {
+    let due: Vec<ArrivalReminderRow> = sqlx::query_as(
+        "select b.id, b.reference, aw.range_label as week_range, aw.arrival_label as arrival, \
+                c.email, c.first_name, p.arrival_instructions \
+         from booking b \
+         join availability_week aw on aw.id = b.week_id \
+         join property p on p.id = b.property_id \
+         left join customer c on c.id = b.customer_id \
+         where b.status in ('confirmed','balance_paid') \
+           and b.arrival_reminder_sent_at is null \
+           and aw.start_date - 7 <= current_date and current_date < aw.start_date",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    for d in due {
+        // Mark first (idempotent even if the e-mail send is best-effort).
+        sqlx::query(
+            "update booking set arrival_reminder_sent_at = now(), updated_at = now() where id = $1",
+        )
+        .bind(d.id)
+        .execute(pool)
+        .await?;
+        r.arrivals_reminded += 1;
+
+        if let Some(to) = d.email.clone().filter(|e| !e.is_empty()) {
+            let instructions = d
+                .arrival_instructions
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+                .replace('\n', "<br>");
+            let access = if instructions.trim().is_empty() {
+                String::new()
+            } else {
+                format!("<br><br><strong>Accès au logement</strong><br>{instructions}")
+            };
+            let body = format!(
+                "{}<br><br>Votre séjour à L'Adret approche : arrivée <strong>{}</strong> \
+                 (semaine du {}), réservation {}.{}<br><br>Vous retrouvez toutes les \
+                 informations de votre séjour dans votre espace.",
+                greeting(d.first_name.as_deref()),
+                d.arrival,
+                d.week_range,
+                d.reference,
+                access,
+            );
+            let html = email::template(
+                "Votre séjour approche",
+                &body,
+                "Mon espace",
+                &format!("{}/espace", email::front_url()),
+            );
+            email::spawn(
+                pool.clone(),
+                Some(d.id),
+                "arrival_reminder",
+                to,
+                "Votre séjour à L'Adret approche".into(),
+                html,
+            );
+        }
+    }
+    if r.arrivals_reminded > 0 {
+        tracing::info!("{} rappel(s) d'arrivée envoyé(s)", r.arrivals_reminded);
+    }
+    Ok(())
+}
+
 async fn prenotify_balances(pool: &PgPool, r: &mut TickReport) -> Result<(), sqlx::Error> {
     // Fires in the 3-day window before the charge opens (start_date-17 .. -15).
     let due: Vec<PrenotifyRow> = sqlx::query_as(

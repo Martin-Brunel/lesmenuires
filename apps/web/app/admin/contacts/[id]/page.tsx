@@ -32,6 +32,7 @@ const EMAIL_KIND: Record<string, string> = {
   balance_prenotify: "Prélèvement à venir",
   payment_issue: "Incident de paiement",
   cart_reminder: "Relance panier",
+  arrival_reminder: "Rappel avant arrivée",
   cancellation: "Annulation",
   manual: "E-mail manuel",
 };
