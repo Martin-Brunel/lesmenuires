@@ -88,6 +88,54 @@ export default function FinancesPage() {
         ))}
       </div>
 
+      {data.seasons.length > 0 && (
+        <div className="space-y-3">
+          <div>
+            <h2 className="text-lg font-semibold">Par saison</h2>
+            <p className="text-sm text-muted-foreground">
+              Inventaire et flux de chaque saison (dossiers actifs uniquement).
+            </p>
+          </div>
+          <Card className="overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Saison</TableHead>
+                  <TableHead className="text-right">Occupation</TableHead>
+                  <TableHead className="text-right">Loyers réservés</TableHead>
+                  <TableHead className="text-right">Encaissé</TableHead>
+                  <TableHead className="text-right">À encaisser</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.seasons.map((s) => (
+                  <TableRow key={s.name}>
+                    <TableCell className="font-medium">{s.name}</TableCell>
+                    <TableCell className="text-right">
+                      {s.weeksBooked}/{s.weeksTotal} sem.
+                      <span className="ml-1 text-muted-foreground">
+                        (
+                        {s.weeksSellable > 0
+                          ? Math.round((s.weeksBooked / s.weeksSellable) * 100)
+                          : 0}{" "}
+                        %)
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right">{fmtEur(s.revenueBookedCents)}</TableCell>
+                    <TableCell className="text-right font-medium">
+                      {fmtEur(s.collectedCents)}
+                    </TableCell>
+                    <TableCell className="text-right text-muted-foreground">
+                      {fmtEur(s.upcomingCents)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+        </div>
+      )}
+
       <div className="space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div>

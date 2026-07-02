@@ -147,8 +147,19 @@ export type TaxDeclarationRow = {
   collected: boolean;
 };
 
+export type SeasonFinance = {
+  name: string;
+  weeksTotal: number;
+  weeksSellable: number;
+  weeksBooked: number;
+  revenueBookedCents: number;
+  collectedCents: number;
+  upcomingCents: number;
+};
+
 export type FinancesResponse = {
   summary: FinanceSummary;
+  seasons: SeasonFinance[];
   taxDeclaration: TaxDeclarationRow[];
 };
 

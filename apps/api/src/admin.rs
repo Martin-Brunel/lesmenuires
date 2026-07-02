@@ -803,10 +803,27 @@ struct TaxDeclarationRow {
     collected: bool,
 }
 
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct SeasonFinanceRow {
+    name: String,
+    weeks_total: i64,
+    /// Hors semaines bloquées (non commercialisables) — même définition que le Planning.
+    weeks_sellable: i64,
+    weeks_booked: i64,
+    /// Loyers des semaines réservées (prix affiché des semaines booked).
+    revenue_booked_cents: i64,
+    /// Acomptes + soldes effectivement réglés sur les dossiers de la saison.
+    collected_cents: i64,
+    /// Soldes restant à encaisser (dossiers confirmés non soldés).
+    upcoming_cents: i64,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct FinancesResponse {
     summary: FinanceSummary,
+    seasons: Vec<SeasonFinanceRow>,
     tax_declaration: Vec<TaxDeclarationRow>,
 }
 
@@ -2035,6 +2052,33 @@ async fn finances(State(st): State<AppState>) -> Result<Json<FinancesResponse>, 
     .fetch_all(&st.pool)
     .await?;
 
+    // Vue par saison : inventaire (semaines) + flux (dossiers actifs).
+    let seasons = sqlx::query_as::<_, SeasonFinanceRow>(
+        "select s.name, \
+                count(aw.id) as weeks_total, \
+                count(aw.id) filter (where aw.status <> 'blocked') as weeks_sellable, \
+                count(aw.id) filter (where aw.status = 'booked') as weeks_booked, \
+                coalesce(sum(aw.price_cents) filter (where aw.status = 'booked'),0)::bigint \
+                    as revenue_booked_cents, \
+                coalesce((select sum((case when b.deposit_paid_at is not null then b.deposit_cents else 0 end) \
+                                   + (case when b.balance_paid_at is not null then b.balance_cents else 0 end)) \
+                          from booking b join availability_week w on w.id = b.week_id \
+                          where w.season_id = s.id and b.status in ('confirmed','balance_paid')),0)::bigint \
+                    as collected_cents, \
+                coalesce((select sum(b.balance_cents) \
+                          from booking b join availability_week w on w.id = b.week_id \
+                          where w.season_id = s.id and b.status = 'confirmed' \
+                            and b.balance_paid_at is null),0)::bigint \
+                    as upcoming_cents \
+         from season s \
+         left join availability_week aw on aw.season_id = s.id \
+         group by s.id, s.name \
+         having count(aw.id) > 0 \
+         order by min(aw.start_date) desc",
+    )
+    .fetch_all(&st.pool)
+    .await?;
+
     Ok(Json(FinancesResponse {
         summary: FinanceSummary {
             deposits_paid_cents: agg.deposits_paid_cents,
@@ -2047,6 +2091,7 @@ async fn finances(State(st): State<AppState>) -> Result<Json<FinancesResponse>, 
             upcoming_count,
             tourist_tax_upcoming_cents: tax_upcoming,
         },
+        seasons,
         tax_declaration,
     }))
 }
