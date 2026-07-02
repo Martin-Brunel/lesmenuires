@@ -5,6 +5,7 @@ import {
   adminApi,
   type EmailAutomation,
   type EmailAutomationInput,
+  type SystemEmail,
 } from "@/lib/admin-api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -57,15 +58,40 @@ const EMPTY: EmailAutomationInput = {
 export default function EmailsPage() {
   const confirm = useConfirm();
   const [rows, setRows] = useState<EmailAutomation[] | null>(null);
+  const [system, setSystem] = useState<SystemEmail[]>([]);
   const [error, setError] = useState(false);
   // null = fermé ; "new" = création ; sinon l'automatisation en édition.
   const [editing, setEditing] = useState<EmailAutomation | "new" | null>(null);
+  const [editingSystem, setEditingSystem] = useState<SystemEmail | null>(null);
 
   const reload = () =>
-    adminApi.listEmailAutomations().then(setRows).catch(() => setError(true));
+    Promise.all([adminApi.listEmailAutomations(), adminApi.listSystemEmails()])
+      .then(([a, s]) => {
+        setRows(a);
+        setSystem(s);
+      })
+      .catch(() => setError(true));
   useEffect(() => {
     reload();
   }, []);
+
+  const resetSystem = async (s: SystemEmail) => {
+    if (
+      !(await confirm({
+        title: "Rétablir le texte par défaut ?",
+        description: `« ${s.label} » reprendra le texte d'origine.`,
+        confirmLabel: "Rétablir",
+      }))
+    )
+      return;
+    try {
+      await adminApi.resetSystemEmail(s.kind);
+      toast.success("Texte par défaut rétabli.");
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    }
+  };
 
   const toggleActive = async (a: EmailAutomation) => {
     try {
@@ -163,6 +189,43 @@ export default function EmailsPage() {
         </div>
       )}
 
+      <div className="space-y-2 pt-2">
+        <div>
+          <h2 className="text-lg font-semibold">E-mails système</h2>
+          <p className="text-sm text-muted-foreground">
+            Envoyés automatiquement par la plateforme (paiements, annulations, contrat…).
+            Le texte est personnalisable ; « Rétablir » revient au texte d&apos;origine.
+          </p>
+        </div>
+        {system.map((s) => (
+          <Card key={s.kind}>
+            <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">{s.label}</span>
+                  {s.customized ? (
+                    <Badge variant="warning">Personnalisé</Badge>
+                  ) : (
+                    <Badge variant="muted">Texte par défaut</Badge>
+                  )}
+                </div>
+                <div className="mt-1 text-sm text-muted-foreground truncate">{s.trigger}</div>
+              </div>
+              <div className="flex shrink-0 gap-2">
+                <Button size="sm" variant="secondary" onClick={() => setEditingSystem(s)}>
+                  Personnaliser
+                </Button>
+                {s.customized && (
+                  <Button size="sm" variant="ghost" onClick={() => resetSystem(s)}>
+                    Rétablir
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
       {editing && (
         <AutomationDialog
           initial={editing === "new" ? null : editing}
@@ -173,7 +236,142 @@ export default function EmailsPage() {
           }}
         />
       )}
+      {editingSystem && (
+        <SystemEmailDialog
+          item={editingSystem}
+          onClose={() => setEditingSystem(null)}
+          onSaved={() => {
+            setEditingSystem(null);
+            reload();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function SystemEmailDialog({
+  item,
+  onClose,
+  onSaved,
+}: {
+  item: SystemEmail;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [subject, setSubject] = useState(item.subject ?? item.defaultSubject);
+  const [body, setBody] = useState(item.body ?? item.defaultBody);
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<{ subject: string; html: string } | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+
+  const save = async () => {
+    if (busy) return;
+    if (!subject.trim() || !body.trim()) {
+      toast.error("Sujet et message requis.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await adminApi.saveSystemEmail(item.kind, subject, body);
+      toast.success(`« ${item.label} » personnalisé.`);
+      onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+      setBusy(false);
+    }
+  };
+
+  const showPreview = async () => {
+    if (previewBusy) return;
+    setPreviewBusy(true);
+    try {
+      setPreview(await adminApi.previewEmailAutomation(subject, body));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      setPreviewBusy(false);
+    }
+  };
+
+  if (preview) {
+    return (
+      <Modal
+        open
+        wide
+        onClose={() => setPreview(null)}
+        title={`Aperçu — ${preview.subject}`}
+        description="Rendu réel (gabarit L'Adret) avec des données d'exemple."
+        footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setPreview(null)}>
+              Retour à l&apos;édition
+            </Button>
+            <Button size="sm" onClick={save} disabled={busy}>
+              {busy ? "…" : "Enregistrer"}
+            </Button>
+          </>
+        }
+      >
+        <iframe
+          srcDoc={preview.html}
+          sandbox=""
+          title="Aperçu de l'e-mail"
+          className="h-[60vh] w-full rounded-md border bg-white"
+        />
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal
+      open
+      wide
+      onClose={onClose}
+      title={`Personnaliser « ${item.label} »`}
+      description={item.trigger}
+      footer={
+        <>
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>
+            Annuler
+          </Button>
+          <Button variant="secondary" size="sm" onClick={showPreview} disabled={previewBusy}>
+            {previewBusy ? "…" : "Aperçu"}
+          </Button>
+          <Button size="sm" onClick={save} disabled={busy}>
+            {busy ? "…" : "Enregistrer"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <Label>Sujet</Label>
+          <Input value={subject} onChange={(e) => setSubject(e.target.value)} />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Message</Label>
+          <textarea
+            className="w-full rounded-md border bg-background px-3 py-2 text-sm font-mono text-[13px]"
+            rows={12}
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            Variables : <code className="text-[11px]">{item.vars.map((v) => `{{${v}}}`).join(" ")}</code>
+            {item.ctaLabel && (
+              <>
+                {" "}
+                — bouton « {item.ctaLabel} » ajouté automatiquement.
+              </>
+            )}
+            <br />
+            HTML autorisé (sanitisé à l&apos;envoi). Sans balise, les retours à la ligne sont
+            conservés.
+          </p>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

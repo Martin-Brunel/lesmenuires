@@ -344,6 +344,19 @@ export type EmailAutomation = {
 
 export type EmailAutomationInput = Omit<EmailAutomation, "id" | "sentCount" | "createdAt">;
 
+export type SystemEmail = {
+  kind: string;
+  label: string;
+  trigger: string;
+  vars: string[];
+  defaultSubject: string;
+  defaultBody: string;
+  ctaLabel: string;
+  subject: string | null;
+  body: string | null;
+  customized: boolean;
+};
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -517,6 +530,14 @@ export const adminApi = {
       body: JSON.stringify({ currentPassword, newPassword }),
     }),
   listAudit: () => req<AuditEntry[]>("/audit"),
+  listSystemEmails: () => req<SystemEmail[]>("/email-overrides"),
+  saveSystemEmail: (kind: string, subject: string, body: string) =>
+    req<void>(`/email-overrides/${kind}`, {
+      method: "PUT",
+      body: JSON.stringify({ subject, body }),
+    }),
+  resetSystemEmail: (kind: string) =>
+    req<void>(`/email-overrides/${kind}`, { method: "DELETE" }),
   previewEmailAutomation: (subject: string, body: string) =>
     req<{ subject: string; html: string }>("/email-automations/preview", {
       method: "POST",

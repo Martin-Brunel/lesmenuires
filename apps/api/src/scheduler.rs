@@ -23,13 +23,6 @@ fn eur(cents: i64) -> String {
     format!("{},{:02} €", cents / 100, (cents % 100).abs())
 }
 
-fn greeting(first_name: Option<&str>) -> String {
-    match first_name.map(str::trim).filter(|s| !s.is_empty()) {
-        Some(name) => format!("Bonjour {name},"),
-        None => "Bonjour,".to_string(),
-    }
-}
-
 #[derive(Default, Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct TickReport {
@@ -181,30 +174,21 @@ async fn charge_due_balances(
                 r.balances_charged += 1;
                 tracing::info!("solde prélevé: {} ({} c)", d.reference, d.balance_cents);
                 if let Some(to) = d.email.clone().filter(|e| !e.is_empty()) {
-                    let body = format!(
-                        "{}<br><br>Le solde de votre séjour à L'Adret ({}) vient d'être prélevé \
-                         sur votre moyen de paiement enregistré. Votre réservation {} est \
-                         entièrement réglée.<br><br>Aucune caution n'est prélevée : votre carte \
-                         reste simplement enregistrée et ne serait débitée qu'en cas de dégâts \
-                         constatés à l'état des lieux de sortie.",
-                        greeting(d.first_name.as_deref()),
-                        eur(d.balance_cents),
-                        d.reference,
-                    );
-                    let html = email::template(
-                        "Solde réglé",
-                        &body,
-                        "Voir ma réservation",
-                        &format!("{}/espace", email::front_url()),
-                    );
-                    email::spawn(
+                    let vars = vec![
+                        ("bonjour", email::bonjour(d.first_name.as_deref())),
+                        ("prenom", d.first_name.clone().unwrap_or_default()),
+                        ("montant", eur(d.balance_cents)),
+                        ("reference", d.reference.clone()),
+                    ];
+                    email::send_system(
                         pool.clone(),
                         Some(d.id),
                         "balance_paid",
                         to,
-                        "Solde réglé — L'Adret".into(),
-                        html,
-                    );
+                        &vars,
+                        &format!("{}/espace", email::front_url()),
+                    )
+                    .await?;
                 }
             }
             Err(e) => {
@@ -263,40 +247,6 @@ struct AutomationDue {
     first_name: Option<String>,
     last_name: Option<String>,
     arrival_instructions: String,
-}
-
-/// Substitue les variables {{...}} d'un gabarit. `escape` = true pour un corps
-/// HTML (les valeurs viennent des données client), false pour un sujet texte.
-pub(crate) fn render_template(tpl: &str, vars: &[(&str, String)], escape: bool) -> String {
-    let mut out = tpl.to_string();
-    for (key, value) in vars {
-        let v = if escape {
-            value
-                .replace('&', "&amp;")
-                .replace('<', "&lt;")
-                .replace('>', "&gt;")
-        } else {
-            value.clone()
-        };
-        out = out.replace(&format!("{{{{{key}}}}}"), &v);
-    }
-    out
-}
-
-/// Corps d'un transactionnel : variables substituées (échappées), HTML admin
-/// autorisé mais sanitisé (defense-in-depth XSS, `style` conservé pour la mise
-/// en forme e-mail). Sans balise, les retours à la ligne deviennent des <br>.
-pub(crate) fn render_email_body(tpl: &str, vars: &[(&str, String)]) -> String {
-    let rendered = render_template(tpl, vars, true);
-    let html = if rendered.contains('<') {
-        rendered
-    } else {
-        rendered.replace('\n', "<br>")
-    };
-    ammonia::Builder::default()
-        .add_generic_attributes(&["style"])
-        .clean(&html)
-        .to_string()
 }
 
 /// Données d'un dossier pour les gabarits transactionnels.
@@ -401,8 +351,8 @@ async fn run_email_automations(pool: &PgPool, r: &mut TickReport) -> Result<(), 
             balance_cents: d.balance_cents,
             arrival_instructions: &d.arrival_instructions,
         });
-        let subject = render_template(&d.subject, &vars, false);
-        let body = render_email_body(&d.body, &vars);
+        let subject = email::render_template(&d.subject, &vars, false);
+        let body = email::render_email_body(&d.body, &vars);
         // Le CTA « Mon espace » n'a de sens que pour le client du dossier.
         let (cta_label, cta_url) = if fixed {
             ("", String::new())
@@ -451,30 +401,22 @@ async fn prenotify_balances(pool: &PgPool, r: &mut TickReport) -> Result<(), sql
         r.balances_prenotified += 1;
 
         if let Some(to) = d.email.clone().filter(|e| !e.is_empty()) {
-            let body = format!(
-                "{}<br><br>Le solde de votre séjour à L'Adret, soit <strong>{}</strong>, sera \
-                 prélevé automatiquement le {} sur la carte enregistrée lors de votre réservation \
-                 {}.<br><br>Vous n'avez rien à faire : assurez-vous simplement que votre carte est \
-                 toujours valide. Vous pouvez aussi régler le solde dès maintenant depuis votre espace.",
-                greeting(d.first_name.as_deref()),
-                eur(d.balance_cents),
-                d.due_label,
-                d.reference,
-            );
-            let html = email::template(
-                "Prélèvement du solde à venir",
-                &body,
-                "Voir ma réservation",
-                &format!("{}/espace", email::front_url()),
-            );
-            email::spawn(
+            let vars = vec![
+                ("bonjour", email::bonjour(d.first_name.as_deref())),
+                ("prenom", d.first_name.clone().unwrap_or_default()),
+                ("montant", eur(d.balance_cents)),
+                ("date", d.due_label.clone()),
+                ("reference", d.reference.clone()),
+            ];
+            email::send_system(
                 pool.clone(),
                 Some(d.id),
                 "balance_prenotify",
                 to,
-                "Prélèvement du solde à venir — L'Adret".into(),
-                html,
-            );
+                &vars,
+                &format!("{}/espace", email::front_url()),
+            )
+            .await?;
         }
     }
     if r.balances_prenotified > 0 {
@@ -533,36 +475,26 @@ async fn notify_payment_issue(
     let Some(mail) = email.filter(|m| !m.trim().is_empty()) else {
         return;
     };
-    let hello = match first_name {
-        Some(f) if !f.trim().is_empty() => format!("Bonjour {f},"),
-        _ => "Bonjour,".to_string(),
-    };
     let what = if kind == "balance" {
         "le prélèvement du solde de votre séjour"
     } else {
         "une opération de paiement de votre séjour"
     };
-    let body = format!(
-        "{hello}<br><br>Nous n'avons pas pu effectuer {what} (réservation <b>{reference}</b>). \
-         Votre banque a peut-être refusé l'opération ou une confirmation est nécessaire. \
-         Merci de nous contacter ou de vérifier votre moyen de paiement depuis votre espace \
-         afin de finaliser votre réservation."
-    );
-    let link = format!("{}/espace", email::front_url());
-    let html = email::template(
-        "Action requise sur votre réservation",
-        &body,
-        "Mon espace",
-        &link,
-    );
-    email::spawn(
+    let vars = vec![
+        ("bonjour", email::bonjour(first_name.as_deref())),
+        ("prenom", first_name.clone().unwrap_or_default()),
+        ("operation", what.to_string()),
+        ("reference", reference.to_string()),
+    ];
+    let _ = email::send_system(
         pool.clone(),
         Some(booking_id),
         "payment_issue",
         mail,
-        "Action requise sur votre réservation — L'Adret".into(),
-        html,
-    );
+        &vars,
+        &format!("{}/espace", email::front_url()),
+    )
+    .await;
 }
 
 #[derive(sqlx::FromRow)]
@@ -588,30 +520,19 @@ async fn remind_abandoned_carts(pool: &PgPool, r: &mut TickReport) -> Result<(),
     .await?;
 
     for cart in carts {
-        let hello = if cart.first_name.trim().is_empty() {
-            "Bonjour,".to_string()
-        } else {
-            format!("Bonjour {},", cart.first_name)
-        };
-        let body = format!(
-            "{hello}<br><br>Vous avez commencé une réservation à L'Adret sans la finaliser. \
-             Votre sélection vous attend — il ne reste que le règlement de l'acompte pour la confirmer."
-        );
-        let link = format!("{}/reserver", email::front_url());
-        let html = email::template(
-            "Votre réservation vous attend",
-            &body,
-            "Finaliser ma réservation",
-            &link,
-        );
-        email::spawn(
+        let vars = vec![
+            ("bonjour", email::bonjour(Some(&cart.first_name))),
+            ("prenom", cart.first_name.clone()),
+        ];
+        email::send_system(
             pool.clone(),
             Some(cart.id),
             "cart_reminder",
             cart.email,
-            "Votre réservation vous attend — L'Adret".into(),
-            html,
-        );
+            &vars,
+            &format!("{}/reserver", email::front_url()),
+        )
+        .await?;
         r.carts_reminded += 1;
     }
     Ok(())

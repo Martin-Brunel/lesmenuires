@@ -1149,30 +1149,12 @@ async fn send_welcome_email(pool: &PgPool, booking_id: Uuid, cid: Uuid, referenc
         Ok(t) => format!("{}/api/espace/login?token={}", email::api_url(), t),
         Err(_) => format!("{}/espace", email::front_url()),
     };
-    let hello = if first_name.trim().is_empty() {
-        "Bonjour,".to_string()
-    } else {
-        format!("Bonjour {first_name},")
-    };
-    let body = format!(
-        "{hello}<br><br>Votre réservation <b>{reference}</b> est confirmée — merci de votre confiance. \
-         Retrouvez le détail de votre séjour, les échéances de paiement et les consignes d'arrivée \
-         dans votre espace personnel."
-    );
-    let html = email::template(
-        "Votre réservation est confirmée",
-        &body,
-        "Accéder à mon espace",
-        &link,
-    );
-    email::spawn(
-        pool.clone(),
-        Some(booking_id),
-        "welcome",
-        mail,
-        "Votre réservation est confirmée — L'Adret".into(),
-        html,
-    );
+    let vars = vec![
+        ("bonjour", email::bonjour(Some(&first_name))),
+        ("prenom", first_name.clone()),
+        ("reference", reference.to_string()),
+    ];
+    let _ = email::send_system(pool.clone(), Some(booking_id), "welcome", mail, &vars, &link).await;
 }
 
 #[derive(Deserialize)]

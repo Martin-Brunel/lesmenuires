@@ -171,3 +171,164 @@ pub fn template(heading: &str, body_html: &str, cta_label: &str, cta_url: &str) 
 </div>"#
     )
 }
+
+// ---------------------------------------------------------------------------
+// Gabarits : rendu {{variables}} partagé (transactionnels éditables et
+// e-mails système) + registre des e-mails système personnalisables.
+// ---------------------------------------------------------------------------
+
+/// Substitue les variables {{...}} d'un gabarit. `escape` = true pour un corps
+/// HTML (les valeurs viennent des données client), false pour un sujet texte.
+pub(crate) fn render_template(tpl: &str, vars: &[(&str, String)], escape: bool) -> String {
+    let mut out = tpl.to_string();
+    for (key, value) in vars {
+        let v = if escape {
+            value
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+        } else {
+            value.clone()
+        };
+        out = out.replace(&format!("{{{{{key}}}}}"), &v);
+    }
+    out
+}
+
+/// Corps d'un e-mail à gabarit : variables substituées (échappées), HTML admin
+/// autorisé mais sanitisé (`style` conservé). Sans balise, les retours à la
+/// ligne deviennent des <br>.
+pub(crate) fn render_email_body(tpl: &str, vars: &[(&str, String)]) -> String {
+    let rendered = render_template(tpl, vars, true);
+    let html = if rendered.contains('<') {
+        rendered
+    } else {
+        rendered.replace('\n', "<br>")
+    };
+    ammonia::Builder::default()
+        .add_generic_attributes(&["style"])
+        .clean(&html)
+        .to_string()
+}
+
+/// Un e-mail système personnalisable : gabarit par défaut + métadonnées UI.
+pub(crate) struct SystemTemplate {
+    pub kind: &'static str,
+    pub label: &'static str,
+    pub trigger: &'static str,
+    pub subject: &'static str,
+    pub body: &'static str,
+    pub cta_label: &'static str,
+    pub vars: &'static [&'static str],
+}
+
+pub(crate) const SYSTEM_TEMPLATES: &[SystemTemplate] = &[
+    SystemTemplate {
+        kind: "welcome",
+        label: "Confirmation de réservation",
+        trigger: "Envoyé au client dès que l'acompte est réglé.",
+        subject: "Votre réservation est confirmée — L'Adret",
+        body: "{{bonjour}}\n\nVotre réservation {{reference}} est confirmée — merci de votre confiance. Retrouvez le détail de votre séjour, les échéances de paiement et les consignes d'arrivée dans votre espace personnel.",
+        cta_label: "Accéder à mon espace",
+        vars: &["bonjour", "prenom", "reference"],
+    },
+    SystemTemplate {
+        kind: "balance_prenotify",
+        label: "Prélèvement du solde à venir",
+        trigger: "Envoyé ~16 jours avant l'arrivée, avant le prélèvement automatique (J-14).",
+        subject: "Prélèvement du solde à venir — L'Adret",
+        body: "{{bonjour}}\n\nLe solde de votre séjour à L'Adret, soit {{montant}}, sera prélevé automatiquement le {{date}} sur la carte enregistrée lors de votre réservation {{reference}}.\n\nVous n'avez rien à faire : assurez-vous simplement que votre carte est toujours valide. Vous pouvez aussi régler le solde dès maintenant depuis votre espace.",
+        cta_label: "Voir ma réservation",
+        vars: &["bonjour", "prenom", "montant", "date", "reference"],
+    },
+    SystemTemplate {
+        kind: "balance_paid",
+        label: "Solde réglé",
+        trigger: "Envoyé quand le solde a été prélevé avec succès.",
+        subject: "Solde réglé — L'Adret",
+        body: "{{bonjour}}\n\nLe solde de votre séjour à L'Adret ({{montant}}) vient d'être prélevé sur votre moyen de paiement enregistré. Votre réservation {{reference}} est entièrement réglée.\n\nAucune caution n'est prélevée : votre carte reste simplement enregistrée et ne serait débitée qu'en cas de dégâts constatés à l'état des lieux de sortie.",
+        cta_label: "Voir ma réservation",
+        vars: &["bonjour", "prenom", "montant", "reference"],
+    },
+    SystemTemplate {
+        kind: "payment_issue",
+        label: "Incident de paiement",
+        trigger: "Envoyé quand un prélèvement automatique échoue définitivement.",
+        subject: "Action requise sur votre réservation — L'Adret",
+        body: "{{bonjour}}\n\nNous n'avons pas pu effectuer {{operation}} (réservation {{reference}}). Votre banque a peut-être refusé l'opération ou une confirmation est nécessaire. Merci de nous contacter ou de vérifier votre moyen de paiement depuis votre espace afin de finaliser votre réservation.",
+        cta_label: "Mon espace",
+        vars: &["bonjour", "prenom", "operation", "reference"],
+    },
+    SystemTemplate {
+        kind: "cart_reminder",
+        label: "Relance panier",
+        trigger: "Envoyé au client qui a commencé une réservation sans la finaliser.",
+        subject: "Votre réservation vous attend — L'Adret",
+        body: "{{bonjour}}\n\nVous avez commencé une réservation à L'Adret sans la finaliser. Votre sélection vous attend — il ne reste que le règlement de l'acompte pour la confirmer.",
+        cta_label: "Finaliser ma réservation",
+        vars: &["bonjour", "prenom"],
+    },
+    SystemTemplate {
+        kind: "cancellation",
+        label: "Annulation",
+        trigger: "Envoyé au client quand sa réservation est annulée.",
+        subject: "Annulation de votre réservation — L'Adret",
+        body: "{{bonjour}}\n\nVotre réservation {{reference}} (semaine {{semaine}}) à L'Adret a bien été annulée.{{remboursement}}\n\nPour toute question, répondez simplement à cet e-mail.",
+        cta_label: "",
+        vars: &["bonjour", "reference", "semaine", "remboursement"],
+    },
+    SystemTemplate {
+        kind: "contract_request",
+        label: "Contrat à signer",
+        trigger: "Envoyé depuis un dossier (résa manuelle) pour faire signer le contrat en ligne.",
+        subject: "Votre contrat de location à signer — L'Adret",
+        body: "{{bonjour}}\n\nVotre contrat de location pour la semaine du {{semaine}} à L'Adret est prêt. Merci de le lire et de le signer en ligne — cela ne prend qu'une minute. Ce lien restera ensuite accessible comme copie de votre contrat signé.",
+        cta_label: "Lire et signer le contrat",
+        vars: &["bonjour", "prenom", "semaine"],
+    },
+];
+
+/// Envoie un e-mail système : override admin s'il existe, gabarit par défaut
+/// sinon. `cta_url` vide = pas de bouton.
+pub(crate) async fn send_system(
+    pool: sqlx::PgPool,
+    booking_id: Option<uuid::Uuid>,
+    kind: &str,
+    to: String,
+    vars: &[(&str, String)],
+    cta_url: &str,
+) -> Result<(), sqlx::Error> {
+    let def = SYSTEM_TEMPLATES
+        .iter()
+        .find(|t| t.kind == kind)
+        .expect("e-mail système inconnu");
+    let ovr: Option<(String, String)> =
+        sqlx::query_as("select subject, body from email_template_override where kind = $1")
+            .bind(kind)
+            .fetch_optional(&pool)
+            .await?;
+    let (subject_tpl, body_tpl) = ovr
+        .as_ref()
+        .map(|(s, b)| (s.as_str(), b.as_str()))
+        .unwrap_or((def.subject, def.body));
+    let subject = render_template(subject_tpl, vars, false);
+    let body = render_email_body(body_tpl, vars);
+    // Le titre dans le gabarit visuel reprend le sujet, sans le suffixe marque.
+    let heading = subject.trim_end_matches(" — L'Adret").to_string();
+    let (label, url) = if cta_url.is_empty() {
+        ("", "")
+    } else {
+        (def.cta_label, cta_url)
+    };
+    let html = template(&heading, &body, label, url);
+    spawn(pool, booking_id, kind, to, subject, html);
+    Ok(())
+}
+
+/// « Bonjour Camille, » / « Bonjour, » — variable {{bonjour}} des gabarits.
+pub(crate) fn bonjour(first_name: Option<&str>) -> String {
+    match first_name.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(n) => format!("Bonjour {n},"),
+        None => "Bonjour,".to_string(),
+    }
+}

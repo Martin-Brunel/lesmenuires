@@ -52,6 +52,11 @@ pub fn routes(state: AppState) -> Router {
             put(update_email_automation).delete(delete_email_automation),
         )
         .route("/email-automations/preview", post(preview_email_automation))
+        .route("/email-overrides", get(list_email_overrides))
+        .route(
+            "/email-overrides/:kind",
+            put(upsert_email_override).delete(delete_email_override),
+        )
         .route("/users", get(list_admin_users).post(create_admin_user))
         .route("/users/:id", delete(delete_admin_user))
         .route("/users/:id/reinvite", post(reinvite_admin_user))
@@ -1244,6 +1249,97 @@ async fn update_email_automation(
     Ok(Json(row))
 }
 
+// ---------------------------------------------------------------------------
+// E-mails système personnalisables : gabarits par défaut dans le code
+// (email::SYSTEM_TEMPLATES), override par type en base.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SystemEmailDto {
+    kind: &'static str,
+    label: &'static str,
+    trigger: &'static str,
+    vars: Vec<&'static str>,
+    default_subject: &'static str,
+    default_body: &'static str,
+    cta_label: &'static str,
+    /// Override actif (sinon le défaut s'applique).
+    subject: Option<String>,
+    body: Option<String>,
+    customized: bool,
+}
+
+async fn list_email_overrides(
+    State(st): State<AppState>,
+) -> Result<Json<Vec<SystemEmailDto>>, AppError> {
+    let overrides: Vec<(String, String, String)> =
+        sqlx::query_as("select kind, subject, body from email_template_override")
+            .fetch_all(&st.pool)
+            .await?;
+    let list = crate::email::SYSTEM_TEMPLATES
+        .iter()
+        .map(|t| {
+            let ovr = overrides.iter().find(|(k, _, _)| k == t.kind);
+            SystemEmailDto {
+                kind: t.kind,
+                label: t.label,
+                trigger: t.trigger,
+                vars: t.vars.to_vec(),
+                default_subject: t.subject,
+                default_body: t.body,
+                cta_label: t.cta_label,
+                subject: ovr.map(|(_, s, _)| s.clone()),
+                body: ovr.map(|(_, _, b)| b.clone()),
+                customized: ovr.is_some(),
+            }
+        })
+        .collect();
+    Ok(Json(list))
+}
+
+#[derive(Deserialize)]
+struct OverrideInput {
+    subject: String,
+    body: String,
+}
+
+async fn upsert_email_override(
+    State(st): State<AppState>,
+    Path(kind): Path<String>,
+    Json(p): Json<OverrideInput>,
+) -> Result<StatusCode, AppError> {
+    if !crate::email::SYSTEM_TEMPLATES.iter().any(|t| t.kind == kind) {
+        return Err(AppError::NotFound("e-mail système".into()));
+    }
+    if p.subject.trim().is_empty() || p.body.trim().is_empty() {
+        return Err(AppError::BadRequest("Sujet et message requis.".into()));
+    }
+    sqlx::query(
+        "insert into email_template_override (kind, subject, body) values ($1, $2, $3) \
+         on conflict (kind) do update set subject = excluded.subject, body = excluded.body, \
+             updated_at = now()",
+    )
+    .bind(&kind)
+    .bind(p.subject.trim())
+    .bind(&p.body)
+    .execute(&st.pool)
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Supprime l'override → le gabarit par défaut s'applique de nouveau.
+async fn delete_email_override(
+    State(st): State<AppState>,
+    Path(kind): Path<String>,
+) -> Result<StatusCode, AppError> {
+    sqlx::query("delete from email_template_override where kind = $1")
+        .bind(&kind)
+        .execute(&st.pool)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[derive(Deserialize)]
 struct PreviewInput {
     subject: String,
@@ -1273,8 +1369,16 @@ async fn preview_email_automation(
         balance_cents: 118_300,
         arrival_instructions: &access,
     });
-    let subject = crate::scheduler::render_template(&p.subject, &vars, false);
-    let body = crate::scheduler::render_email_body(&p.body, &vars);
+    let mut vars = vars;
+    vars.extend([
+        ("bonjour", "Bonjour Camille,".to_string()),
+        ("montant", "1 183 €".to_string()),
+        ("date", "24 janvier 2027".to_string()),
+        ("operation", "le prélèvement du solde de votre séjour".to_string()),
+        ("remboursement", String::new()),
+    ]);
+    let subject = crate::email::render_template(&p.subject, &vars, false);
+    let body = crate::email::render_email_body(&p.body, &vars);
     let html = crate::email::template(
         &subject,
         &body,
@@ -1711,30 +1815,13 @@ async fn send_contract_link(
         }
     };
     let url = format!("{}/contrat/{token}", crate::email::front_url());
-    let greeting = match row.first_name.as_deref().filter(|s| !s.is_empty()) {
-        Some(n) => format!("Bonjour {n}"),
-        None => "Bonjour".to_string(),
-    };
-    let body = format!(
-        "{greeting},<br><br>Votre contrat de location pour la semaine du {} à L'Adret est \
-         prêt. Merci de le lire et de le signer en ligne — cela ne prend qu'une minute. \
-         Ce lien restera ensuite accessible comme copie de votre contrat signé.",
-        row.week_range
-    );
-    let html = crate::email::template(
-        "Votre contrat de location à signer",
-        &body,
-        "Lire et signer le contrat",
-        &url,
-    );
-    crate::email::spawn(
-        st.pool.clone(),
-        Some(row.id),
-        "contract_request",
-        to,
-        "Votre contrat de location à signer — L'Adret".into(),
-        html,
-    );
+    let vars = vec![
+        ("bonjour", crate::email::bonjour(row.first_name.as_deref())),
+        ("prenom", row.first_name.clone().unwrap_or_default()),
+        ("semaine", row.week_range.clone()),
+    ];
+    crate::email::send_system(st.pool.clone(), Some(row.id), "contract_request", to, &vars, &url)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -2585,7 +2672,7 @@ async fn cancel_booking(
         };
         let refund_line = if refunded > 0 {
             format!(
-                "<br><br>Un remboursement de {},{:02} € a été effectué sur votre moyen de \
+                "\n\nUn remboursement de {},{:02} € a été effectué sur votre moyen de \
                  paiement (délai bancaire habituel : quelques jours).",
                 refunded / 100,
                 (refunded % 100).abs()
@@ -2593,19 +2680,21 @@ async fn cancel_booking(
         } else {
             String::new()
         };
-        let body_html = format!(
-            "{hello}<br><br>Votre réservation {reference} (semaine {week_range}) à L'Adret a bien \
-             été annulée.{refund_line}<br><br>Pour toute question, répondez simplement à cet e-mail."
-        );
-        let html = crate::email::template("Réservation annulée", &body_html, "", "");
-        crate::email::spawn(
+        let vars = vec![
+            ("bonjour", hello.clone()),
+            ("reference", reference.to_string()),
+            ("semaine", week_range.clone()),
+            ("remboursement", refund_line),
+        ];
+        let _ = crate::email::send_system(
             st.pool.clone(),
             Some(b.id),
             "cancellation",
             email.unwrap(),
-            "Annulation de votre réservation — L'Adret".into(),
-            html,
-        );
+            &vars,
+            "",
+        )
+        .await;
     }
 
     Ok(StatusCode::NO_CONTENT)
