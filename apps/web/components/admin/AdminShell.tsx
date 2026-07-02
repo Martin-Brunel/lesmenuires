@@ -43,7 +43,9 @@ const NAV = [
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const isLogin = pathname === "/admin/login";
+  // Pages accessibles sans session (connexion, définition du mot de passe).
+  const isLogin =
+    pathname === "/admin/login" || pathname === "/admin/definir-mot-de-passe";
   const [me, setMe] = useState<Me | null>(null);
   const [checked, setChecked] = useState(false);
 

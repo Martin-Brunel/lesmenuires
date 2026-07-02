@@ -79,6 +79,15 @@ export default function EquipePage() {
     reload();
   }, []);
 
+  const reinvite = async (a: AdminAccount) => {
+    try {
+      await adminApi.reinviteAdminUser(a.id);
+      toast.success(`Invitation renvoyée à ${a.email}.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    }
+  };
+
   const remove = async (a: AdminAccount) => {
     if (
       !(await confirm({
@@ -125,12 +134,18 @@ export default function EquipePage() {
                     <div className="flex items-center gap-2 text-sm font-medium">
                       <span className="truncate">{a.displayName || a.email}</span>
                       {a.isSuper && <Badge variant="success">Compte principal</Badge>}
+                      {a.pending && <Badge variant="warning">Invitation en attente</Badge>}
                       {a.id === me.id && <Badge variant="muted">Vous</Badge>}
                     </div>
                     <div className="truncate text-xs text-muted-foreground">
                       {a.email} · créé le {dt(a.createdAt)}
                     </div>
                   </div>
+                  {me.isSuper && a.pending && (
+                    <Button size="sm" variant="secondary" onClick={() => reinvite(a)}>
+                      Renvoyer l&apos;invitation
+                    </Button>
+                  )}
                   {me.isSuper && !a.isSuper && a.id !== me.id && (
                     <Button
                       size="sm"
@@ -184,23 +199,21 @@ function CreateAccountForm({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
 
   const create = async () => {
     if (busy) return;
-    if (!displayName.trim() || !/.+@.+\..+/.test(email) || password.length < 8) {
-      toast.error("Nom, e-mail valide et mot de passe (8 caractères min.) requis.");
+    if (!displayName.trim() || !/.+@.+\..+/.test(email)) {
+      toast.error("Nom et e-mail valide requis.");
       return;
     }
     setBusy(true);
     try {
-      await adminApi.createAdminUser({ email, displayName, password });
-      toast.success("Compte créé.");
+      await adminApi.createAdminUser({ email, displayName });
+      toast.success(`Invitation envoyée à ${email}.`);
       setOpen(false);
       setDisplayName("");
       setEmail("");
-      setPassword("");
       onCreated();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erreur");
@@ -212,7 +225,7 @@ function CreateAccountForm({ onCreated }: { onCreated: () => void }) {
   if (!open) {
     return (
       <Button size="sm" className="mt-3" onClick={() => setOpen(true)}>
-        Nouveau compte
+        Inviter un compte
       </Button>
     );
   }
@@ -228,23 +241,16 @@ function CreateAccountForm({ onCreated }: { onCreated: () => void }) {
           <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </div>
       </div>
-      <div className="space-y-1.5">
-        <Label>Mot de passe provisoire</Label>
-        <Input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
-        <p className="text-xs text-muted-foreground">
-          8 caractères minimum — la personne pourra le changer une fois connectée.
-        </p>
-      </div>
+      <p className="text-xs text-muted-foreground">
+        La personne reçoit un e-mail d&apos;invitation (valable 7 jours) avec un lien pour
+        définir elle-même son mot de passe.
+      </p>
       <div className="flex justify-end gap-2">
         <Button size="sm" variant="ghost" onClick={() => setOpen(false)} disabled={busy}>
           Annuler
         </Button>
         <Button size="sm" onClick={create} disabled={busy}>
-          {busy ? "…" : "Créer le compte"}
+          {busy ? "…" : "Envoyer l'invitation"}
         </Button>
       </div>
     </div>

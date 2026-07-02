@@ -54,6 +54,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/email-automations/preview", post(preview_email_automation))
         .route("/users", get(list_admin_users).post(create_admin_user))
         .route("/users/:id", delete(delete_admin_user))
+        .route("/users/:id/reinvite", post(reinvite_admin_user))
         .route("/me/password", post(change_my_password))
         .route("/audit", get(list_audit))
         .route("/bookings/:reference/detail", get(booking_detail))
@@ -79,6 +80,8 @@ pub fn routes(state: AppState) -> Router {
     Router::new()
         .route("/login", post(login))
         .route("/logout", post(logout))
+        .route("/password/forgot", post(password_forgot))
+        .route("/password/set", post(password_set))
         .merge(protected)
         .with_state(state)
 }
@@ -218,7 +221,8 @@ struct LoginInput {
 #[derive(FromRow)]
 struct AdminRow {
     id: Uuid,
-    password_hash: String,
+    /// Null tant que l'invitation n'a pas été acceptée (connexion impossible).
+    password_hash: Option<String>,
     email: String,
     display_name: String,
     is_super: bool,
@@ -254,7 +258,14 @@ async fn login(
     .await?;
 
     let admin = match admin {
-        Some(a) if verify_password(&a.password_hash, &input.password) => a,
+        Some(a)
+            if a.password_hash
+                .as_deref()
+                .map(|h| verify_password(h, &input.password))
+                .unwrap_or(false) =>
+        {
+            a
+        }
         _ => {
             return Err(AppError::BadRequest(
                 "E-mail ou mot de passe incorrect.".into(),
@@ -1253,7 +1264,66 @@ struct AdminUserDto {
     email: String,
     display_name: String,
     is_super: bool,
+    /// Invitation envoyée mais mot de passe pas encore défini.
+    pending: bool,
     created_at: DateTime<Utc>,
+}
+
+/// Crée un jeton (invitation 7 j / réinitialisation 1 h) et envoie l'e-mail
+/// avec le lien vers la page de définition du mot de passe.
+async fn send_password_link(
+    st: &AppState,
+    admin_id: Uuid,
+    email_to: &str,
+    name: &str,
+    invite: bool,
+) -> Result<(), AppError> {
+    let token = new_token();
+    let hours = if invite { 7 * 24 } else { 1 };
+    sqlx::query(
+        "insert into admin_password_token (token, admin_user_id, kind, expires_at) \
+         values ($1, $2, $3, now() + ($4 || ' hours')::interval)",
+    )
+    .bind(&token)
+    .bind(admin_id)
+    .bind(if invite { "invite" } else { "reset" })
+    .bind(hours.to_string())
+    .execute(&st.pool)
+    .await?;
+    let url = format!(
+        "{}/admin/definir-mot-de-passe?token={token}",
+        crate::email::front_url()
+    );
+    let greeting = if name.is_empty() { "Bonjour".to_string() } else { format!("Bonjour {name}") };
+    let (subject, body) = if invite {
+        (
+            "Votre accès administrateur — L'Adret",
+            format!(
+                "{greeting},<br><br>Un accès au back-office de L'Adret vient de vous être créé. \
+                 Définissez votre mot de passe pour activer votre compte. \
+                 Ce lien est valable 7 jours."
+            ),
+        )
+    } else {
+        (
+            "Réinitialisation de votre mot de passe — L'Adret",
+            format!(
+                "{greeting},<br><br>Vous avez demandé la réinitialisation de votre mot de passe. \
+                 Ce lien est valable 1 heure. Si vous n'êtes pas à l'origine de cette demande, \
+                 ignorez cet e-mail."
+            ),
+        )
+    };
+    let html = crate::email::template(subject, &body, "Définir mon mot de passe", &url);
+    crate::email::spawn(
+        st.pool.clone(),
+        None,
+        if invite { "admin_invite" } else { "admin_reset" },
+        email_to.to_string(),
+        subject.to_string(),
+        html,
+    );
+    Ok(())
 }
 
 async fn require_super(pool: &sqlx::PgPool, admin_id: Uuid) -> Result<(), AppError> {
@@ -1274,8 +1344,8 @@ async fn list_admin_users(
     State(st): State<AppState>,
 ) -> Result<Json<Vec<AdminUserDto>>, AppError> {
     let rows = sqlx::query_as::<_, AdminUserDto>(
-        "select id, email, display_name, is_super, created_at from admin_user \
-         order by created_at",
+        "select id, email, display_name, is_super, (password_hash is null) as pending, \
+                created_at from admin_user order by created_at",
     )
     .fetch_all(&st.pool)
     .await?;
@@ -1287,9 +1357,10 @@ async fn list_admin_users(
 struct CreateAdminInput {
     email: String,
     display_name: String,
-    password: String,
 }
 
+/// Crée un compte SANS mot de passe et envoie une invitation : la personne
+/// définit elle-même son mot de passe via le lien reçu.
 async fn create_admin_user(
     State(st): State<AppState>,
     Extension(AdminId(admin_id)): Extension<AdminId>,
@@ -1303,25 +1374,164 @@ async fn create_admin_user(
     if p.display_name.trim().is_empty() {
         return Err(AppError::BadRequest("Nom requis.".into()));
     }
+    let row = sqlx::query_as::<_, AdminUserDto>(
+        "insert into admin_user (email, password_hash, display_name) values ($1, null, $2) \
+         on conflict (email) do nothing \
+         returning id, email, display_name, is_super, (password_hash is null) as pending, created_at",
+    )
+    .bind(&email)
+    .bind(p.display_name.trim())
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::BadRequest("Un compte existe déjà avec cet e-mail.".into()))?;
+    send_password_link(&st, row.id, &row.email, &row.display_name, true).await?;
+    Ok(Json(row))
+}
+
+/// Renvoie l'invitation d'un compte encore en attente (lien perdu/expiré).
+async fn reinvite_admin_user(
+    State(st): State<AppState>,
+    Extension(AdminId(admin_id)): Extension<AdminId>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    require_super(&st.pool, admin_id).await?;
+    let row: Option<(String, String, bool)> = sqlx::query_as(
+        "select email, display_name, (password_hash is null) from admin_user where id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&st.pool)
+    .await?;
+    let Some((email, name, pending)) = row else {
+        return Err(AppError::NotFound("compte".into()));
+    };
+    if !pending {
+        return Err(AppError::BadRequest(
+            "Ce compte est déjà actif — utiliser « mot de passe oublié ».".into(),
+        ));
+    }
+    send_password_link(&st, id, &email, &name, true).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct ForgotInput {
+    email: String,
+}
+
+/// Public. Répond toujours 204 (pas d'énumération de comptes) ; envoie un
+/// lien de réinitialisation (ou une nouvelle invitation si le compte est
+/// encore en attente).
+async fn password_forgot(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(p): Json<ForgotInput>,
+) -> Result<StatusCode, AppError> {
+    st.rate.check(
+        "admin-forgot",
+        &crate::rate::client_ip(&headers),
+        5,
+        std::time::Duration::from_secs(600),
+    )?;
+    let row: Option<(Uuid, String, String, bool)> = sqlx::query_as(
+        "select id, email, display_name, (password_hash is null) from admin_user \
+         where email = $1",
+    )
+    .bind(p.email.trim().to_lowercase())
+    .fetch_optional(&st.pool)
+    .await?;
+    if let Some((id, email, name, pending)) = row {
+        send_password_link(&st, id, &email, &name, pending).await?;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct SetPasswordInput {
+    token: String,
+    password: String,
+}
+
+/// Public. Consomme un jeton (invitation ou réinitialisation), définit le mot
+/// de passe et connecte directement la personne.
+async fn password_set(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(p): Json<SetPasswordInput>,
+) -> Result<Response, AppError> {
+    st.rate.check(
+        "admin-set-password",
+        &crate::rate::client_ip(&headers),
+        10,
+        std::time::Duration::from_secs(600),
+    )?;
     if p.password.len() < 8 {
         return Err(AppError::BadRequest(
             "Mot de passe : 8 caractères minimum.".into(),
         ));
     }
+    let row: Option<(Uuid,)> = sqlx::query_as(
+        "update admin_password_token set used_at = now() \
+         where token = $1 and used_at is null and expires_at > now() \
+         returning admin_user_id",
+    )
+    .bind(p.token.trim())
+    .fetch_optional(&st.pool)
+    .await?;
+    let Some((user_id,)) = row else {
+        return Err(AppError::BadRequest(
+            "Lien invalide ou expiré — demandez-en un nouveau.".into(),
+        ));
+    };
     let hash = hash_password(&p.password)
         .map_err(|_| AppError::Internal("hash mot de passe".into()))?;
-    let row = sqlx::query_as::<_, AdminUserDto>(
-        "insert into admin_user (email, password_hash, display_name) values ($1, $2, $3) \
-         on conflict (email) do nothing \
-         returning id, email, display_name, is_super, created_at",
+    sqlx::query("update admin_user set password_hash = $2 where id = $1")
+        .bind(user_id)
+        .bind(&hash)
+        .execute(&st.pool)
+        .await?;
+    // Les autres jetons en circulation pour ce compte deviennent caducs.
+    sqlx::query("delete from admin_password_token where admin_user_id = $1 and used_at is null")
+        .bind(user_id)
+        .execute(&st.pool)
+        .await?;
+
+    let admin = sqlx::query_as::<_, AdminRow>(
+        "select id, password_hash, email, display_name, is_super from admin_user where id = $1",
     )
-    .bind(&email)
-    .bind(&hash)
-    .bind(p.display_name.trim())
-    .fetch_optional(&st.pool)
-    .await?
-    .ok_or_else(|| AppError::BadRequest("Un compte existe déjà avec cet e-mail.".into()))?;
-    Ok(Json(row))
+    .bind(user_id)
+    .fetch_one(&st.pool)
+    .await?;
+    audit(
+        st.pool.clone(),
+        admin.id,
+        if admin.display_name.is_empty() { admin.email.clone() } else { admin.display_name.clone() },
+        "PASSWORD".into(),
+        "/api/admin/password/set".into(),
+    );
+
+    // Connexion directe : même mécanique que login.
+    let token = new_token();
+    sqlx::query(
+        "insert into admin_session (token, admin_user_id, expires_at) \
+         values ($1, $2, now() + ($3 || ' days')::interval)",
+    )
+    .bind(&token)
+    .bind(admin.id)
+    .bind(SESSION_DAYS.to_string())
+    .execute(&st.pool)
+    .await?;
+    let mut resp = Json(MeDto {
+        id: admin.id,
+        email: admin.email,
+        display_name: admin.display_name,
+        is_super: admin.is_super,
+    })
+    .into_response();
+    resp.headers_mut().insert(
+        header::SET_COOKIE,
+        cookie_value(&token, SESSION_DAYS * 24 * 3600),
+    );
+    Ok(resp)
 }
 
 async fn delete_admin_user(

@@ -8,6 +8,8 @@ export type AdminAccount = {
   email: string;
   displayName: string;
   isSuper: boolean;
+  /** Invitation envoyée, mot de passe pas encore défini. */
+  pending: boolean;
   createdAt: string;
 };
 
@@ -476,9 +478,15 @@ export const adminApi = {
   deleteEmailAutomation: (id: string) =>
     req<void>(`/email-automations/${id}`, { method: "DELETE" }),
   listAdminUsers: () => req<AdminAccount[]>("/users"),
-  createAdminUser: (data: { email: string; displayName: string; password: string }) =>
+  createAdminUser: (data: { email: string; displayName: string }) =>
     req<AdminAccount>("/users", { method: "POST", body: JSON.stringify(data) }),
+  reinviteAdminUser: (id: string) =>
+    req<void>(`/users/${id}/reinvite`, { method: "POST" }),
   deleteAdminUser: (id: string) => req<void>(`/users/${id}`, { method: "DELETE" }),
+  forgotPassword: (email: string) =>
+    req<void>("/password/forgot", { method: "POST", body: JSON.stringify({ email }) }),
+  setPassword: (token: string, password: string) =>
+    req<Me>("/password/set", { method: "POST", body: JSON.stringify({ token, password }) }),
   changeMyPassword: (currentPassword: string, newPassword: string) =>
     req<void>("/me/password", {
       method: "POST",
