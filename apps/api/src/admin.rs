@@ -40,6 +40,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/bookings/manual", post(create_manual_booking))
         .route("/finances", get(finances))
         .route("/contacts", get(list_contacts))
+        .route("/contacts/:id", get(contact_detail).put(update_contact))
         .route("/bookings/:reference/detail", get(booking_detail))
         .route("/bookings/:reference/note", post(add_note))
         .route("/bookings/:reference/email", post(send_booking_email))
@@ -764,6 +765,7 @@ struct BookingDetailRow {
     has_signature: bool,
     created_at: DateTime<Utc>,
     cancelled_at: Option<DateTime<Utc>>,
+    customer_id: Option<Uuid>,
     customer_name: Option<String>,
     customer_email: Option<String>,
     customer_phone: Option<String>,
@@ -833,6 +835,7 @@ async fn booking_detail(
                 b.balance_last_error, b.caution_attempts, b.caution_last_error, \
                 b.contract_version, b.contract_accepted_at as contract_signed_at, \
                 (b.signature_png is not null) as has_signature, b.created_at, b.cancelled_at, \
+                b.customer_id, \
                 nullif(trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')), '') as customer_name, \
                 c.email as customer_email, c.phone as customer_phone, \
                 nullif(trim(coalesce(c.address_line,'') || ' ' || coalesce(c.postal_code,'') || ' ' || coalesce(c.city,'')), '') as customer_address, \
@@ -1369,6 +1372,169 @@ async fn list_contacts(State(st): State<AppState>) -> Result<Json<Vec<ContactDto
     .fetch_all(&st.pool)
     .await?;
     Ok(Json(rows))
+}
+
+// ---------------------------------------------------------------------------
+// Fiche contact : coordonnées éditables + réservations + historique (notes/mails).
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct ContactInfo {
+    id: Uuid,
+    first_name: String,
+    last_name: String,
+    email: String,
+    phone: String,
+    address_line: String,
+    postal_code: String,
+    city: String,
+    country: String,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct ContactBookingDto {
+    reference: String,
+    status: String,
+    channel: String,
+    week_range: String,
+    start_date: NaiveDate,
+    total_cents: i64,
+    deposit_paid_at: Option<DateTime<Utc>>,
+    balance_paid_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+    cancelled_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct ContactNoteDto {
+    booking_reference: String,
+    body: String,
+    author: Option<String>,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct ContactEmailDto {
+    booking_reference: String,
+    kind: String,
+    subject: String,
+    status: String,
+    created_at: DateTime<Utc>,
+    opened_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ContactDetail {
+    contact: ContactInfo,
+    bookings: Vec<ContactBookingDto>,
+    notes: Vec<ContactNoteDto>,
+    emails: Vec<ContactEmailDto>,
+}
+
+async fn contact_detail(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ContactDetail>, AppError> {
+    let contact = sqlx::query_as::<_, ContactInfo>(
+        "select id, first_name, last_name, email, phone, address_line, postal_code, city, \
+                country, created_at from customer where id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("contact".into()))?;
+
+    let bookings = sqlx::query_as::<_, ContactBookingDto>(
+        "select b.reference, b.status, b.channel, aw.range_label as week_range, aw.start_date, \
+                b.total_cents, b.deposit_paid_at, b.balance_paid_at, b.created_at, b.cancelled_at \
+         from booking b join availability_week aw on aw.id = b.week_id \
+         where b.customer_id = $1 order by aw.start_date desc, b.created_at desc",
+    )
+    .bind(id)
+    .fetch_all(&st.pool)
+    .await?;
+
+    let notes = sqlx::query_as::<_, ContactNoteDto>(
+        "select b.reference as booking_reference, n.body, n.author, n.created_at \
+         from booking_note n join booking b on b.id = n.booking_id \
+         where b.customer_id = $1 order by n.created_at desc",
+    )
+    .bind(id)
+    .fetch_all(&st.pool)
+    .await?;
+
+    let emails = sqlx::query_as::<_, ContactEmailDto>(
+        "select b.reference as booking_reference, e.kind, e.subject, e.status, e.created_at, e.opened_at \
+         from email_log e join booking b on b.id = e.booking_id \
+         where b.customer_id = $1 order by e.created_at desc",
+    )
+    .bind(id)
+    .fetch_all(&st.pool)
+    .await?;
+
+    Ok(Json(ContactDetail {
+        contact,
+        bookings,
+        notes,
+        emails,
+    }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateContact {
+    first_name: String,
+    last_name: String,
+    email: String,
+    #[serde(default)]
+    phone: String,
+    #[serde(default)]
+    address_line: String,
+    #[serde(default)]
+    postal_code: String,
+    #[serde(default)]
+    city: String,
+}
+
+async fn update_contact(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(p): Json<UpdateContact>,
+) -> Result<Json<ContactInfo>, AppError> {
+    if p.email.trim().is_empty() {
+        return Err(AppError::BadRequest("E-mail requis.".into()));
+    }
+    let dto = sqlx::query_as::<_, ContactInfo>(
+        "update customer set first_name=$2, last_name=$3, email=$4, phone=$5, \
+                address_line=$6, postal_code=$7, city=$8 \
+         where id=$1 \
+         returning id, first_name, last_name, email, phone, address_line, postal_code, city, \
+                   country, created_at",
+    )
+    .bind(id)
+    .bind(&p.first_name)
+    .bind(&p.last_name)
+    .bind(&p.email)
+    .bind(&p.phone)
+    .bind(&p.address_line)
+    .bind(&p.postal_code)
+    .bind(&p.city)
+    .fetch_optional(&st.pool)
+    .await
+    .map_err(|e| match &e {
+        sqlx::Error::Database(db) if db.is_unique_violation() => {
+            AppError::BadRequest("Un autre contact utilise déjà cet e-mail.".into())
+        }
+        _ => AppError::Db(e),
+    })?
+    .ok_or_else(|| AppError::NotFound("contact".into()))?;
+    Ok(Json(dto))
 }
 
 #[derive(Serialize, FromRow)]
