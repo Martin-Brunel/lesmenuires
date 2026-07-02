@@ -63,3 +63,19 @@ impl IntoResponse for AppError {
         (status, Json(json!({ "error": message }))).into_response()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn definitive_only_for_bad_request() {
+        // A definitive (provider-rejected) error rotates the idempotency key for a
+        // real retry; transient errors replay the same key. This must stay exact.
+        assert!(AppError::BadRequest("carte refusée".into()).is_definitive());
+        assert!(!AppError::Internal("réseau".into()).is_definitive());
+        assert!(!AppError::NotFound("x".into()).is_definitive());
+        assert!(!AppError::Unauthorized.is_definitive());
+        assert!(!AppError::TooManyRequests.is_definitive());
+    }
+}

@@ -74,3 +74,68 @@ pub fn client_ip(headers: &HeaderMap) -> String {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "unknown".to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const WINDOW: Duration = Duration::from_secs(60);
+
+    #[test]
+    fn allows_up_to_max_then_blocks() {
+        let rl = RateLimiter::new();
+        for _ in 0..3 {
+            assert!(rl.check("login", "1.2.3.4", 3, WINDOW).is_ok());
+        }
+        // 4th within the window is rejected.
+        assert!(rl.check("login", "1.2.3.4", 3, WINDOW).is_err());
+    }
+
+    #[test]
+    fn different_clients_are_independent() {
+        let rl = RateLimiter::new();
+        assert!(rl.check("login", "a", 1, WINDOW).is_ok());
+        assert!(rl.check("login", "a", 1, WINDOW).is_err()); // a exhausted
+        assert!(rl.check("login", "b", 1, WINDOW).is_ok()); // b unaffected
+    }
+
+    #[test]
+    fn different_buckets_are_independent() {
+        let rl = RateLimiter::new();
+        assert!(rl.check("login", "a", 1, WINDOW).is_ok());
+        assert!(rl.check("login", "a", 1, WINDOW).is_err());
+        // Same client, different bucket → separate counter.
+        assert!(rl.check("request-link", "a", 1, WINDOW).is_ok());
+    }
+
+    #[test]
+    fn window_reset_allows_again() {
+        let rl = RateLimiter::new();
+        // A zero-length window means every call starts a fresh window → never blocks.
+        assert!(rl.check("b", "c", 1, Duration::from_secs(0)).is_ok());
+        assert!(rl.check("b", "c", 1, Duration::from_secs(0)).is_ok());
+    }
+
+    fn hdrs(xff: Option<&str>) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        if let Some(v) = xff {
+            h.insert("x-forwarded-for", v.parse().unwrap());
+        }
+        h
+    }
+
+    #[test]
+    fn client_ip_takes_first_hop_trimmed() {
+        assert_eq!(
+            client_ip(&hdrs(Some("203.0.113.7, 10.0.0.1"))),
+            "203.0.113.7"
+        );
+        assert_eq!(client_ip(&hdrs(Some("  198.51.100.2  "))), "198.51.100.2");
+    }
+
+    #[test]
+    fn client_ip_falls_back_when_absent_or_empty() {
+        assert_eq!(client_ip(&hdrs(None)), "unknown");
+        assert_eq!(client_ip(&hdrs(Some(""))), "unknown");
+    }
+}
