@@ -1654,7 +1654,7 @@ async fn cancel_booking(
     // 2) Persist everything atomically: refunds, cancel, free week.
     let mut tx = st.pool.begin().await?;
     for rr in &refunds {
-        insert_refund_row(&mut tx, b.id, st.payments.name(), rr).await?;
+        insert_refund_row(&mut tx, b.id, rr).await?;
     }
     sqlx::query(
         "update booking set status = 'cancelled', cancelled_at = now(), \
@@ -1861,11 +1861,14 @@ struct RefundInput {
     payment_type: Option<String>,
 }
 
-/// A Stripe refund that succeeded but has not yet been recorded in the DB.
+/// A refund that succeeded but has not yet been recorded in the DB. For a manual
+/// (cheque/virement) payment there is no Stripe call: `provider` = "manual" and
+/// `refund_id` is None (the money is given back offline).
 struct RefundRow {
-    refund_id: String,
+    refund_id: Option<String>,
     amount_cents: i64,
     source: String,
+    provider: String,
 }
 
 /// Validate and execute the Stripe refund for `amount_cents` from the latest
@@ -1884,16 +1887,16 @@ async fn perform_refund(
             "Montant à rembourser invalide.".into(),
         ));
     }
-    let src: Option<(String, i64)> = sqlx::query_as(
-        "select provider_intent_id, amount_cents from payment \
+    let src: Option<(Option<String>, i64, String)> = sqlx::query_as(
+        "select provider_intent_id, amount_cents, provider from payment \
          where booking_id = $1 and type = $2 and status = 'succeeded' \
-           and provider_intent_id is not null order by created_at desc limit 1",
+         order by created_at desc limit 1",
     )
     .bind(booking_id)
     .bind(ptype)
     .fetch_optional(&st.pool)
     .await?;
-    let (intent, charged) = src
+    let (intent, charged, provider) = src
         .ok_or_else(|| AppError::BadRequest(format!("Aucun paiement « {ptype} » à rembourser.")))?;
 
     let already: i64 = sqlx::query_scalar(
@@ -1915,28 +1918,40 @@ async fn perform_refund(
         )));
     }
 
-    // Key on the prior-refunds total: a retried (lost-response) refund reuses the
-    // same key and replays; a genuinely new refund has a higher `already` → new key.
-    let refund_id = st
-        .payments
-        .refund(
-            &intent,
+    // Manual (cheque/virement) payment → offline refund, recorded without any
+    // Stripe call. Otherwise refund the Stripe PaymentIntent.
+    match intent {
+        Some(intent) if provider != "manual" => {
+            // Key on the prior-refunds total: a retried (lost-response) refund reuses
+            // the same key and replays; a genuinely new refund gets a new key.
+            let refund_id = st
+                .payments
+                .refund(
+                    &intent,
+                    amount_cents,
+                    &format!("refund-{booking_id}-{ptype}-{already}"),
+                )
+                .await?;
+            Ok(RefundRow {
+                refund_id: Some(refund_id),
+                amount_cents,
+                source: ptype.to_string(),
+                provider: st.payments.name().to_string(),
+            })
+        }
+        _ => Ok(RefundRow {
+            refund_id: None,
             amount_cents,
-            &format!("refund-{booking_id}-{ptype}-{already}"),
-        )
-        .await?;
-    Ok(RefundRow {
-        refund_id,
-        amount_cents,
-        source: ptype.to_string(),
-    })
+            source: ptype.to_string(),
+            provider: "manual".to_string(),
+        }),
+    }
 }
 
 /// Record a completed Stripe refund inside the caller's transaction.
 async fn insert_refund_row(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     booking_id: Uuid,
-    provider: &str,
     rr: &RefundRow,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
@@ -1944,7 +1959,7 @@ async fn insert_refund_row(
          values ($1, 'refund', $2, $3, $4, 'refunded', jsonb_build_object('source', $5::text))",
     )
     .bind(booking_id)
-    .bind(provider)
+    .bind(&rr.provider)
     .bind(&rr.refund_id)
     .bind(rr.amount_cents)
     .bind(&rr.source)
@@ -1971,7 +1986,7 @@ async fn refund_payment(
         .ok_or_else(|| AppError::NotFound("réservation".into()))?;
     let rr = perform_refund(&st, bid, &ptype, body.amount_cents).await?;
     let mut tx = st.pool.begin().await?;
-    insert_refund_row(&mut tx, bid, st.payments.name(), &rr).await?;
+    insert_refund_row(&mut tx, bid, &rr).await?;
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
