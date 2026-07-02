@@ -343,6 +343,7 @@ struct PropRow {
     caution_cents: i64,
     tourist_tax_cents: i64,
     tourist_tax_included: bool,
+    capacity: i32,
 }
 
 #[derive(FromRow)]
@@ -391,7 +392,7 @@ async fn create_booking(
     )?;
 
     let prop = sqlx::query_as::<_, PropRow>(
-        "select id, deposit_pct, caution_cents, tourist_tax_cents, tourist_tax_included \
+        "select id, deposit_pct, caution_cents, tourist_tax_cents, tourist_tax_included, capacity \
          from property where slug = $1",
     )
     .bind(&req.property_slug)
@@ -433,8 +434,25 @@ async fn create_booking(
     }
 
     let extras_prices: Vec<i64> = products.iter().map(|p| p.price_cents).collect();
+    // Validate the party size server-side: at least one adult (also so the tourist
+    // tax, adults × nights, can't be zeroed with adults=0), no negatives, and within
+    // the property's capacity — the client-supplied counts drive tax and occupancy.
     let adults = req.adults.unwrap_or(2);
     let children = req.children.unwrap_or(0);
+    if adults < 1 {
+        return Err(AppError::BadRequest(
+            "Au moins un adulte est requis.".into(),
+        ));
+    }
+    if children < 0 {
+        return Err(AppError::BadRequest("Nombre d'enfants invalide.".into()));
+    }
+    if adults + children > prop.capacity {
+        return Err(AppError::BadRequest(format!(
+            "Le nombre de voyageurs dépasse la capacité du logement ({} personnes).",
+            prop.capacity
+        )));
+    }
     let totals = pricing::compute(
         week.price_cents,
         &extras_prices,
