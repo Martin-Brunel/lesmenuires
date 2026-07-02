@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { adminApi, fmtEur, type AdminBooking, type AdminWeek, type SignatureInfo } from "@/lib/admin-api";
+import { adminApi, fmtEur, PAYMENT_FLAG_LABEL, type AdminBooking, type AdminWeek, type SignatureInfo } from "@/lib/admin-api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -37,11 +37,6 @@ const STATUS_VARIANT: Record<
   balance_paid: "success",
   cancelled: "destructive",
   expired: "muted",
-};
-
-const FLAG_LABEL: Record<string, string> = {
-  refunded_externally: "Remboursé (Stripe)",
-  disputed: "Litige Stripe",
 };
 
 export default function ReservationsPage() {
@@ -292,7 +287,7 @@ export default function ReservationsPage() {
                         variant="destructive"
                         title="Événement Stripe hors-app : prélèvements automatiques suspendus"
                       >
-                        {FLAG_LABEL[b.paymentFlag] ?? b.paymentFlag}
+                        {PAYMENT_FLAG_LABEL[b.paymentFlag] ?? b.paymentFlag}
                       </Badge>
                     )}
                     {(b.balanceAttempts > 0 || b.cautionAttempts > 0) &&

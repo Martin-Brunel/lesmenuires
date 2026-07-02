@@ -296,3 +296,10 @@ export const adminApi = {
 
 /** Format cents as euros, French style: 119000 -> "1 190 €". */
 export const fmtEur = (cents: number) => (cents / 100).toLocaleString("fr-FR") + " €";
+
+/** Labels for booking.paymentFlag (webhook-raised Stripe events). Shared so the
+ *  dashboard and reservations list never diverge. */
+export const PAYMENT_FLAG_LABEL: Record<string, string> = {
+  refunded_externally: "Remboursé (Stripe)",
+  disputed: "Litige Stripe",
+};

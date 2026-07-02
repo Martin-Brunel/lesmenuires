@@ -10,18 +10,14 @@ import {
 } from "@/lib/admin-api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PAYMENT_FLAG_LABEL } from "@/lib/admin-api";
 
 const SLUG = "ladret";
-
-const FLAG_LABEL: Record<string, string> = {
-  refunded_externally: "Remboursé (Stripe)",
-  disputed: "Litige Stripe",
-};
 
 /** Reasons a booking needs the operator's attention. */
 function attentionReasons(b: AdminBooking): string[] {
   const out: string[] = [];
-  if (b.paymentFlag) out.push(FLAG_LABEL[b.paymentFlag] ?? b.paymentFlag);
+  if (b.paymentFlag) out.push(PAYMENT_FLAG_LABEL[b.paymentFlag] ?? b.paymentFlag);
   if (b.balanceOverdue) out.push("Solde en retard");
   if (b.balanceAttempts > 0 && b.status !== "cancelled")
     out.push(`Échec prélèvement solde ×${b.balanceAttempts}`);
@@ -48,11 +44,15 @@ export default function DashboardPage() {
 
   const available = weeks.filter((w) => w.status === "available").length;
   const booked = weeks.filter((w) => w.status === "booked").length;
-  const pipeline = bookings.reduce((acc, b) => acc + b.totalCents, 0);
+  // Real reservations = confirmed or settled (exclude carts, expired, cancelled).
+  const active = bookings.filter(
+    (b) => b.status === "confirmed" || b.status === "balance_paid",
+  );
+  const pipeline = active.reduce((acc, b) => acc + b.totalCents, 0);
 
   const stats = [
-    { label: "Réservations", value: loading ? "…" : String(bookings.length) },
-    { label: "Valeur cumulée", value: loading ? "…" : fmtEur(pipeline) },
+    { label: "Réservations", value: loading ? "…" : String(active.length) },
+    { label: "Valeur des réservations", value: loading ? "…" : fmtEur(pipeline) },
     { label: "Semaines disponibles", value: loading ? "…" : String(available) },
     { label: "Semaines réservées", value: loading ? "…" : String(booked) },
   ];
