@@ -620,6 +620,9 @@ struct AdminBookingDto {
     status: String,
     week_range: String,
     start_date: NaiveDate,
+    end_date: NaiveDate,
+    adults: i32,
+    children: i32,
     total_cents: i64,
     deposit_cents: i64,
     balance_cents: i64,
@@ -646,12 +649,14 @@ struct AdminBookingDto {
     contract_version: Option<String>,
     customer_email: Option<String>,
     customer_name: Option<String>,
+    customer_phone: Option<String>,
     created_at: DateTime<Utc>,
 }
 
 async fn list_bookings(State(st): State<AppState>) -> Result<Json<Vec<AdminBookingDto>>, AppError> {
     let rows = sqlx::query_as::<_, AdminBookingDto>(
-        "select b.reference, b.status, aw.range_label as week_range, aw.start_date, \
+        "select b.reference, b.status, aw.range_label as week_range, aw.start_date, aw.end_date, \
+                b.adults, b.children, \
                 b.total_cents, b.deposit_cents, b.balance_cents, b.caution_cents, \
                 b.deposit_paid_at, b.balance_paid_at, \
                 b.caution_released_at, b.caution_captured_cents, \
@@ -666,6 +671,7 @@ async fn list_bookings(State(st): State<AppState>) -> Result<Json<Vec<AdminBooki
                 b.payment_flag, b.contract_accepted_at as contract_signed_at, b.contract_version, \
                 c.email as customer_email, \
                 nullif(trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')), '') as customer_name, \
+                nullif(trim(coalesce(c.phone,'')), '') as customer_phone, \
                 b.created_at \
          from booking b \
          join availability_week aw on aw.id = b.week_id \

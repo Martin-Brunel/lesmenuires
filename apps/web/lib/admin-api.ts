@@ -71,6 +71,9 @@ export type AdminBooking = {
   status: string;
   weekRange: string;
   startDate: string;
+  endDate: string;
+  adults: number;
+  children: number;
   totalCents: number;
   depositCents: number;
   balanceCents: number;
@@ -94,6 +97,7 @@ export type AdminBooking = {
   contractVersion: string | null;
   customerEmail: string | null;
   customerName: string | null;
+  customerPhone: string | null;
   createdAt: string;
 };
 
