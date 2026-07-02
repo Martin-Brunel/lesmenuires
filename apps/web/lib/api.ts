@@ -1,5 +1,17 @@
 // Typed client for the Rust API (apps/api). Mirrors its JSON DTOs.
 
+/** Error carrying the HTTP status, so callers can tell a definitive rejection
+ *  (4xx — e.g. the week was taken and the deposit refunded) from a transient
+ *  failure (network / 5xx) that a retry or the webhook will still resolve. */
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 export type ApiProperty = {
   slug: string;
   name: string;
@@ -163,7 +175,7 @@ export async function confirmDeposit(reference: string): Promise<BookingResult> 
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error ?? `confirm-deposit: HTTP ${res.status}`);
+    throw new ApiError(body.error ?? `confirm-deposit: HTTP ${res.status}`, res.status);
   }
   return res.json();
 }

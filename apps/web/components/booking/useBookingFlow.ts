@@ -7,7 +7,7 @@
 
 import { useRef, useState } from "react";
 import type { BookingContext } from "@/lib/api";
-import { confirmDeposit, createBooking, payDeposit, saveContract } from "@/lib/api";
+import { ApiError, confirmDeposit, createBooking, payDeposit, saveContract } from "@/lib/api";
 import { CONTRACT_VERSION } from "@/lib/site";
 import {
   computeTotals,
@@ -217,13 +217,20 @@ export function useBookingFlow(ctx: BookingContext) {
     try {
       await confirmDeposit(stripeSession.reference);
       onDone();
-    } catch {
+    } catch (e) {
       setStripeSession(null);
-      setError(
-        "Votre paiement a bien été accepté. La confirmation finale est en cours " +
-          "et vous recevrez un e-mail ; vous pourrez suivre votre réservation " +
-          "dans votre espace client.",
-      );
+      // A 4xx is a definitive rejection the webhook won't fix (e.g. the week was
+      // taken and the deposit refunded) — show its precise message. A transient
+      // failure (network / 5xx) is reassured: the webhook confirms server-side.
+      if (e instanceof ApiError && e.status >= 400 && e.status < 500) {
+        setError(e.message);
+      } else {
+        setError(
+          "Votre paiement a bien été accepté. La confirmation finale est en cours " +
+            "et vous recevrez un e-mail ; vous pourrez suivre votre réservation " +
+            "dans votre espace client.",
+        );
+      }
     }
   };
 
