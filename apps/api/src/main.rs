@@ -125,6 +125,7 @@ async fn main() -> anyhow::Result<()> {
             post(confirm_balance),
         )
         .route("/api/payments/webhook", post(stripe_webhook))
+        .route("/api/emails/webhook", post(resend_webhook))
         .with_state(state.clone())
         .nest("/api/admin", admin::routes(state.clone()))
         // Serve uploaded photos.
@@ -794,7 +795,7 @@ async fn confirm_deposit(
             HeaderValue::from_str(&session_cookie(&token))
                 .map_err(|_| AppError::Internal("cookie".into()))?,
         );
-        send_welcome_email(&st.pool, cid, &reference).await;
+        send_welcome_email(&st.pool, b.id, cid, &reference).await;
     }
     Ok(resp)
 }
@@ -862,7 +863,7 @@ async fn create_magic_token(pool: &PgPool, cid: Uuid) -> Result<String, AppError
 
 /// Welcome e-mail after a confirmed booking, with a magic link to the espace.
 /// Best-effort: failures are logged, never bubbled to the payment response.
-async fn send_welcome_email(pool: &PgPool, cid: Uuid, reference: &str) {
+async fn send_welcome_email(pool: &PgPool, booking_id: Uuid, cid: Uuid, reference: &str) {
     let cust: Option<(String, String)> =
         sqlx::query_as("select email, first_name from customer where id = $1")
             .bind(cid)
@@ -897,6 +898,9 @@ async fn send_welcome_email(pool: &PgPool, cid: Uuid, reference: &str) {
         &link,
     );
     email::spawn(
+        pool.clone(),
+        Some(booking_id),
+        "welcome",
         mail,
         "Votre réservation est confirmée — L'Adret".into(),
         html,
@@ -939,7 +943,14 @@ async fn request_link(
                 "Ouvrir mon espace",
                 &link,
             );
-            email::spawn(email_in, "Connexion à votre espace — L'Adret".into(), html);
+            email::spawn(
+                st.pool.clone(),
+                None,
+                "magic_link",
+                email_in,
+                "Connexion à votre espace — L'Adret".into(),
+                html,
+            );
         }
     }
     Ok(StatusCode::NO_CONTENT)
@@ -1491,6 +1502,42 @@ async fn confirm_from_webhook(st: &AppState, pi: &serde_json::Value) -> Result<(
         tracing::info!("webhook: solde réglé en ligne (intent {intent_id})");
     }
     Ok(())
+}
+
+/// Resend delivery webhook: enriches the email log with delivery/open/bounce
+/// events. Matched by the Resend email id (provider_id). Low-stakes (tracking
+/// only, no money/auth), so accepted without signature verification.
+async fn resend_webhook(
+    State(st): State<AppState>,
+    Json(event): Json<serde_json::Value>,
+) -> Result<StatusCode, AppError> {
+    let kind = event
+        .get("type")
+        .and_then(|t| t.as_str())
+        .unwrap_or_default();
+    let email_id = event
+        .pointer("/data/email_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    if email_id.is_empty() {
+        return Ok(StatusCode::OK);
+    }
+    // Map the event to a status; opened is terminal-best (don't downgrade to delivered).
+    let sql = match kind {
+        "email.delivered" => {
+            "update email_log set status = 'delivered', delivered_at = coalesce(delivered_at, now()) \
+             where provider_id = $1 and status not in ('opened')"
+        }
+        "email.opened" => {
+            "update email_log set status = 'opened', opened_at = coalesce(opened_at, now()), \
+             delivered_at = coalesce(delivered_at, now()) where provider_id = $1"
+        }
+        "email.bounced" => "update email_log set status = 'bounced' where provider_id = $1",
+        "email.complained" => "update email_log set status = 'complained' where provider_id = $1",
+        _ => return Ok(StatusCode::OK),
+    };
+    sqlx::query(sql).bind(email_id).execute(&st.pool).await?;
+    Ok(StatusCode::OK)
 }
 
 /// Seed the first admin user from ADMIN_EMAIL/ADMIN_PASSWORD if none exists yet.

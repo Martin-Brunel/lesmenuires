@@ -1,7 +1,10 @@
 //! Transactional e-mail via Resend. If RESEND_API_KEY is unset, sends are
-//! logged and skipped (dev without a key).
+//! logged and skipped (dev without a key). Every send is journaled in `email_log`
+//! for the reservation file (id Resend, statut, ouverture via webhook).
 
 use serde_json::json;
+use sqlx::postgres::PgPool;
+use uuid::Uuid;
 
 pub fn front_url() -> String {
     std::env::var("FRONT_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into())
@@ -11,13 +14,19 @@ pub fn api_url() -> String {
     std::env::var("API_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".into())
 }
 
-/// Send an e-mail. Fire-and-forget friendly (await, or spawn from the caller).
-pub async fn send(to: &str, subject: &str, html: &str) {
+/// Outcome of a send: Ok(Some(id)) delivered to Resend with an id, Ok(None) when
+/// skipped (no key, dev), Err(msg) on failure.
+enum SendOutcome {
+    Sent(Option<String>),
+    Failed(String),
+}
+
+async fn do_send(to: &str, subject: &str, html: &str) -> SendOutcome {
     let key = match std::env::var("RESEND_API_KEY") {
         Ok(k) if !k.is_empty() => k,
         _ => {
             tracing::info!("email (pas de RESEND_API_KEY) → {to} : {subject}");
-            return;
+            return SendOutcome::Sent(None);
         }
     };
     let from = std::env::var("MAIL_FROM").unwrap_or_else(|_| "onboarding@resend.dev".into());
@@ -32,19 +41,57 @@ pub async fn send(to: &str, subject: &str, html: &str) {
         .send()
         .await;
     match res {
-        Ok(r) if r.status().is_success() => tracing::info!("email envoyé → {to} : {subject}"),
+        Ok(r) if r.status().is_success() => {
+            let body: serde_json::Value = r.json().await.unwrap_or_default();
+            let id = body.get("id").and_then(|v| v.as_str()).map(String::from);
+            tracing::info!("email envoyé → {to} : {subject}");
+            SendOutcome::Sent(id)
+        }
         Ok(r) => {
             let code = r.status();
             let body = r.text().await.unwrap_or_default();
             tracing::error!("email échec ({code}) → {to} : {body}");
+            SendOutcome::Failed(format!("HTTP {code}: {body}"))
         }
-        Err(e) => tracing::error!("email erreur → {to} : {e}"),
+        Err(e) => {
+            tracing::error!("email erreur → {to} : {e}");
+            SendOutcome::Failed(e.to_string())
+        }
     }
 }
 
-/// Spawn a send so it never blocks the request path.
-pub fn spawn(to: String, subject: String, html: String) {
-    tokio::spawn(async move { send(&to, &subject, &html).await });
+/// Send and journal the e-mail (never blocks the caller). `booking_id`/`kind`
+/// tie the row to the reservation file for the admin detail page.
+pub fn spawn(
+    pool: PgPool,
+    booking_id: Option<Uuid>,
+    kind: &str,
+    to: String,
+    subject: String,
+    html: String,
+) {
+    let kind = kind.to_string();
+    tokio::spawn(async move {
+        let outcome = do_send(&to, &subject, &html).await;
+        let (status, provider_id, error) = match outcome {
+            SendOutcome::Sent(id) => ("sent", id, None),
+            SendOutcome::Failed(e) => ("failed", None, Some(e)),
+        };
+        let _ = sqlx::query(
+            "insert into email_log \
+                (booking_id, recipient, kind, subject, provider_id, status, error, sent_at) \
+             values ($1, $2, $3, $4, $5, $6, $7, case when $6 = 'sent' then now() else null end)",
+        )
+        .bind(booking_id)
+        .bind(&to)
+        .bind(&kind)
+        .bind(&subject)
+        .bind(&provider_id)
+        .bind(status)
+        .bind(&error)
+        .execute(&pool)
+        .await;
+    });
 }
 
 /// Branded HTML wrapper with an optional call-to-action button.

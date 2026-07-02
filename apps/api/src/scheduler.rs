@@ -175,7 +175,14 @@ async fn charge_due_balances(
                         "Voir ma réservation",
                         &format!("{}/espace", email::front_url()),
                     );
-                    email::spawn(to, "Solde réglé — L'Adret".into(), html);
+                    email::spawn(
+                        pool.clone(),
+                        Some(d.id),
+                        "balance_paid",
+                        to,
+                        "Solde réglé — L'Adret".into(),
+                        html,
+                    );
                 }
             }
             Err(e) => {
@@ -258,7 +265,14 @@ async fn prenotify_balances(pool: &PgPool, r: &mut TickReport) -> Result<(), sql
                 "Voir ma réservation",
                 &format!("{}/espace", email::front_url()),
             );
-            email::spawn(to, "Prélèvement du solde à venir — L'Adret".into(), html);
+            email::spawn(
+                pool.clone(),
+                Some(d.id),
+                "balance_prenotify",
+                to,
+                "Prélèvement du solde à venir — L'Adret".into(),
+                html,
+            );
         }
     }
     if r.balances_prenotified > 0 {
@@ -340,6 +354,9 @@ async fn notify_payment_issue(
         &link,
     );
     email::spawn(
+        pool.clone(),
+        Some(booking_id),
+        "payment_issue",
         mail,
         "Action requise sur votre réservation — L'Adret".into(),
         html,
@@ -348,6 +365,7 @@ async fn notify_payment_issue(
 
 #[derive(sqlx::FromRow)]
 struct CartRow {
+    id: Uuid,
     email: String,
     first_name: String,
 }
@@ -359,8 +377,8 @@ async fn remind_abandoned_carts(pool: &PgPool, r: &mut TickReport) -> Result<(),
             update booking set cart_reminder_sent_at = now(), updated_at = now() \
             where status = 'cart' and cart_reminder_sent_at is null \
               and created_at < now() - interval '1 hour' \
-            returning customer_id ) \
-         select c.email, c.first_name \
+            returning id, customer_id ) \
+         select u.id, c.email, c.first_name \
          from updated u join customer c on c.id = u.customer_id \
          where coalesce(c.email, '') <> ''",
     )
@@ -385,6 +403,9 @@ async fn remind_abandoned_carts(pool: &PgPool, r: &mut TickReport) -> Result<(),
             &link,
         );
         email::spawn(
+            pool.clone(),
+            Some(cart.id),
+            "cart_reminder",
             cart.email,
             "Votre réservation vous attend — L'Adret".into(),
             html,

@@ -40,6 +40,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/bookings/manual", post(create_manual_booking))
         .route("/finances", get(finances))
         .route("/contacts", get(list_contacts))
+        .route("/bookings/:reference/detail", get(booking_detail))
         .route("/bookings/:reference/signature", get(get_signature))
         .route("/bookings/:reference/mark-paid", post(mark_paid))
         .route("/bookings/:reference/cancel", post(cancel_booking))
@@ -706,6 +707,140 @@ struct FinancesResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Détail d'un dossier de réservation (page admin) : récap + accès + contrat +
+// règlement + suivi des e-mails.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct BookingDetailRow {
+    reference: String,
+    status: String,
+    channel: String,
+    week_range: String,
+    arrival: String,
+    start_date: NaiveDate,
+    adults: i32,
+    children: i32,
+    total_cents: i64,
+    deposit_cents: i64,
+    balance_cents: i64,
+    caution_cents: i64,
+    tourist_tax_cents: i64,
+    deposit_pct: i32,
+    payment_method: Option<String>,
+    caution_method: Option<String>,
+    admin_notes: Option<String>,
+    deposit_paid_at: Option<DateTime<Utc>>,
+    balance_paid_at: Option<DateTime<Utc>>,
+    caution_released_at: Option<DateTime<Utc>>,
+    caution_captured_cents: Option<i64>,
+    payment_flag: Option<String>,
+    balance_attempts: i32,
+    balance_last_error: Option<String>,
+    caution_attempts: i32,
+    caution_last_error: Option<String>,
+    contract_version: Option<String>,
+    contract_signed_at: Option<DateTime<Utc>>,
+    has_signature: bool,
+    created_at: DateTime<Utc>,
+    customer_name: Option<String>,
+    customer_email: Option<String>,
+    customer_phone: Option<String>,
+    customer_address: Option<String>,
+    arrival_instructions: String,
+    house_rules: String,
+}
+
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct PaymentDto {
+    kind: String,
+    method: Option<String>,
+    provider: String,
+    amount_cents: i64,
+    status: String,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct EmailDto {
+    kind: String,
+    subject: String,
+    recipient: String,
+    status: String,
+    error: Option<String>,
+    created_at: DateTime<Utc>,
+    sent_at: Option<DateTime<Utc>>,
+    delivered_at: Option<DateTime<Utc>>,
+    opened_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BookingDetail {
+    booking: BookingDetailRow,
+    payments: Vec<PaymentDto>,
+    emails: Vec<EmailDto>,
+}
+
+async fn booking_detail(
+    State(st): State<AppState>,
+    Path(reference): Path<String>,
+) -> Result<Json<BookingDetail>, AppError> {
+    let booking = sqlx::query_as::<_, BookingDetailRow>(
+        "select b.reference, b.status, b.channel, aw.range_label as week_range, \
+                aw.arrival_label as arrival, aw.start_date, b.adults, b.children, \
+                b.total_cents, b.deposit_cents, b.balance_cents, b.caution_cents, \
+                b.tourist_tax_cents, b.deposit_pct, b.payment_method, b.caution_method, \
+                b.admin_notes, b.deposit_paid_at, b.balance_paid_at, b.caution_released_at, \
+                b.caution_captured_cents, b.payment_flag, b.balance_attempts, \
+                b.balance_last_error, b.caution_attempts, b.caution_last_error, \
+                b.contract_version, b.contract_accepted_at as contract_signed_at, \
+                (b.signature_png is not null) as has_signature, b.created_at, \
+                nullif(trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')), '') as customer_name, \
+                c.email as customer_email, c.phone as customer_phone, \
+                nullif(trim(coalesce(c.address_line,'') || ' ' || coalesce(c.postal_code,'') || ' ' || coalesce(c.city,'')), '') as customer_address, \
+                p.arrival_instructions, p.house_rules \
+         from booking b \
+         join availability_week aw on aw.id = b.week_id \
+         join property p on p.id = b.property_id \
+         left join customer c on c.id = b.customer_id \
+         where b.reference = $1",
+    )
+    .bind(&reference)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("réservation".into()))?;
+
+    let payments = sqlx::query_as::<_, PaymentDto>(
+        "select p.type as kind, p.method, p.provider, p.amount_cents, p.status, p.created_at \
+         from payment p join booking b on b.id = p.booking_id \
+         where b.reference = $1 order by p.created_at",
+    )
+    .bind(&reference)
+    .fetch_all(&st.pool)
+    .await?;
+
+    let emails = sqlx::query_as::<_, EmailDto>(
+        "select e.kind, e.subject, e.recipient, e.status, e.error, e.created_at, \
+                e.sent_at, e.delivered_at, e.opened_at \
+         from email_log e join booking b on b.id = e.booking_id \
+         where b.reference = $1 order by e.created_at desc",
+    )
+    .bind(&reference)
+    .fetch_all(&st.pool)
+    .await?;
+
+    Ok(Json(BookingDetail {
+        booking,
+        payments,
+        emails,
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Réservations manuelles (hors ligne) : échéances chèque/virement pointées à la
 // main, caution par chèque. Ignorées par le scheduler (channel='manual').
 // ---------------------------------------------------------------------------
@@ -1280,6 +1415,9 @@ async fn cancel_booking(
         );
         let html = crate::email::template("Réservation annulée", &body_html, "", "");
         crate::email::spawn(
+            st.pool.clone(),
+            Some(b.id),
+            "cancellation",
             email.unwrap(),
             "Annulation de votre réservation — L'Adret".into(),
             html,
