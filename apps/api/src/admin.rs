@@ -42,6 +42,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/contacts", get(list_contacts))
         .route("/contacts/:id", get(contact_detail).put(update_contact))
         .route("/contacts/:id/email", post(send_contact_email))
+        .route("/contacts/:id/note", post(add_contact_note))
         .route(
             "/email-automations",
             get(list_email_automations).post(create_email_automation),
@@ -1184,6 +1185,37 @@ async fn delete_email_automation(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Note interne sur la fiche contact (hors dossier).
+async fn add_contact_note(
+    State(st): State<AppState>,
+    Extension(AdminId(admin_id)): Extension<AdminId>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<NoteInput>,
+) -> Result<StatusCode, AppError> {
+    let body = input.body.trim();
+    if body.is_empty() {
+        return Err(AppError::BadRequest("Note vide.".into()));
+    }
+    let author: Option<String> =
+        sqlx::query_scalar("select display_name from admin_user where id = $1")
+            .bind(admin_id)
+            .fetch_optional(&st.pool)
+            .await?;
+    let n = sqlx::query(
+        "insert into contact_note (customer_id, body, author) \
+         select id, $2, $3 from customer where id = $1",
+    )
+    .bind(id)
+    .bind(body)
+    .bind(author)
+    .execute(&st.pool)
+    .await?;
+    if n.rows_affected() == 0 {
+        return Err(AppError::NotFound("contact".into()));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// E-mail libre à un contact, hors dossier de réservation (relance CRM).
 /// Journalisé dans email_log sans booking_id ; visible sur la fiche contact.
 async fn send_contact_email(
@@ -1725,10 +1757,16 @@ async fn contact_detail(
     .fetch_all(&st.pool)
     .await?;
 
+    // Notes de dossiers + notes de la fiche elle-même (booking_reference vide).
     let notes = sqlx::query_as::<_, ContactNoteDto>(
-        "select b.reference as booking_reference, n.body, n.author, n.created_at \
-         from booking_note n join booking b on b.id = n.booking_id \
-         where b.customer_id = $1 order by n.created_at desc",
+        "select * from ( \
+             select b.reference as booking_reference, n.body, n.author, n.created_at \
+             from booking_note n join booking b on b.id = n.booking_id \
+             where b.customer_id = $1 \
+             union all \
+             select '' as booking_reference, cn.body, cn.author, cn.created_at \
+             from contact_note cn where cn.customer_id = $1 \
+         ) notes order by created_at desc",
     )
     .bind(id)
     .fetch_all(&st.pool)

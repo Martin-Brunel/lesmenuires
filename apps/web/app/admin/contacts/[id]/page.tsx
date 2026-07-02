@@ -50,6 +50,23 @@ export default function ContactDetailPage() {
   const [error, setError] = useState(false);
   const [edit, setEdit] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
+  const [noteDraft, setNoteDraft] = useState<string | null>(null);
+  const [noteBusy, setNoteBusy] = useState(false);
+
+  const saveNote = async () => {
+    const body = (noteDraft ?? "").trim();
+    if (!body || noteBusy) return;
+    setNoteBusy(true);
+    try {
+      await adminApi.addContactNote(id, body);
+      setNoteDraft(null);
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      setNoteBusy(false);
+    }
+  };
 
   const reload = useCallback(() => {
     adminApi
@@ -169,8 +186,37 @@ export default function ContactDetailPage() {
       </div>
 
       <Card>
-        <CardHeader className="pb-2"><CardTitle className="text-base">Historique</CardTitle></CardHeader>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center justify-between">
+            Historique
+            {noteDraft === null && (
+              <Button size="sm" variant="secondary" onClick={() => setNoteDraft("")}>
+                Ajouter une note
+              </Button>
+            )}
+          </CardTitle>
+        </CardHeader>
         <CardContent>
+          {noteDraft !== null && (
+            <div className="mb-4 space-y-2">
+              <textarea
+                className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                rows={3}
+                placeholder="Note interne sur ce contact…"
+                value={noteDraft}
+                onChange={(e) => setNoteDraft(e.target.value)}
+                autoFocus
+              />
+              <div className="flex justify-end gap-2">
+                <Button size="sm" variant="ghost" onClick={() => setNoteDraft(null)} disabled={noteBusy}>
+                  Annuler
+                </Button>
+                <Button size="sm" onClick={saveNote} disabled={noteBusy || !(noteDraft ?? "").trim()}>
+                  {noteBusy ? "…" : "Enregistrer la note"}
+                </Button>
+              </div>
+            </div>
+          )}
           {events.length === 0 ? (
             <p className="text-sm text-muted-foreground">Aucune activité.</p>
           ) : (

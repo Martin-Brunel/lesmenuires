@@ -442,6 +442,8 @@ export const adminApi = {
       city: string;
     },
   ) => req<ContactInfo>(`/contacts/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  addContactNote: (id: string, body: string) =>
+    req<void>(`/contacts/${id}/note`, { method: "POST", body: JSON.stringify({ body }) }),
   sendContactEmail: (id: string, subject: string, message: string) =>
     req<void>(`/contacts/${id}/email`, {
       method: "POST",
