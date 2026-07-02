@@ -145,27 +145,28 @@ export default function DashboardPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const available = weeks.filter((w) => w.status === "available").length;
-  const booked = weeks.filter((w) => w.status === "booked").length;
+  // KPIs scopés sur l'activité réelle : les saisons passées ne comptent pas.
+  const futureWeeks = weeks.filter((w) => daysFromToday(w.startDate) > 0);
+  const available = futureWeeks.filter((w) => w.status === "available").length;
+  const booked = futureWeeks.filter((w) => w.status === "booked").length;
   const sellable = available + booked;
   const occupancy = sellable > 0 ? Math.round((booked / sellable) * 100) : null;
-  // Real reservations = confirmed or settled (exclude carts, expired, cancelled).
-  const active = bookings.filter(isActive);
+  // Real reservations = confirmed or settled (exclude carts, expired, cancelled),
+  // and still ahead of us (stay in progress or upcoming).
+  const active = bookings.filter(isActive).filter((b) => daysFromToday(b.endDate) > 0);
   const pipeline = active.reduce((acc, b) => acc + b.totalCents, 0);
 
   const stats = [
-    { label: "Réservations", value: loading ? "…" : String(active.length) },
-    { label: "Valeur des réservations", value: loading ? "…" : fmtEur(pipeline) },
+    { label: "Séjours à venir ou en cours", value: loading ? "…" : String(active.length) },
+    { label: "Valeur de ces séjours", value: loading ? "…" : fmtEur(pipeline) },
     {
-      label: "Taux d'occupation",
+      label: "Occupation des semaines à venir",
       value: loading ? "…" : occupancy == null ? "—" : `${occupancy} %`,
     },
-    { label: "Semaines disponibles", value: loading ? "…" : String(available) },
+    { label: "Semaines encore disponibles", value: loading ? "…" : String(available) },
   ];
 
-  const inProgress = active.filter(
-    (b) => daysFromToday(b.startDate) <= 0 && daysFromToday(b.endDate) > 0,
-  );
+  const inProgress = active.filter((b) => daysFromToday(b.startDate) <= 0);
   const upcoming = active
     .filter((b) => daysFromToday(b.startDate) > 0)
     .sort((a, b) => a.startDate.localeCompare(b.startDate))
@@ -268,7 +269,15 @@ export default function DashboardPage() {
       {!loading && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">Prochaines arrivées</CardTitle>
+            <CardTitle className="text-base flex items-center justify-between">
+              Prochaines arrivées
+              <Link
+                href="/admin/reservations"
+                className="text-xs font-normal text-primary underline underline-offset-2"
+              >
+                Toutes les réservations
+              </Link>
+            </CardTitle>
           </CardHeader>
           <CardContent>
             {upcoming.length === 0 ? (

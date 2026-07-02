@@ -22,17 +22,19 @@ import { DialogProvider } from "@/components/admin/dialogs";
 import { Toaster } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 
+// Ordonné par usage : le quotidien (exploitation) d'abord, la configuration
+// de l'offre ensuite.
 const NAV = [
   { href: "/admin", label: "Tableau de bord", icon: LayoutDashboard, exact: true },
   { href: "/admin/planning", label: "Planning", icon: CalendarDays },
-  { href: "/admin/saisons", label: "Saisons", icon: Snowflake },
-  { href: "/admin/disponibilites", label: "Dispos & tarifs", icon: CalendarRange },
-  { href: "/admin/editorial", label: "Contenu éditorial", icon: FileText },
-  { href: "/admin/prestations", label: "Prestations", icon: Package },
   { href: "/admin/reservations", label: "Réservations", icon: ClipboardList },
-  { href: "/admin/finances", label: "Finances", icon: Wallet },
   { href: "/admin/contacts", label: "Contacts", icon: Users },
+  { href: "/admin/finances", label: "Finances", icon: Wallet },
+  { href: "/admin/disponibilites", label: "Dispos & tarifs", icon: CalendarRange },
+  { href: "/admin/saisons", label: "Saisons", icon: Snowflake },
+  { href: "/admin/prestations", label: "Prestations", icon: Package },
   { href: "/admin/emails", label: "E-mails auto", icon: Mail },
+  { href: "/admin/editorial", label: "Contenu éditorial", icon: FileText },
 ];
 
 export function AdminShell({ children }: { children: React.ReactNode }) {

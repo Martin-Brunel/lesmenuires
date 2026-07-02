@@ -82,7 +82,15 @@ export default function DisponibilitesPage() {
       .listSeasons(SLUG)
       .then((ss) => {
         setSeasons(ss);
-        setSeasonId(ss.find((s) => s.isActive)?.id ?? ss[0]?.id ?? "");
+        // Saison demandée dans l'URL (lien contextuel depuis le Planning),
+        // sinon la saison active.
+        const wanted = new URLSearchParams(window.location.search).get("season");
+        setSeasonId(
+          ss.find((s) => s.id === wanted)?.id ??
+            ss.find((s) => s.isActive)?.id ??
+            ss[0]?.id ??
+            "",
+        );
       })
       .catch(() => {});
   }, []);

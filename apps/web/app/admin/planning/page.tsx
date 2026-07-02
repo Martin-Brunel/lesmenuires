@@ -57,7 +57,10 @@ function WeekChip({ week, today }: { week: AdminWeek; today: string }) {
       {body}
     </Link>
   ) : (
-    <Link href="/admin/disponibilites" title="Modifier dans Dispos & tarifs">
+    <Link
+      href={`/admin/disponibilites${week.seasonId ? `?season=${week.seasonId}` : ""}`}
+      title="Modifier dans Dispos & tarifs"
+    >
       {body}
     </Link>
   );

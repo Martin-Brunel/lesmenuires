@@ -229,7 +229,9 @@ export default function ReservationsPage() {
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return (bookings ?? []).filter((b) => {
-      if (statusFilter !== "all" && b.status !== statusFilter) return false;
+      if (statusFilter === "active") {
+        if (b.status !== "confirmed" && b.status !== "balance_paid") return false;
+      } else if (statusFilter !== "all" && b.status !== statusFilter) return false;
       if (!needle) return true;
       return (
         b.reference.toLowerCase().includes(needle) ||
@@ -307,6 +309,7 @@ export default function ReservationsPage() {
           className="h-9 rounded-md border bg-background px-3 text-sm"
         >
           <option value="all">Tous les statuts</option>
+          <option value="active">Actives (confirmées + soldées)</option>
           {Object.entries(STATUS_LABEL).map(([v, label]) => (
             <option key={v} value={v}>{label}</option>
           ))}
