@@ -139,8 +139,24 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "status": "ok" }))
+/// Readiness probe (used as the API container healthcheck): verifies the database
+/// is actually reachable, so a live process with a dead pool is reported unhealthy
+/// (503) and the proxy stops routing to it instead of serving 500s to customers.
+async fn health(State(st): State<AppState>) -> Response {
+    match sqlx::query_scalar::<_, i32>("select 1")
+        .fetch_one(&st.pool)
+        .await
+    {
+        Ok(_) => (StatusCode::OK, Json(serde_json::json!({ "status": "ok" }))).into_response(),
+        Err(e) => {
+            tracing::warn!("health: base de données indisponible: {e:?}");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({ "status": "degraded", "db": false })),
+            )
+                .into_response()
+        }
+    }
 }
 
 // ----------------------------------------------------------------------------
