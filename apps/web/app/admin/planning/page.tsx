@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { adminApi, fmtEur, type AdminSeason, type AdminWeek } from "@/lib/admin-api";
 import { todayIso } from "@/lib/dates";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
@@ -62,19 +64,39 @@ function WeekChip({ week, today }: { week: AdminWeek; today: string }) {
 }
 
 export default function PlanningPage() {
+  const [seasons, setSeasons] = useState<AdminSeason[] | null>(null);
+  const [seasonId, setSeasonId] = useState("");
   const [weeks, setWeeks] = useState<AdminWeek[] | null>(null);
-  const [seasons, setSeasons] = useState<AdminSeason[]>([]);
   const [error, setError] = useState(false);
   const today = todayIso();
 
+  // Seasons in chronological order so prev/next arrows follow the calendar.
   useEffect(() => {
-    Promise.all([adminApi.listWeeks(SLUG), adminApi.listSeasons(SLUG)])
-      .then(([w, s]) => {
-        setWeeks(w);
-        setSeasons(s);
+    adminApi
+      .listSeasons(SLUG)
+      .then((ss) => {
+        const sorted = [...ss].sort((a, b) => a.startDate.localeCompare(b.startDate));
+        setSeasons(sorted);
+        setSeasonId(sorted.find((s) => s.isActive)?.id ?? sorted[sorted.length - 1]?.id ?? "");
       })
       .catch(() => setError(true));
   }, []);
+
+  useEffect(() => {
+    if (!seasonId) {
+      setWeeks([]);
+      return;
+    }
+    setWeeks(null);
+    adminApi
+      .listWeeks(SLUG, seasonId)
+      .then(setWeeks)
+      .catch(() => setError(true));
+  }, [seasonId]);
+
+  const idx = (seasons ?? []).findIndex((s) => s.id === seasonId);
+  const prev = idx > 0 ? seasons![idx - 1] : null;
+  const next = idx >= 0 && idx < (seasons?.length ?? 0) - 1 ? seasons![idx + 1] : null;
 
   // Weeks in chronological order, bucketed by calendar month of arrival.
   const months = useMemo(() => {
@@ -88,101 +110,158 @@ export default function PlanningPage() {
     return out;
   }, [weeks]);
 
-  const seasonStats = useMemo(
-    () =>
-      seasons
-        .map((s) => {
-          const ws = (weeks ?? []).filter((w) => w.seasonId === s.id);
-          const booked = ws.filter((w) => w.status === "booked");
-          const sellable = ws.filter((w) => w.status !== "blocked").length;
-          return {
-            id: s.id,
-            name: s.name,
-            weeks: ws.length,
-            booked: booked.length,
-            occupancy: sellable > 0 ? Math.round((booked.length / sellable) * 100) : null,
-            revenueCents: booked.reduce((acc, w) => acc + w.priceCents, 0),
-          };
-        })
-        .filter((s) => s.weeks > 0),
-    [seasons, weeks],
-  );
+  const stats = useMemo(() => {
+    const ws = weeks ?? [];
+    const booked = ws.filter((w) => w.status === "booked");
+    const sellable = ws.filter((w) => w.status !== "blocked").length;
+    return {
+      weeks: ws.length,
+      booked: booked.length,
+      occupancy: sellable > 0 ? Math.round((booked.length / sellable) * 100) : null,
+      revenueCents: booked.reduce((acc, w) => acc + w.priceCents, 0),
+    };
+  }, [weeks]);
 
   if (error) {
     return <p className="text-sm text-destructive">Impossible de charger le planning.</p>;
   }
-  if (weeks === null) {
+  if (seasons === null) {
     return <p className="text-sm text-muted-foreground">Chargement…</p>;
   }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Planning</h1>
-        <p className="text-sm text-muted-foreground">
-          Toutes les semaines en un coup d&apos;œil. Cliquez sur une semaine réservée pour ouvrir
-          le dossier, sur une autre pour la modifier.
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Planning</h1>
+          <p className="text-sm text-muted-foreground">
+            La saison en un coup d&apos;œil. Cliquez sur une semaine réservée pour ouvrir le
+            dossier, sur une autre pour la modifier.
+          </p>
+        </div>
+        <div className="flex items-center gap-1">
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-9 w-9"
+            disabled={!prev}
+            onClick={() => prev && setSeasonId(prev.id)}
+            title={prev ? prev.name : "Pas de saison précédente"}
+          >
+            <ChevronLeft className="size-4" />
+          </Button>
+          <select
+            aria-label="Saison affichée"
+            value={seasonId}
+            onChange={(e) => setSeasonId(e.target.value)}
+            className="h-9 min-w-[220px] rounded-md border border-input bg-background px-2 text-sm"
+          >
+            {seasons.length === 0 && <option value="">—</option>}
+            {seasons.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+                {s.isActive ? " — active" : ""}
+              </option>
+            ))}
+          </select>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-9 w-9"
+            disabled={!next}
+            onClick={() => next && setSeasonId(next.id)}
+            title={next ? next.name : "Pas de saison suivante"}
+          >
+            <ChevronRight className="size-4" />
+          </Button>
+        </div>
       </div>
 
-      {seasonStats.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {seasonStats.map((s) => (
-            <Card key={s.id}>
+      {seasons.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Aucune saison. Créez-en une dans « Saisons ».
+        </p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-medium text-muted-foreground">
-                  {s.name}
+                  Taux d&apos;occupation
                 </CardTitle>
               </CardHeader>
-              <CardContent className="text-sm">
+              <CardContent>
                 <div className="text-2xl font-semibold">
-                  {s.occupancy == null ? "—" : `${s.occupancy} %`}
-                  <span className="ml-2 text-sm font-normal text-muted-foreground">
-                    {s.booked}/{s.weeks} semaine(s)
-                  </span>
-                </div>
-                <div className="text-muted-foreground mt-1">
-                  {fmtEur(s.revenueCents)} de loyers réservés
+                  {stats.occupancy == null ? "—" : `${stats.occupancy} %`}
                 </div>
               </CardContent>
             </Card>
-          ))}
-        </div>
-      )}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  Semaines réservées
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-semibold">
+                  {stats.booked}
+                  <span className="ml-1 text-sm font-normal text-muted-foreground">
+                    / {stats.weeks}
+                  </span>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="col-span-2">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  Loyers réservés sur la saison
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-semibold">{fmtEur(stats.revenueCents)}</div>
+              </CardContent>
+            </Card>
+          </div>
 
-      <div className="flex items-center gap-4 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1.5">
-          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />Disponible
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />Réservé
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-2.5 h-2.5 rounded-full bg-rose-400" />Bloqué
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-2.5 h-2.5 rounded-full ring-2 ring-primary ring-offset-1" />
-          Semaine en cours
-        </span>
-      </div>
+          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />Disponible
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />Réservé
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-400" />Bloqué
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full ring-2 ring-primary ring-offset-1" />
+              Semaine en cours
+            </span>
+          </div>
 
-      {months.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          Aucune semaine. Générez une saison dans « Dispos &amp; tarifs ».
-        </p>
-      ) : (
-        <div className="space-y-4">
-          {months.map((m) => (
-            <div key={m.label} className="flex items-start gap-3">
-              <div className="w-28 shrink-0 pt-2 text-sm font-medium capitalize">{m.label}</div>
-              <div className="flex flex-wrap gap-2">
-                {m.weeks.map((w) => (
-                  <WeekChip key={w.id} week={w} today={today} />
-                ))}
-              </div>
+          {weeks === null ? (
+            <p className="text-sm text-muted-foreground">Chargement…</p>
+          ) : months.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Aucune semaine sur cette saison. Générez-les dans « Dispos &amp; tarifs ».
+            </p>
+          ) : (
+            <div className="space-y-4">
+              {months.map((m) => (
+                <div key={m.label} className="flex items-start gap-3">
+                  <div className="w-28 shrink-0 pt-2 text-sm font-medium capitalize">
+                    {m.label}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {m.weeks.map((w) => (
+                      <WeekChip key={w.id} week={w} today={today} />
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
     </div>
   );
