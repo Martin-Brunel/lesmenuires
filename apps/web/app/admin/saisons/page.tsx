@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Plus, Trash2 } from "lucide-react";
 import { adminApi, type AdminSeason, type RateTier } from "@/lib/admin-api";
 import { useConfirm } from "@/components/admin/dialogs";
@@ -147,6 +148,20 @@ function SeasonCard({ season, onChanged }: { season: AdminSeason; onChanged: () 
           </div>
           <div className="text-xs text-muted-foreground mt-1.5">
             {frShort(season.startDate)} → {frShort(season.endDate)}
+            <span className="mx-1.5">·</span>
+            <Link
+              href={`/admin/planning?season=${season.id}`}
+              className="text-primary underline underline-offset-2"
+            >
+              Planning
+            </Link>
+            <span className="mx-1.5">·</span>
+            <Link
+              href={`/admin/disponibilites?season=${season.id}`}
+              className="text-primary underline underline-offset-2"
+            >
+              Dispos &amp; tarifs
+            </Link>
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">

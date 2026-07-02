@@ -80,7 +80,14 @@ export default function PlanningPage() {
       .then((ss) => {
         const sorted = [...ss].sort((a, b) => a.startDate.localeCompare(b.startDate));
         setSeasons(sorted);
-        setSeasonId(sorted.find((s) => s.isActive)?.id ?? sorted[sorted.length - 1]?.id ?? "");
+        // Saison demandée dans l'URL (lien contextuel), sinon la saison active.
+        const wanted = new URLSearchParams(window.location.search).get("season");
+        setSeasonId(
+          sorted.find((s) => s.id === wanted)?.id ??
+            sorted.find((s) => s.isActive)?.id ??
+            sorted[sorted.length - 1]?.id ??
+            "",
+        );
       })
       .catch(() => setError(true));
   }, []);
