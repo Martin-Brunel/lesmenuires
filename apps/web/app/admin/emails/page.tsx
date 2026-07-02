@@ -30,6 +30,25 @@ const CHANNEL_LABEL: Record<string, string> = {
   manual: "Manuelles uniquement",
 };
 
+type EmailStat = { kind: string; sent: number; delivered: number; opened: number; failed: number };
+
+/** Libellés des types du journal (système + divers). */
+const KIND_LABEL: Record<string, string> = {
+  welcome: "Confirmation de réservation",
+  balance_prenotify: "Prélèvement du solde à venir",
+  balance_paid: "Solde réglé",
+  payment_issue: "Incident de paiement",
+  cart_reminder: "Relance panier",
+  cancellation: "Annulation",
+  contract_request: "Contrat à signer",
+  automation: "Transactionnels (tous)",
+  arrival_reminder: "Rappel avant arrivée (ancien)",
+  magic_link: "Lien de connexion",
+  manual: "E-mails manuels",
+  admin_invite: "Invitation admin",
+  admin_reset: "Réinitialisation mot de passe",
+};
+
 const VARIABLES =
   "{{prenom}} {{nom}} {{reference}} {{semaine}} {{arrivee}} {{depart}} {{total}} {{acompte}} {{solde}} {{acces}}";
 
@@ -59,16 +78,22 @@ export default function EmailsPage() {
   const confirm = useConfirm();
   const [rows, setRows] = useState<EmailAutomation[] | null>(null);
   const [system, setSystem] = useState<SystemEmail[]>([]);
+  const [stats, setStats] = useState<EmailStat[]>([]);
   const [error, setError] = useState(false);
   // null = fermé ; "new" = création ; sinon l'automatisation en édition.
   const [editing, setEditing] = useState<EmailAutomation | "new" | null>(null);
   const [editingSystem, setEditingSystem] = useState<SystemEmail | null>(null);
 
   const reload = () =>
-    Promise.all([adminApi.listEmailAutomations(), adminApi.listSystemEmails()])
-      .then(([a, s]) => {
+    Promise.all([
+      adminApi.listEmailAutomations(),
+      adminApi.listSystemEmails(),
+      adminApi.emailStats(),
+    ])
+      .then(([a, s, st]) => {
         setRows(a);
         setSystem(s);
+        setStats(st);
       })
       .catch(() => setError(true));
   useEffect(() => {
@@ -225,6 +250,58 @@ export default function EmailsPage() {
           </Card>
         ))}
       </div>
+
+      {stats.length > 0 && (
+        <div className="space-y-2 pt-2">
+          <div>
+            <h2 className="text-lg font-semibold">Suivi des envois</h2>
+            <p className="text-sm text-muted-foreground">
+              90 derniers jours. Délivrance et ouvertures alimentées par le webhook Resend
+              (les ouvertures sont sous-estimées : certains clients mail les masquent).
+            </p>
+          </div>
+          <Card className="overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+                  <th className="p-3 font-medium">Type</th>
+                  <th className="p-3 text-right font-medium">Envoyés</th>
+                  <th className="p-3 text-right font-medium">Délivrés</th>
+                  <th className="p-3 text-right font-medium">Ouverts</th>
+                  <th className="p-3 text-right font-medium">Échecs</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.map((s) => (
+                  <tr key={s.kind} className="border-b last:border-0">
+                    <td className="p-3">{KIND_LABEL[s.kind] ?? s.kind}</td>
+                    <td className="p-3 text-right">{s.sent}</td>
+                    <td className="p-3 text-right">
+                      {s.delivered}
+                      {s.sent > 0 && (
+                        <span className="ml-1 text-xs text-muted-foreground">
+                          ({Math.round((s.delivered / s.sent) * 100)} %)
+                        </span>
+                      )}
+                    </td>
+                    <td className="p-3 text-right">
+                      {s.opened}
+                      {s.delivered > 0 && (
+                        <span className="ml-1 text-xs text-muted-foreground">
+                          ({Math.round((s.opened / s.delivered) * 100)} %)
+                        </span>
+                      )}
+                    </td>
+                    <td className={"p-3 text-right " + (s.failed > 0 ? "text-destructive" : "")}>
+                      {s.failed}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+        </div>
+      )}
 
       {editing && (
         <AutomationDialog

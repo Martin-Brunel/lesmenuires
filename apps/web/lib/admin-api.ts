@@ -530,6 +530,10 @@ export const adminApi = {
       body: JSON.stringify({ currentPassword, newPassword }),
     }),
   listAudit: () => req<AuditEntry[]>("/audit"),
+  emailStats: () =>
+    req<{ kind: string; sent: number; delivered: number; opened: number; failed: number }[]>(
+      "/email-stats",
+    ),
   listSystemEmails: () => req<SystemEmail[]>("/email-overrides"),
   saveSystemEmail: (kind: string, subject: string, body: string) =>
     req<void>(`/email-overrides/${kind}`, {

@@ -53,6 +53,7 @@ pub fn routes(state: AppState) -> Router {
         )
         .route("/email-automations/preview", post(preview_email_automation))
         .route("/email-overrides", get(list_email_overrides))
+        .route("/email-stats", get(email_stats))
         .route(
             "/email-overrides/:kind",
             put(upsert_email_override).delete(delete_email_override),
@@ -1301,6 +1302,33 @@ async fn list_email_overrides(
         })
         .collect();
     Ok(Json(list))
+}
+
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct EmailStatRow {
+    kind: String,
+    sent: i64,
+    delivered: i64,
+    opened: i64,
+    failed: i64,
+}
+
+/// Suivi des envois par type sur les 90 derniers jours (délivrance et
+/// ouvertures alimentées par le webhook Resend).
+async fn email_stats(State(st): State<AppState>) -> Result<Json<Vec<EmailStatRow>>, AppError> {
+    let rows = sqlx::query_as::<_, EmailStatRow>(
+        "select kind, count(*) as sent, \
+                count(delivered_at) as delivered, \
+                count(opened_at) as opened, \
+                count(*) filter (where status = 'failed') as failed \
+         from email_log \
+         where created_at > now() - interval '90 days' \
+         group by kind order by sent desc",
+    )
+    .fetch_all(&st.pool)
+    .await?;
+    Ok(Json(rows))
 }
 
 #[derive(Deserialize)]
