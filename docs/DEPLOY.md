@@ -146,13 +146,46 @@ docker run --rm \
 Volumes persistants : `pgdata` (base), `media` (photos), `backups` (sauvegardes),
 `caddy_data` (certificats).
 
-## 8. Points de vigilance production
+## 8. Checklist avant ouverture au public
 
-- Changer `ADMIN_PASSWORD` et `POSTGRES_PASSWORD` (secrets forts).
-- Passer Stripe en clés **live** et re-tester un paiement réel de bout en bout.
-- Vérifier le domaine Resend avant d'ouvrir aux vrais clients.
-- `NEXT_PUBLIC_API_URL` est **inliné au build** du front (build-arg = `https://$DOMAIN`) :
-  un changement de domaine impose de reconstruire l'image `web`.
-- **Externaliser** le volume `backups` hors du serveur (les sauvegardes locales
-  ne protègent pas d'une perte du serveur) et vérifier périodiquement une
-  restauration réelle.
+À faire une fois, dans l'ordre, avant de recevoir de vrais clients.
+
+### Secrets & environnement
+- [ ] `POSTGRES_PASSWORD` et `ADMIN_PASSWORD` : secrets forts (pas les valeurs d'exemple).
+- [ ] `APP_ENV=production` (posé par le compose prod) — l'API refuse alors de
+      démarrer avec le provider de paiement `mock` (garde fail-closed).
+- [ ] `COOKIE_SECURE=true` (posé par le compose) — cookies en `Secure` derrière TLS.
+
+### Paiement (Stripe)
+- [ ] Renseigner les clés **live** : `STRIPE_SECRET_KEY` (`sk_live_…`) et
+      `STRIPE_PUBLISHABLE_KEY` (`pk_live_…`).
+- [ ] Créer le webhook Stripe vers `https://$DOMAIN/api/payments/webhook` et
+      copier le secret dans `STRIPE_WEBHOOK_SECRET` (`whsec_…`). **Obligatoire** :
+      sans lui, l'API rejette les webhooks (fail-closed) → les confirmations
+      asynchrones ne passeraient pas. Events utiles : `payment_intent.succeeded`,
+      `payment_intent.payment_failed`, `charge.refunded`, `charge.dispute.created`.
+- [ ] Tester un vrai paiement d'acompte de bout en bout, puis vérifier qu'un
+      remboursement fait depuis le dashboard Stripe remonte bien (badge admin).
+
+### E-mails (Resend)
+- [ ] Vérifier un domaine sur resend.com et pointer `MAIL_FROM` dessus (sinon
+      Resend en mode test ne délivre qu'à l'adresse du compte).
+- [ ] `API_BASE_URL` / `FRONT_ORIGIN` = `https://$DOMAIN` (liens des e-mails).
+
+### Identité légale & contenu (inlinés au build du front → reconstruire `web`)
+- [ ] Renseigner `NEXT_PUBLIC_EDITOR_*` et `NEXT_PUBLIC_HOST_*` (mentions légales)
+      et `NEXT_PUBLIC_CONTACT_EMAIL` — sinon les pages affichent « à compléter ».
+- [ ] Vérifier la **station** : le seed initial et d'anciens textes mentionnaient
+      « Grand-Bornand » alors que le bien est aux **Ménuires** → contrôler
+      `property.location_label` en base et corriger si besoin (admin Éditorial).
+- [ ] Renseigner le **montant de la taxe de séjour** (admin Éditorial) si applicable.
+
+### Exploitation
+- [ ] `NEXT_PUBLIC_API_URL` est inliné au build (build-arg = `https://$DOMAIN`) :
+      un changement de domaine impose de reconstruire l'image `web`.
+- [ ] **Externaliser** le volume `backups` hors du serveur (cron `docker cp` +
+      copie off-site) et tester une restauration réelle au moins une fois.
+- [ ] Surveiller `/api/health` (sonde externe) et le panneau « Actions requises »
+      du tableau de bord (soldes en retard, litiges, échecs de prélèvement).
+- [ ] Ne pas scaler l'API à plusieurs replicas : le scheduler tourne in-process
+      sans verrou distribué (mono-instance assumé pour ce déploiement).
