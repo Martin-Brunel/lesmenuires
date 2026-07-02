@@ -114,6 +114,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/espace/login", get(espace_login))
         .route("/api/espace/logout", post(espace_logout))
         .route("/api/bookings/:reference/contract", post(sign_contract))
+        .route(
+            "/api/contract/:token",
+            get(contract_link_view).post(contract_link_sign),
+        )
         .route("/api/bookings/:reference/pay-deposit", post(pay_deposit))
         .route(
             "/api/bookings/:reference/confirm-deposit",
@@ -645,6 +649,100 @@ struct ContractInput {
     accepted: bool,
     #[serde(default)]
     contract_text: String,
+}
+
+// ---------------------------------------------------------------------------
+// Signature du contrat par lien (réservations manuelles) : le jeton est une
+// capability — il donne accès au contrat de CE dossier, avant et après
+// signature (copie consultable/imprimable pour le client).
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+struct ContractLinkView {
+    reference: String,
+    week_range: String,
+    arrival: String,
+    customer_name: Option<String>,
+    property_name: String,
+    location_label: String,
+    capacity: i32,
+    caution_cents: i64,
+    signed: bool,
+    signed_at: Option<DateTime<Utc>>,
+    contract_text: Option<String>,
+    signature_png: Option<String>,
+}
+
+async fn contract_link_view(
+    State(st): State<AppState>,
+    Path(token): Path<String>,
+) -> Result<Json<ContractLinkView>, AppError> {
+    let row = sqlx::query_as::<_, ContractLinkView>(
+        "select b.reference, aw.range_label as week_range, aw.arrival_label as arrival, \
+                nullif(trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')), '') as customer_name, \
+                p.name as property_name, p.location_label, p.capacity, b.caution_cents, \
+                (b.contract_accepted_at is not null) as signed, \
+                b.contract_accepted_at as signed_at, b.contract_text, \
+                case when b.contract_accepted_at is not null then b.signature_png end as signature_png \
+         from booking b \
+         join availability_week aw on aw.id = b.week_id \
+         join property p on p.id = b.property_id \
+         left join customer c on c.id = b.customer_id \
+         where b.contract_sign_token = $1 and b.status in ('confirmed','balance_paid')",
+    )
+    .bind(&token)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("contrat".into()))?;
+    Ok(Json(row))
+}
+
+/// Signe le contrat d'un dossier via son jeton (mêmes garde-fous que le
+/// funnel : PNG borné, une seule signature).
+async fn contract_link_sign(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+    Json(body): Json<ContractInput>,
+) -> Result<StatusCode, AppError> {
+    st.rate.check(
+        "contract-sign",
+        &crate::rate::client_ip(&headers),
+        10,
+        std::time::Duration::from_secs(600),
+    )?;
+    if !body.accepted {
+        return Err(AppError::BadRequest("Le contrat doit être accepté.".into()));
+    }
+    if !body.signature_png.starts_with("data:image/png") || body.signature_png.len() < 200 {
+        return Err(AppError::BadRequest(
+            "Signature manquante ou invalide.".into(),
+        ));
+    }
+    if body.signature_png.len() > 1_000_000 {
+        return Err(AppError::BadRequest("Signature trop volumineuse.".into()));
+    }
+    let contract_text =
+        (!body.contract_text.trim().is_empty()).then_some(body.contract_text.as_str());
+    let updated = sqlx::query(
+        "update booking set contract_version = $2, signature_png = $3, \
+            contract_text = $4, contract_accepted_at = now(), updated_at = now() \
+         where contract_sign_token = $1 and contract_accepted_at is null \
+           and status in ('confirmed','balance_paid')",
+    )
+    .bind(&token)
+    .bind(&body.contract_version)
+    .bind(&body.signature_png)
+    .bind(contract_text)
+    .execute(&st.pool)
+    .await?;
+    if updated.rows_affected() == 0 {
+        return Err(AppError::BadRequest(
+            "Contrat introuvable ou déjà signé.".into(),
+        ));
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Store the signed contract (version + drawn signature + acceptance timestamp)

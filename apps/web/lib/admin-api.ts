@@ -417,6 +417,8 @@ export const adminApi = {
     req<BookingDetail>(`/bookings/${reference}/detail`),
   clearFlag: (reference: string) =>
     req<void>(`/bookings/${reference}/clear-flag`, { method: "POST" }),
+  sendContract: (reference: string) =>
+    req<void>(`/bookings/${reference}/send-contract`, { method: "POST" }),
   addNote: (reference: string, body: string) =>
     req<void>(`/bookings/${reference}/note`, { method: "POST", body: JSON.stringify({ body }) }),
   sendBookingEmail: (reference: string, subject: string, message: string) =>

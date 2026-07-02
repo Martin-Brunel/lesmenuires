@@ -60,6 +60,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/bookings/:reference/detail", get(booking_detail))
         .route("/bookings/:reference/clear-flag", post(clear_payment_flag))
         .route("/bookings/:reference/note", post(add_note))
+        .route("/bookings/:reference/send-contract", post(send_contract_link))
         .route("/bookings/:reference/email", post(send_booking_email))
         .route("/bookings/:reference/signature", get(get_signature))
         .route("/bookings/:reference/mark-paid", post(mark_paid))
@@ -1633,6 +1634,81 @@ async fn list_audit(State(st): State<AppState>) -> Result<Json<Vec<AuditEntryDto
     .fetch_all(&st.pool)
     .await?;
     Ok(Json(rows))
+}
+
+#[derive(FromRow)]
+struct SendContractRow {
+    id: Uuid,
+    token: Option<String>,
+    signed: bool,
+    week_range: String,
+    email: Option<String>,
+    first_name: Option<String>,
+}
+
+/// Envoie (ou renvoie) au client le lien de signature électronique du contrat
+/// — pensé pour les réservations manuelles, où le funnel n'est pas passé.
+async fn send_contract_link(
+    State(st): State<AppState>,
+    Path(reference): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let row = sqlx::query_as::<_, SendContractRow>(
+        "select b.id, b.contract_sign_token as token, \
+                (b.contract_accepted_at is not null) as signed, \
+                aw.range_label as week_range, c.email, c.first_name \
+         from booking b \
+         join availability_week aw on aw.id = b.week_id \
+         left join customer c on c.id = b.customer_id \
+         where b.reference = $1 and b.status in ('confirmed','balance_paid')",
+    )
+    .bind(&reference)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("réservation active".into()))?;
+    if row.signed {
+        return Err(AppError::BadRequest("Le contrat est déjà signé.".into()));
+    }
+    let Some(to) = row.email.filter(|e| !e.trim().is_empty()) else {
+        return Err(AppError::BadRequest("Ce client n'a pas d'e-mail.".into()));
+    };
+    let token = match row.token {
+        Some(t) => t,
+        None => {
+            let t = new_token();
+            sqlx::query("update booking set contract_sign_token = $2 where id = $1")
+                .bind(row.id)
+                .bind(&t)
+                .execute(&st.pool)
+                .await?;
+            t
+        }
+    };
+    let url = format!("{}/contrat/{token}", crate::email::front_url());
+    let greeting = match row.first_name.as_deref().filter(|s| !s.is_empty()) {
+        Some(n) => format!("Bonjour {n}"),
+        None => "Bonjour".to_string(),
+    };
+    let body = format!(
+        "{greeting},<br><br>Votre contrat de location pour la semaine du {} à L'Adret est \
+         prêt. Merci de le lire et de le signer en ligne — cela ne prend qu'une minute. \
+         Ce lien restera ensuite accessible comme copie de votre contrat signé.",
+        row.week_range
+    );
+    let html = crate::email::template(
+        "Votre contrat de location à signer",
+        &body,
+        "Lire et signer le contrat",
+        &url,
+    );
+    crate::email::spawn(
+        st.pool.clone(),
+        Some(row.id),
+        "contract_request",
+        to,
+        "Votre contrat de location à signer — L'Adret".into(),
+        html,
+    );
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Note interne sur la fiche contact (hors dossier).

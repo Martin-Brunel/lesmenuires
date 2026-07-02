@@ -42,6 +42,7 @@ const EMAIL_KIND: Record<string, string> = {
   cart_reminder: "Relance panier",
   arrival_reminder: "Rappel avant arrivée",
   automation: "E-mail automatique",
+  contract_request: "Contrat à signer",
   cancellation: "Annulation",
   manual: "E-mail manuel",
 };
@@ -190,6 +191,19 @@ export default function ReservationDetailPage() {
     actionBtns.push({ label: "Débiter des dégâts", onClick: captureCaution });
     actionBtns.push({ label: "Clôturer la caution", onClick: releaseCaution });
   }
+  if (!b.contractSignedAt && b.customerEmail && active)
+    actionBtns.push({
+      label: "Envoyer le contrat à signer",
+      onClick: async () => {
+        try {
+          await adminApi.sendContract(b.reference);
+          toast.success("Lien de signature envoyé au client.");
+          reload();
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Erreur");
+        }
+      },
+    });
   // Refund stays available after cancellation as long as something remains refundable.
   if (refundable > 0) actionBtns.push({ label: "Rembourser", onClick: refund });
   if (b.paymentFlag)
@@ -343,14 +357,29 @@ export default function ReservationDetailPage() {
                     </p>
                   </details>
                 )}
-                {b.hasSignature && (
-                  <Button size="sm" variant="secondary" className="mt-2" onClick={viewSignature}>
-                    Voir la signature
-                  </Button>
-                )}
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {b.hasSignature && (
+                    <Button size="sm" variant="secondary" onClick={viewSignature}>
+                      Voir la signature
+                    </Button>
+                  )}
+                  {b.contractText && (
+                    <Link
+                      href={`/admin/reservations/${b.reference}/contrat`}
+                      className="inline-flex h-8 items-center rounded-md bg-secondary px-3 text-sm font-medium text-secondary-foreground hover:bg-secondary/80"
+                    >
+                      Imprimer / PDF
+                    </Link>
+                  )}
+                </div>
               </>
             ) : (
-              <p className="text-muted-foreground">Contrat non signé.</p>
+              <p className="text-muted-foreground">
+                Contrat non signé.
+                {b.customerEmail && active
+                  ? " Utilisez « Envoyer le contrat à signer » pour obtenir la signature en ligne."
+                  : ""}
+              </p>
             )}
           </CardContent>
         </Card>
