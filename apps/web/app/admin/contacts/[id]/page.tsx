@@ -340,6 +340,7 @@ function ContactForm({
   const [addressLine, setAddressLine] = useState(contact.addressLine);
   const [postalCode, setPostalCode] = useState(contact.postalCode);
   const [city, setCity] = useState(contact.city);
+  const [country, setCountry] = useState(contact.country);
   const [busy, setBusy] = useState(false);
 
   const save = async () => {
@@ -357,6 +358,7 @@ function ContactForm({
         addressLine,
         postalCode,
         city,
+        country,
       });
       toast.success("Contact mis à jour.");
       onSaved();
@@ -379,6 +381,7 @@ function ContactForm({
         <Input placeholder="Code postal" value={postalCode} onChange={(e) => setPostalCode(e.target.value)} />
         <Input placeholder="Ville" value={city} onChange={(e) => setCity(e.target.value)} />
       </div>
+      <Input placeholder="Pays" value={country} onChange={(e) => setCountry(e.target.value)} />
       <div className="flex justify-end gap-2">
         <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy}>
           Annuler

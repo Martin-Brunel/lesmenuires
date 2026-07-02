@@ -433,6 +433,7 @@ export const adminApi = {
       addressLine: string;
       postalCode: string;
       city: string;
+      country: string;
     };
     adults: number;
     children: number;
@@ -469,6 +470,7 @@ export const adminApi = {
       addressLine: string;
       postalCode: string;
       city: string;
+      country: string;
     },
   ) => req<ContactInfo>(`/contacts/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   addContactNote: (id: string, body: string) =>

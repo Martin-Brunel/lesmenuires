@@ -279,6 +279,7 @@ function AutomationDialog({
   return (
     <Modal
       open
+      wide
       onClose={onClose}
       title={initial ? `Modifier « ${initial.name} »` : "Nouveau transactionnel"}
       footer={
@@ -304,7 +305,7 @@ function AutomationDialog({
             onChange={(e) => set({ name: e.target.value })}
           />
         </div>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <div className="space-y-1.5">
             <Label>Événement</Label>
             <select
@@ -343,8 +344,6 @@ function AutomationDialog({
                   : `${form.offsetDays} jour(s) après`}
             </p>
           </div>
-        </div>
-        <div className="grid grid-cols-2 gap-2">
           <div className="space-y-1.5">
             <Label>Dossiers concernés</Label>
             <select
@@ -398,8 +397,8 @@ function AutomationDialog({
         <div className="space-y-1.5">
           <Label>Message</Label>
           <textarea
-            className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-            rows={8}
+            className="w-full rounded-md border bg-background px-3 py-2 text-sm font-mono text-[13px]"
+            rows={14}
             placeholder="Bonjour {{prenom}},…"
             value={form.body}
             onChange={(e) => set({ body: e.target.value })}

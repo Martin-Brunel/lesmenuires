@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { adminApi, fmtEur, PAYMENT_FLAG_LABEL, type AdminBooking, type AdminWeek, type SignatureInfo } from "@/lib/admin-api";
+import { adminApi, fmtEur, PAYMENT_FLAG_LABEL, type AdminBooking, type AdminWeek, type Contact, type SignatureInfo } from "@/lib/admin-api";
 import { csvDate, csvEur, downloadCsv } from "@/lib/csv";
 import { todayIso } from "@/lib/dates";
 import { Badge } from "@/components/ui/badge";
@@ -530,6 +530,10 @@ function ManualBookingDialog({
   const [addressLine, setAddressLine] = useState("");
   const [postalCode, setPostalCode] = useState("");
   const [city, setCity] = useState("");
+  const [country, setCountry] = useState("France");
+  // Sélection d'un contact existant : préremplit tous les champs client.
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [contactId, setContactId] = useState("");
   const [adults, setAdults] = useState(2);
   const [children, setChildren] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState<"cheque" | "virement">("cheque");
@@ -556,7 +560,44 @@ function ManualBookingDialog({
         setWeeks(w.filter((x) => x.status === "available" && x.startDate >= today)),
       )
       .catch(() => setWeeks([]));
+    adminApi
+      .listContacts()
+      .then((cs) =>
+        setContacts(
+          [...cs].sort((a, b) => (a.name ?? a.email).localeCompare(b.name ?? b.email, "fr")),
+        ),
+      )
+      .catch(() => {});
   }, []);
+
+  const pickContact = async (id: string) => {
+    setContactId(id);
+    if (!id) {
+      // Retour à « Nouveau client » : repartir d'une fiche vierge.
+      setFirstName("");
+      setLastName("");
+      setEmail("");
+      setPhone("");
+      setAddressLine("");
+      setPostalCode("");
+      setCity("");
+      setCountry("France");
+      return;
+    }
+    try {
+      const d = await adminApi.contactDetail(id);
+      setFirstName(d.contact.firstName);
+      setLastName(d.contact.lastName);
+      setEmail(d.contact.email);
+      setPhone(d.contact.phone);
+      setAddressLine(d.contact.addressLine);
+      setPostalCode(d.contact.postalCode);
+      setCity(d.contact.city);
+      setCountry(d.contact.country || "France");
+    } catch {
+      toast.error("Impossible de charger ce contact.");
+    }
+  };
 
   const valid = weekId && /.+@.+\..+/.test(email) && firstName.trim() && lastName.trim();
 
@@ -567,7 +608,7 @@ function ManualBookingDialog({
     try {
       await adminApi.createManualBooking({
         weekId,
-        customer: { firstName, lastName, email, phone, addressLine, postalCode, city },
+        customer: { firstName, lastName, email, phone, addressLine, postalCode, city, country },
         adults,
         children,
         paymentMethod,
@@ -588,67 +629,124 @@ function ManualBookingDialog({
   const field = "w-full rounded-md border bg-background px-3 py-2 text-sm";
 
   return (
-    <Modal open onClose={onClose} title="Nouvelle réservation manuelle">
+    <Modal open wide onClose={onClose} title="Nouvelle réservation manuelle">
       <div className="space-y-3">
-        <div>
-          <label className="text-xs text-muted-foreground">Semaine</label>
-          <select className={field} value={weekId} onChange={(e) => setWeekId(e.target.value)}>
-            <option value="">— Choisir une semaine disponible —</option>
-            {(weeks ?? []).map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.rangeLabel} · {fmtEur(w.priceCents)}
-              </option>
-            ))}
-          </select>
-          {weeks && weeks.length === 0 && (
-            <p className="mt-1 text-xs text-muted-foreground">Aucune semaine disponible.</p>
-          )}
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <Input placeholder="Prénom" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
-          <Input placeholder="Nom" value={lastName} onChange={(e) => setLastName(e.target.value)} />
-        </div>
-        <Input placeholder="E-mail" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-        <div className="grid grid-cols-2 gap-2">
-          <Input placeholder="Téléphone" value={phone} onChange={(e) => setPhone(e.target.value)} />
-          <Input placeholder="Adresse" value={addressLine} onChange={(e) => setAddressLine(e.target.value)} />
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <Input placeholder="Code postal" value={postalCode} onChange={(e) => setPostalCode(e.target.value)} />
-          <Input placeholder="Ville" value={city} onChange={(e) => setCity(e.target.value)} />
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="text-xs text-muted-foreground">Adultes</label>
-            <Input type="number" min={1} value={adults} onChange={(e) => setAdults(Number(e.target.value))} />
+        <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+          {/* Colonne séjour & règlement */}
+          <div className="space-y-3">
+            <div className="text-sm font-medium">Séjour</div>
+            <div>
+              <label className="text-xs text-muted-foreground">Semaine</label>
+              <select className={field} value={weekId} onChange={(e) => setWeekId(e.target.value)}>
+                <option value="">— Choisir une semaine disponible —</option>
+                {(weeks ?? []).map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.rangeLabel} · {fmtEur(w.priceCents)}
+                  </option>
+                ))}
+              </select>
+              {weeks && weeks.length === 0 && (
+                <p className="mt-1 text-xs text-muted-foreground">Aucune semaine disponible.</p>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs text-muted-foreground">Adultes</label>
+                <Input type="number" min={1} value={adults} onChange={(e) => setAdults(Number(e.target.value))} />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Enfants</label>
+                <Input type="number" min={0} value={children} onChange={(e) => setChildren(Number(e.target.value))} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs text-muted-foreground">Règlement</label>
+                <select className={field} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as "cheque" | "virement")}>
+                  <option value="cheque">Chèque</option>
+                  <option value="virement">Virement</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Caution</label>
+                <Input
+                  value="Chèque de caution"
+                  disabled
+                  title="Une réservation hors ligne n'a pas de carte enregistrée : la caution est forcément un chèque."
+                />
+              </div>
+            </div>
+            <div className="flex gap-4 text-sm pt-1">
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={depositPaid} onChange={(e) => setDepositPaid(e.target.checked)} />
+                Acompte déjà reçu
+              </label>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={balancePaid} onChange={(e) => setBalancePaid(e.target.checked)} />
+                Solde déjà reçu
+              </label>
+            </div>
           </div>
-          <div>
-            <label className="text-xs text-muted-foreground">Enfants</label>
-            <Input type="number" min={0} value={children} onChange={(e) => setChildren(Number(e.target.value))} />
+          {/* Colonne client */}
+          <div className="space-y-3">
+            <div className="text-sm font-medium">Client</div>
+            <div>
+              <label className="text-xs text-muted-foreground">Client</label>
+              <select
+                className={field}
+                value={contactId}
+                onChange={(e) => pickContact(e.target.value)}
+              >
+                <option value="">— Nouveau client (saisir ci-dessous) —</option>
+                {contacts.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name ?? c.email} · {c.email}
+                  </option>
+                ))}
+              </select>
+              {contactId && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Champs préremplis depuis la fiche — modifiables, la fiche sera mise à jour.
+                </p>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs text-muted-foreground">Prénom</label>
+                <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Nom</label>
+                <Input value={lastName} onChange={(e) => setLastName(e.target.value)} />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">E-mail</label>
+              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Téléphone</label>
+              <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Adresse</label>
+              <Input value={addressLine} onChange={(e) => setAddressLine(e.target.value)} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs text-muted-foreground">Code postal</label>
+                <Input value={postalCode} onChange={(e) => setPostalCode(e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Ville</label>
+                <Input value={city} onChange={(e) => setCity(e.target.value)} />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Pays</label>
+              <Input value={country} onChange={(e) => setCountry(e.target.value)} />
+            </div>
           </div>
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="text-xs text-muted-foreground">Règlement</label>
-            <select className={field} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as "cheque" | "virement")}>
-              <option value="cheque">Chèque</option>
-              <option value="virement">Virement</option>
-            </select>
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground">Caution</label>
-            <div className={`${field} flex items-center text-muted-foreground`}>Chèque de caution</div>
-          </div>
-        </div>
-        <div className="flex gap-4 text-sm">
-          <label className="flex items-center gap-2">
-            <input type="checkbox" checked={depositPaid} onChange={(e) => setDepositPaid(e.target.checked)} />
-            Acompte déjà reçu
-          </label>
-          <label className="flex items-center gap-2">
-            <input type="checkbox" checked={balancePaid} onChange={(e) => setBalancePaid(e.target.checked)} />
-            Solde déjà reçu
-          </label>
         </div>
         <textarea
           className={field}

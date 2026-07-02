@@ -1716,6 +1716,8 @@ struct ManualCustomer {
     postal_code: String,
     #[serde(default)]
     city: String,
+    #[serde(default)]
+    country: String,
 }
 
 #[derive(Deserialize)]
@@ -1831,11 +1833,12 @@ async fn create_manual_booking(
     let customer_id: Uuid = sqlx::query_as::<_, (Uuid,)>(
         "insert into customer \
             (email, first_name, last_name, phone, address_line, postal_code, city, country) \
-         values ($1, $2, $3, $4, $5, $6, $7, 'France') \
+         values ($1, $2, $3, $4, $5, $6, $7, $8) \
          on conflict (lower(email)) where coalesce(email, '') <> '' \
          do update set first_name = excluded.first_name, last_name = excluded.last_name, \
             phone = excluded.phone, address_line = excluded.address_line, \
-            postal_code = excluded.postal_code, city = excluded.city \
+            postal_code = excluded.postal_code, city = excluded.city, \
+            country = excluded.country \
          returning id",
     )
     .bind(&c.email)
@@ -1845,6 +1848,7 @@ async fn create_manual_booking(
     .bind(&c.address_line)
     .bind(&c.postal_code)
     .bind(&c.city)
+    .bind(if c.country.trim().is_empty() { "France" } else { c.country.trim() })
     .fetch_one(&mut *tx)
     .await?
     .0;
@@ -2286,6 +2290,8 @@ struct UpdateContact {
     postal_code: String,
     #[serde(default)]
     city: String,
+    #[serde(default)]
+    country: String,
 }
 
 async fn update_contact(
@@ -2298,7 +2304,7 @@ async fn update_contact(
     }
     let dto = sqlx::query_as::<_, ContactInfo>(
         "update customer set first_name=$2, last_name=$3, email=$4, phone=$5, \
-                address_line=$6, postal_code=$7, city=$8 \
+                address_line=$6, postal_code=$7, city=$8, country=$9 \
          where id=$1 \
          returning id, first_name, last_name, email, phone, address_line, postal_code, city, \
                    country, created_at",
@@ -2311,6 +2317,7 @@ async fn update_contact(
     .bind(&p.address_line)
     .bind(&p.postal_code)
     .bind(&p.city)
+    .bind(&p.country)
     .fetch_optional(&st.pool)
     .await
     .map_err(|e| match &e {
