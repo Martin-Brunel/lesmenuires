@@ -175,6 +175,16 @@ impl StripeProvider {
                 .pointer("/error/message")
                 .and_then(|m| m.as_str())
                 .unwrap_or("erreur Stripe");
+            // 429 (rate limit) and 5xx (Stripe outage) are TRANSIENT: the charge may
+            // have applied even though the response failed. Return Internal so the
+            // scheduler keeps the same idempotency key (safe replay) instead of
+            // advancing it and risking a double charge. Card declines / invalid
+            // requests (4xx) are definitive → BadRequest (retry with a fresh key).
+            if status.as_u16() == 429 || status.is_server_error() {
+                return Err(AppError::Internal(format!(
+                    "Stripe transitoire ({status}): {msg}"
+                )));
+            }
             return Err(AppError::BadRequest(format!("Stripe : {msg}")));
         }
         Ok(body)
