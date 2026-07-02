@@ -48,6 +48,7 @@ const EMPTY: EmailAutomationInput = {
   event: "arrival",
   offsetDays: -7,
   channel: "all",
+  recipientEmail: "",
   subject: "",
   body: "",
   active: true,
@@ -129,6 +130,9 @@ export default function EmailsPage() {
                     {a.channel !== "all" && (
                       <Badge variant="muted">{CHANNEL_LABEL[a.channel]}</Badge>
                     )}
+                    {a.recipientEmail && (
+                      <Badge variant="warning">→ {a.recipientEmail}</Badge>
+                    )}
                     <Badge variant={a.active ? "success" : "muted"}>
                       {a.active ? "Actif" : "En pause"}
                     </Badge>
@@ -189,6 +193,7 @@ function AutomationDialog({
           event: initial.event,
           offsetDays: initial.offsetDays,
           channel: initial.channel,
+          recipientEmail: initial.recipientEmail,
           subject: initial.subject,
           body: initial.body,
           active: initial.active,
@@ -224,6 +229,10 @@ function AutomationDialog({
     if (busy) return;
     if (!form.name.trim() || !form.subject.trim() || !form.body.trim()) {
       toast.error("Nom, sujet et message requis.");
+      return;
+    }
+    if (form.recipientEmail !== "" && !form.recipientEmail.trim()) {
+      toast.error("Renseignez l'adresse du prestataire.");
       return;
     }
     setBusy(true);
@@ -335,20 +344,49 @@ function AutomationDialog({
             </p>
           </div>
         </div>
-        <div className="space-y-1.5">
-          <Label>Dossiers concernés</Label>
-          <select
-            value={form.channel}
-            onChange={(e) => set({ channel: e.target.value })}
-            className={selectBase}
-          >
-            {Object.entries(CHANNEL_LABEL).map(([v, label]) => (
-              <option key={v} value={v}>
-                {label}
-              </option>
-            ))}
-          </select>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1.5">
+            <Label>Dossiers concernés</Label>
+            <select
+              value={form.channel}
+              onChange={(e) => set({ channel: e.target.value })}
+              className={selectBase}
+            >
+              {Object.entries(CHANNEL_LABEL).map(([v, label]) => (
+                <option key={v} value={v}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Destinataire</Label>
+            <select
+              value={form.recipientEmail === "" ? "client" : "custom"}
+              onChange={(e) =>
+                set({ recipientEmail: e.target.value === "client" ? "" : form.recipientEmail || " " })
+              }
+              className={selectBase}
+            >
+              <option value="client">Client du dossier</option>
+              <option value="custom">Adresse fixe (prestataire…)</option>
+            </select>
+          </div>
         </div>
+        {form.recipientEmail !== "" && (
+          <div className="space-y-1.5">
+            <Label>Adresse du prestataire</Label>
+            <Input
+              type="email"
+              placeholder="menage@exemple.fr"
+              value={form.recipientEmail.trim()}
+              onChange={(e) => set({ recipientEmail: e.target.value || " " })}
+            />
+            <p className="text-xs text-muted-foreground">
+              Les variables ({"{{prenom}}"}, {"{{depart}}"}…) restent celles du dossier concerné.
+            </p>
+          </div>
+        )}
         <div className="space-y-1.5">
           <Label>Sujet</Label>
           <Input

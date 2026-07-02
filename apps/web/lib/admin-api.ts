@@ -295,6 +295,8 @@ export type EmailAutomation = {
   offsetDays: number;
   /** all | online | manual */
   channel: string;
+  /** Vide = client du dossier ; sinon adresse fixe (prestataire). */
+  recipientEmail: string;
   subject: string;
   body: string;
   active: boolean;

@@ -250,6 +250,7 @@ struct AutomationDue {
     automation_id: Uuid,
     subject: String,
     body: String,
+    recipient_email: String,
     booking_id: Uuid,
     reference: String,
     week_range: String,
@@ -335,7 +336,7 @@ pub(crate) fn booking_vars(b: &TemplateBooking) -> Vec<(&'static str, String)> {
 /// de 3 jours au-delà de laquelle un envoi manqué est abandonné.
 async fn run_email_automations(pool: &PgPool, r: &mut TickReport) -> Result<(), sqlx::Error> {
     let due: Vec<AutomationDue> = sqlx::query_as(
-        "select a.id as automation_id, a.subject, a.body, \
+        "select a.id as automation_id, a.subject, a.body, a.recipient_email, \
                 b.id as booking_id, b.reference, aw.range_label as week_range, \
                 aw.arrival_label as arrival, aw.end_date, \
                 b.total_cents, b.deposit_cents, b.balance_cents, \
@@ -378,8 +379,15 @@ async fn run_email_automations(pool: &PgPool, r: &mut TickReport) -> Result<(), 
         }
         r.automations_sent += 1;
 
-        let Some(to) = d.email.clone().filter(|e| !e.is_empty()) else {
-            continue;
+        // Destinataire fixe (prestataire) si renseigné, sinon le client.
+        let fixed = !d.recipient_email.trim().is_empty();
+        let to = if fixed {
+            d.recipient_email.trim().to_string()
+        } else {
+            match d.email.clone().filter(|e| !e.is_empty()) {
+                Some(e) => e,
+                None => continue,
+            }
         };
         let vars = booking_vars(&TemplateBooking {
             first_name: d.first_name.as_deref(),
@@ -395,12 +403,13 @@ async fn run_email_automations(pool: &PgPool, r: &mut TickReport) -> Result<(), 
         });
         let subject = render_template(&d.subject, &vars, false);
         let body = render_email_body(&d.body, &vars);
-        let html = email::template(
-            &subject,
-            &body,
-            "Mon espace",
-            &format!("{}/espace", email::front_url()),
-        );
+        // Le CTA « Mon espace » n'a de sens que pour le client du dossier.
+        let (cta_label, cta_url) = if fixed {
+            ("", String::new())
+        } else {
+            ("Mon espace", format!("{}/espace", email::front_url()))
+        };
+        let html = email::template(&subject, &body, cta_label, &cta_url);
         email::spawn(
             pool.clone(),
             Some(d.booking_id),

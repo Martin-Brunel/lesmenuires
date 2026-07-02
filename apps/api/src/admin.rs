@@ -1016,6 +1016,8 @@ struct EmailAutomationDto {
     event: String,
     offset_days: i32,
     channel: String,
+    /// Vide = client du dossier ; sinon adresse fixe (prestataire).
+    recipient_email: String,
     subject: String,
     body: String,
     active: bool,
@@ -1031,6 +1033,8 @@ struct EmailAutomationInput {
     event: String,
     offset_days: i32,
     channel: String,
+    #[serde(default)]
+    recipient_email: String,
     subject: String,
     body: String,
     active: bool,
@@ -1055,10 +1059,15 @@ fn validate_automation(p: &EmailAutomationInput) -> Result<(), AppError> {
             "Pour la réservation et l'annulation, le décalage doit être J0 ou plus.".into(),
         ));
     }
+    let re = p.recipient_email.trim();
+    let re_valid = re.contains('@') && re.rsplit('@').next().unwrap_or("").contains('.');
+    if !re.is_empty() && !re_valid {
+        return Err(AppError::BadRequest("Adresse destinataire invalide.".into()));
+    }
     Ok(())
 }
 
-const AUTOMATION_COLS: &str = "id, name, event, offset_days, channel, subject, body, active, \
+const AUTOMATION_COLS: &str = "id, name, event, offset_days, channel, recipient_email, subject, body, active, \
      (select count(*) from email_automation_send s where s.automation_id = email_automation.id) as sent_count, \
      created_at";
 
@@ -1079,13 +1088,14 @@ async fn create_email_automation(
 ) -> Result<Json<EmailAutomationDto>, AppError> {
     validate_automation(&p)?;
     let row = sqlx::query_as::<_, EmailAutomationDto>(&format!(
-        "insert into email_automation (name, event, offset_days, channel, subject, body, active) \
-         values ($1, $2, $3, $4, $5, $6, $7) returning {AUTOMATION_COLS}"
+        "insert into email_automation (name, event, offset_days, channel, recipient_email, subject, body, active) \
+         values ($1, $2, $3, $4, $5, $6, $7, $8) returning {AUTOMATION_COLS}"
     ))
     .bind(p.name.trim())
     .bind(&p.event)
     .bind(p.offset_days)
     .bind(&p.channel)
+    .bind(p.recipient_email.trim())
     .bind(p.subject.trim())
     .bind(&p.body)
     .bind(p.active)
@@ -1102,7 +1112,7 @@ async fn update_email_automation(
     validate_automation(&p)?;
     let row = sqlx::query_as::<_, EmailAutomationDto>(&format!(
         "update email_automation set name=$2, event=$3, offset_days=$4, channel=$5, \
-                subject=$6, body=$7, active=$8, updated_at=now() \
+                recipient_email=$6, subject=$7, body=$8, active=$9, updated_at=now() \
          where id=$1 returning {AUTOMATION_COLS}"
     ))
     .bind(id)
@@ -1110,6 +1120,7 @@ async fn update_email_automation(
     .bind(&p.event)
     .bind(p.offset_days)
     .bind(&p.channel)
+    .bind(p.recipient_email.trim())
     .bind(p.subject.trim())
     .bind(&p.body)
     .bind(p.active)
