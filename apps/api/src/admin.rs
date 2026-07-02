@@ -1235,14 +1235,17 @@ async fn mark_paid(
     } else {
         "balance_cents"
     };
+    // Only an active manual booking can be pointed — never re-activate a cancelled
+    // or expired file (that would revive a released week → double-booking).
     let row = sqlx::query_as::<_, (Uuid, i64, bool)>(&format!(
         "select id, {amount_col}, ({paid_col} is not null) from booking \
-         where reference = $1 and channel = 'manual'"
+         where reference = $1 and channel = 'manual' \
+           and status in ('confirmed', 'balance_paid')"
     ))
     .bind(&reference)
     .fetch_optional(&st.pool)
     .await?
-    .ok_or_else(|| AppError::NotFound("réservation manuelle".into()))?;
+    .ok_or_else(|| AppError::NotFound("réservation manuelle active".into()))?;
     if row.2 {
         return Err(AppError::BadRequest("Échéance déjà pointée.".into()));
     }
@@ -1639,22 +1642,15 @@ async fn cancel_booking(
         ));
     }
 
-    // 1) External side-effects first — all idempotent (stable Stripe keys), so a
-    //    full retry after a mid-way failure never double-refunds/double-releases.
-    let mut refunds = Vec::new();
+    // Persist everything atomically: refunds (which lock the booking row and record
+    // their own payment lines), cancel, free week. Caution = card-on-file (Option B):
+    // nothing is held, so nothing to release on cancellation — we never charge it.
+    let mut tx = st.pool.begin().await?;
     if body.refund_deposit_cents > 0 {
-        refunds.push(perform_refund(&st, b.id, "deposit", body.refund_deposit_cents).await?);
+        perform_refund(&mut tx, &st, b.id, "deposit", body.refund_deposit_cents).await?;
     }
     if body.refund_balance_cents > 0 {
-        refunds.push(perform_refund(&st, b.id, "balance", body.refund_balance_cents).await?);
-    }
-    // Caution = card-on-file (Option B) : nothing is held, so nothing to release on
-    // cancellation — we simply never charge it.
-
-    // 2) Persist everything atomically: refunds, cancel, free week.
-    let mut tx = st.pool.begin().await?;
-    for rr in &refunds {
-        insert_refund_row(&mut tx, b.id, rr).await?;
+        perform_refund(&mut tx, &st, b.id, "balance", body.refund_balance_cents).await?;
     }
     sqlx::query(
         "update booking set status = 'cancelled', cancelled_at = now(), \
@@ -1735,6 +1731,7 @@ struct CautionRow {
     caution_method: Option<String>,
     caution_released_at: Option<chrono::DateTime<chrono::Utc>>,
     stay_started: bool,
+    status: String,
 }
 
 /// Caution model = card-on-file + charge-on-demand (Option B) : no Stripe hold is
@@ -1744,7 +1741,7 @@ async fn load_caution(st: &AppState, reference: &str) -> Result<CautionRow, AppE
     let b = sqlx::query_as::<_, CautionRow>(
         "select b.id, b.caution_cents, b.provider_customer_id, b.provider_payment_method_id, \
                 b.caution_method, b.caution_released_at, \
-                (aw.start_date <= current_date) as stay_started \
+                (aw.start_date <= current_date) as stay_started, b.status \
          from booking b join availability_week aw on aw.id = b.week_id \
          where b.reference = $1",
     )
@@ -1752,6 +1749,13 @@ async fn load_caution(st: &AppState, reference: &str) -> Result<CautionRow, AppE
     .fetch_optional(&st.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("réservation".into()))?;
+    // Never touch the caution of a cancelled file (rule: no caution charge on
+    // cancellation) or one that is not an active stay.
+    if !matches!(b.status.as_str(), "confirmed" | "balance_paid") {
+        return Err(AppError::BadRequest(
+            "Caution indisponible : la réservation n'est pas active.".into(),
+        ));
+    }
     if b.caution_released_at.is_some() {
         return Err(AppError::BadRequest("Caution déjà traitée.".into()));
     }
@@ -1807,13 +1811,17 @@ async fn capture_caution(
         (Some(id), st.payments.name(), None)
     };
 
+    // Persist the settlement + payment row atomically: after a real card charge,
+    // a half-write (booking marked settled but no payment row) would lose the
+    // record of debited money.
+    let mut tx = st.pool.begin().await?;
     sqlx::query(
         "update booking set caution_captured_cents = $2, caution_released_at = now(), \
             updated_at = now() where id = $1",
     )
     .bind(b.id)
     .bind(body.amount_cents)
-    .execute(&st.pool)
+    .execute(&mut *tx)
     .await?;
     sqlx::query(
         "insert into payment (booking_id, type, provider, provider_intent_id, amount_cents, status, method) \
@@ -1824,8 +1832,9 @@ async fn capture_caution(
     .bind(&intent)
     .bind(body.amount_cents)
     .bind(method)
-    .execute(&st.pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1861,32 +1870,34 @@ struct RefundInput {
     payment_type: Option<String>,
 }
 
-/// A refund that succeeded but has not yet been recorded in the DB. For a manual
-/// (cheque/virement) payment there is no Stripe call: `provider` = "manual" and
-/// `refund_id` is None (the money is given back offline).
-struct RefundRow {
-    refund_id: Option<String>,
-    amount_cents: i64,
-    source: String,
-    provider: String,
-}
-
-/// Validate and execute the Stripe refund for `amount_cents` from the latest
-/// succeeded payment of `ptype` (deposit/balance), capped at the net already-charged
-/// amount (charged minus prior refunds of the same type). Returns the row to record
-/// — the caller persists it, so the DB write can be batched into an atomic tx and a
-/// full retry stays idempotent (the Stripe key is stable until a row is committed).
+/// Validate and execute a refund for `amount_cents` from the latest succeeded
+/// payment of `ptype` (deposit/balance), capped at the net already-charged amount
+/// (charged minus prior refunds of the same type), then record the refund row —
+/// all inside the caller's transaction.
+///
+/// The booking row is locked `for update` first, so two concurrent refunds cannot
+/// both read the same prior-refunds total and each insert a row (double-click →
+/// duplicate refund line skewing finances). A Stripe payment is refunded via the
+/// provider (stable idempotency key → retry-safe); a manual (cheque/virement)
+/// payment is refunded offline (no provider call), recorded with provider 'manual'.
 async fn perform_refund(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     st: &AppState,
     booking_id: Uuid,
     ptype: &str,
     amount_cents: i64,
-) -> Result<RefundRow, AppError> {
+) -> Result<(), AppError> {
     if amount_cents <= 0 {
         return Err(AppError::BadRequest(
             "Montant à rembourser invalide.".into(),
         ));
     }
+    // Serialize refunds on this booking.
+    sqlx::query("select id from booking where id = $1 for update")
+        .bind(booking_id)
+        .execute(&mut **tx)
+        .await?;
+
     let src: Option<(Option<String>, i64, String)> = sqlx::query_as(
         "select provider_intent_id, amount_cents, provider from payment \
          where booking_id = $1 and type = $2 and status = 'succeeded' \
@@ -1894,7 +1905,7 @@ async fn perform_refund(
     )
     .bind(booking_id)
     .bind(ptype)
-    .fetch_optional(&st.pool)
+    .fetch_optional(&mut **tx)
     .await?;
     let (intent, charged, provider) = src
         .ok_or_else(|| AppError::BadRequest(format!("Aucun paiement « {ptype} » à rembourser.")))?;
@@ -1905,7 +1916,7 @@ async fn perform_refund(
     )
     .bind(booking_id)
     .bind(ptype)
-    .fetch_one(&st.pool)
+    .fetch_one(&mut **tx)
     .await?;
 
     let refundable = (charged - already).max(0);
@@ -1918,13 +1929,10 @@ async fn perform_refund(
         )));
     }
 
-    // Manual (cheque/virement) payment → offline refund, recorded without any
-    // Stripe call. Otherwise refund the Stripe PaymentIntent.
-    match intent {
+    // Manual (cheque/virement) payment → offline refund, no Stripe call.
+    let (refund_id, provider): (Option<String>, String) = match intent {
         Some(intent) if provider != "manual" => {
-            // Key on the prior-refunds total: a retried (lost-response) refund reuses
-            // the same key and replays; a genuinely new refund gets a new key.
-            let refund_id = st
+            let id = st
                 .payments
                 .refund(
                     &intent,
@@ -1932,37 +1940,20 @@ async fn perform_refund(
                     &format!("refund-{booking_id}-{ptype}-{already}"),
                 )
                 .await?;
-            Ok(RefundRow {
-                refund_id: Some(refund_id),
-                amount_cents,
-                source: ptype.to_string(),
-                provider: st.payments.name().to_string(),
-            })
+            (Some(id), st.payments.name().to_string())
         }
-        _ => Ok(RefundRow {
-            refund_id: None,
-            amount_cents,
-            source: ptype.to_string(),
-            provider: "manual".to_string(),
-        }),
-    }
-}
+        _ => (None, "manual".to_string()),
+    };
 
-/// Record a completed Stripe refund inside the caller's transaction.
-async fn insert_refund_row(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    booking_id: Uuid,
-    rr: &RefundRow,
-) -> Result<(), sqlx::Error> {
     sqlx::query(
         "insert into payment (booking_id, type, provider, provider_intent_id, amount_cents, status, raw) \
          values ($1, 'refund', $2, $3, $4, 'refunded', jsonb_build_object('source', $5::text))",
     )
     .bind(booking_id)
-    .bind(&rr.provider)
-    .bind(&rr.refund_id)
-    .bind(rr.amount_cents)
-    .bind(&rr.source)
+    .bind(&provider)
+    .bind(&refund_id)
+    .bind(amount_cents)
+    .bind(ptype)
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -1984,9 +1975,8 @@ async fn refund_payment(
         .fetch_optional(&st.pool)
         .await?
         .ok_or_else(|| AppError::NotFound("réservation".into()))?;
-    let rr = perform_refund(&st, bid, &ptype, body.amount_cents).await?;
     let mut tx = st.pool.begin().await?;
-    insert_refund_row(&mut tx, bid, &rr).await?;
+    perform_refund(&mut tx, &st, bid, &ptype, body.amount_cents).await?;
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
