@@ -9,7 +9,7 @@ use axum::{
     http::{header, HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc, Weekday};
@@ -52,6 +52,10 @@ pub fn routes(state: AppState) -> Router {
             put(update_email_automation).delete(delete_email_automation),
         )
         .route("/email-automations/preview", post(preview_email_automation))
+        .route("/users", get(list_admin_users).post(create_admin_user))
+        .route("/users/:id", delete(delete_admin_user))
+        .route("/me/password", post(change_my_password))
+        .route("/audit", get(list_audit))
         .route("/bookings/:reference/detail", get(booking_detail))
         .route("/bookings/:reference/clear-flag", post(clear_payment_flag))
         .route("/bookings/:reference/note", post(add_note))
@@ -116,6 +120,27 @@ fn new_token() -> String {
 #[derive(FromRow)]
 struct SessionRow {
     admin_user_id: Uuid,
+    display_name: String,
+    email: String,
+}
+
+/// Journalise une action admin (fire-and-forget : l'audit ne doit jamais
+/// bloquer ni faire échouer l'action elle-même).
+fn audit(pool: sqlx::PgPool, admin_id: Uuid, admin_name: String, method: String, path: String) {
+    tokio::spawn(async move {
+        if let Err(e) = sqlx::query(
+            "insert into admin_audit (admin_id, admin_name, method, path) values ($1, $2, $3, $4)",
+        )
+        .bind(admin_id)
+        .bind(&admin_name)
+        .bind(&method)
+        .bind(&path)
+        .execute(&pool)
+        .await
+        {
+            tracing::warn!("audit admin: {e:?}");
+        }
+    });
 }
 
 async fn require_admin(
@@ -134,7 +159,9 @@ async fn require_admin(
     };
 
     let session = sqlx::query_as::<_, SessionRow>(
-        "select admin_user_id from admin_session where token = $1 and expires_at > now()",
+        "select s.admin_user_id, u.display_name, u.email \
+         from admin_session s join admin_user u on u.id = s.admin_user_id \
+         where s.token = $1 and s.expires_at > now()",
     )
     .bind(&token)
     .fetch_optional(&st.pool)
@@ -143,7 +170,21 @@ async fn require_admin(
     match session {
         Some(s) => {
             req.extensions_mut().insert(AdminId(s.admin_user_id));
-            Ok(next.run(req).await)
+            // « Qui fait quoi » : toute action mutante réussie est attribuée
+            // à son auteur (les GET, purement consultatifs, ne le sont pas).
+            // POST de consultation (aperçu) : pas une action, pas d'audit.
+            let mutating = !matches!(req.method(), &axum::http::Method::GET)
+                && !req.uri().path().ends_with("/email-automations/preview");
+            let method = req.method().to_string();
+            let path = req.uri().path().to_string();
+            let name = if s.display_name.is_empty() { s.email.clone() } else { s.display_name.clone() };
+            let admin_id = s.admin_user_id;
+            let pool = st.pool.clone();
+            let res = next.run(req).await;
+            if mutating && res.status().is_success() {
+                audit(pool, admin_id, name, method, path);
+            }
+            Ok(res)
         }
         None => Ok(unauthorized()),
     }
@@ -180,13 +221,16 @@ struct AdminRow {
     password_hash: String,
     email: String,
     display_name: String,
+    is_super: bool,
 }
 
 #[derive(Serialize, FromRow)]
 #[serde(rename_all = "camelCase")]
 struct MeDto {
+    id: Uuid,
     email: String,
     display_name: String,
+    is_super: bool,
 }
 
 async fn login(
@@ -203,7 +247,7 @@ async fn login(
     )?;
 
     let admin = sqlx::query_as::<_, AdminRow>(
-        "select id, password_hash, email, display_name from admin_user where email = $1",
+        "select id, password_hash, email, display_name, is_super from admin_user where email = $1",
     )
     .bind(input.email.trim().to_lowercase())
     .fetch_optional(&st.pool)
@@ -229,9 +273,20 @@ async fn login(
     .execute(&st.pool)
     .await?;
 
+    // Connexion tracée dans le journal (le middleware ne voit pas /login).
+    audit(
+        st.pool.clone(),
+        admin.id,
+        if admin.display_name.is_empty() { admin.email.clone() } else { admin.display_name.clone() },
+        "LOGIN".into(),
+        "/api/admin/login".into(),
+    );
+
     let body = Json(MeDto {
+        id: admin.id,
         email: admin.email,
         display_name: admin.display_name,
+        is_super: admin.is_super,
     });
     let mut resp = body.into_response();
     resp.headers_mut().insert(
@@ -273,11 +328,12 @@ async fn me(
     State(st): State<AppState>,
     Extension(AdminId(id)): Extension<AdminId>,
 ) -> Result<Json<MeDto>, AppError> {
-    let dto =
-        sqlx::query_as::<_, MeDto>("select email, display_name from admin_user where id = $1")
-            .bind(id)
-            .fetch_one(&st.pool)
-            .await?;
+    let dto = sqlx::query_as::<_, MeDto>(
+        "select id, email, display_name, is_super from admin_user where id = $1",
+    )
+    .bind(id)
+    .fetch_one(&st.pool)
+    .await?;
     Ok(Json(dto))
 }
 
@@ -1183,6 +1239,172 @@ async fn delete_email_automation(
         return Err(AppError::NotFound("transactionnel".into()));
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------------------------------------------------------------------------
+// Comptes admin : le superadmin (premier compte) crée/supprime des
+// sous-comptes ; chacun peut changer son mot de passe. Journal d'audit.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct AdminUserDto {
+    id: Uuid,
+    email: String,
+    display_name: String,
+    is_super: bool,
+    created_at: DateTime<Utc>,
+}
+
+async fn require_super(pool: &sqlx::PgPool, admin_id: Uuid) -> Result<(), AppError> {
+    let is_super: bool = sqlx::query_scalar("select is_super from admin_user where id = $1")
+        .bind(admin_id)
+        .fetch_optional(pool)
+        .await?
+        .unwrap_or(false);
+    if !is_super {
+        return Err(AppError::BadRequest(
+            "Action réservée au compte principal.".into(),
+        ));
+    }
+    Ok(())
+}
+
+async fn list_admin_users(
+    State(st): State<AppState>,
+) -> Result<Json<Vec<AdminUserDto>>, AppError> {
+    let rows = sqlx::query_as::<_, AdminUserDto>(
+        "select id, email, display_name, is_super, created_at from admin_user \
+         order by created_at",
+    )
+    .fetch_all(&st.pool)
+    .await?;
+    Ok(Json(rows))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateAdminInput {
+    email: String,
+    display_name: String,
+    password: String,
+}
+
+async fn create_admin_user(
+    State(st): State<AppState>,
+    Extension(AdminId(admin_id)): Extension<AdminId>,
+    Json(p): Json<CreateAdminInput>,
+) -> Result<Json<AdminUserDto>, AppError> {
+    require_super(&st.pool, admin_id).await?;
+    let email = p.email.trim().to_lowercase();
+    if !(email.contains('@') && email.rsplit('@').next().unwrap_or("").contains('.')) {
+        return Err(AppError::BadRequest("E-mail invalide.".into()));
+    }
+    if p.display_name.trim().is_empty() {
+        return Err(AppError::BadRequest("Nom requis.".into()));
+    }
+    if p.password.len() < 8 {
+        return Err(AppError::BadRequest(
+            "Mot de passe : 8 caractères minimum.".into(),
+        ));
+    }
+    let hash = hash_password(&p.password)
+        .map_err(|_| AppError::Internal("hash mot de passe".into()))?;
+    let row = sqlx::query_as::<_, AdminUserDto>(
+        "insert into admin_user (email, password_hash, display_name) values ($1, $2, $3) \
+         on conflict (email) do nothing \
+         returning id, email, display_name, is_super, created_at",
+    )
+    .bind(&email)
+    .bind(&hash)
+    .bind(p.display_name.trim())
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::BadRequest("Un compte existe déjà avec cet e-mail.".into()))?;
+    Ok(Json(row))
+}
+
+async fn delete_admin_user(
+    State(st): State<AppState>,
+    Extension(AdminId(admin_id)): Extension<AdminId>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    require_super(&st.pool, admin_id).await?;
+    if id == admin_id {
+        return Err(AppError::BadRequest(
+            "Impossible de supprimer son propre compte.".into(),
+        ));
+    }
+    // Le compte principal est indéboulonnable (il resterait sinon un
+    // back-office sans personne pour gérer les comptes).
+    let res = sqlx::query("delete from admin_user where id = $1 and not is_super")
+        .bind(id)
+        .execute(&st.pool)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(AppError::BadRequest(
+            "Compte introuvable ou compte principal.".into(),
+        ));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChangePasswordInput {
+    current_password: String,
+    new_password: String,
+}
+
+async fn change_my_password(
+    State(st): State<AppState>,
+    Extension(AdminId(admin_id)): Extension<AdminId>,
+    Json(p): Json<ChangePasswordInput>,
+) -> Result<StatusCode, AppError> {
+    if p.new_password.len() < 8 {
+        return Err(AppError::BadRequest(
+            "Mot de passe : 8 caractères minimum.".into(),
+        ));
+    }
+    let hash: Option<String> =
+        sqlx::query_scalar("select password_hash from admin_user where id = $1")
+            .bind(admin_id)
+            .fetch_optional(&st.pool)
+            .await?;
+    let Some(hash) = hash else {
+        return Err(AppError::NotFound("compte".into()));
+    };
+    if !verify_password(&hash, &p.current_password) {
+        return Err(AppError::BadRequest("Mot de passe actuel incorrect.".into()));
+    }
+    let new_hash = hash_password(&p.new_password)
+        .map_err(|_| AppError::Internal("hash mot de passe".into()))?;
+    sqlx::query("update admin_user set password_hash = $2 where id = $1")
+        .bind(admin_id)
+        .bind(&new_hash)
+        .execute(&st.pool)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct AuditEntryDto {
+    admin_id: Option<Uuid>,
+    admin_name: String,
+    method: String,
+    path: String,
+    created_at: DateTime<Utc>,
+}
+
+async fn list_audit(State(st): State<AppState>) -> Result<Json<Vec<AuditEntryDto>>, AppError> {
+    let rows = sqlx::query_as::<_, AuditEntryDto>(
+        "select admin_id, admin_name, method, path, created_at \
+         from admin_audit order by created_at desc limit 150",
+    )
+    .fetch_all(&st.pool)
+    .await?;
+    Ok(Json(rows))
 }
 
 /// Note interne sur la fiche contact (hors dossier).

@@ -13,10 +13,12 @@ import {
   Mail,
   Package,
   Snowflake,
+  UserCog,
   Users,
   Wallet,
 } from "lucide-react";
 import { adminApi, type Me } from "@/lib/admin-api";
+import { Avatar } from "@/components/admin/Avatar";
 import { Button } from "@/components/ui/button";
 import { DialogProvider } from "@/components/admin/dialogs";
 import { Toaster } from "@/components/ui/toast";
@@ -35,6 +37,7 @@ const NAV = [
   { href: "/admin/prestations", label: "Prestations", icon: Package },
   { href: "/admin/emails", label: "E-mails auto", icon: Mail },
   { href: "/admin/editorial", label: "Contenu éditorial", icon: FileText },
+  { href: "/admin/equipe", label: "Équipe", icon: UserCog },
 ];
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
@@ -111,7 +114,17 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
         <div className="p-3 border-t">
-          <div className="px-3 pb-2 text-xs text-muted-foreground truncate">{me.email}</div>
+          <Link
+            href="/admin/equipe"
+            className="flex items-center gap-2.5 rounded-md px-3 pb-2 pt-1 hover:bg-accent"
+            title="Mon compte"
+          >
+            <Avatar name={me.displayName || me.email} size={28} />
+            <span className="min-w-0">
+              <span className="block truncate text-sm">{me.displayName || "Admin"}</span>
+              <span className="block truncate text-xs text-muted-foreground">{me.email}</span>
+            </span>
+          </Link>
           <Button variant="ghost" size="sm" className="w-full justify-start" onClick={logout}>
             <LogOut className="size-4" />
             Déconnexion

@@ -1,7 +1,23 @@
 // Client for the back-office API (/api/admin). Sends the HttpOnly session cookie
 // cross-origin via credentials:"include"; on 401 it bounces to the login page.
 
-export type Me = { email: string; displayName: string };
+export type Me = { id: string; email: string; displayName: string; isSuper: boolean };
+
+export type AdminAccount = {
+  id: string;
+  email: string;
+  displayName: string;
+  isSuper: boolean;
+  createdAt: string;
+};
+
+export type AuditEntry = {
+  adminId: string | null;
+  adminName: string;
+  method: string;
+  path: string;
+  createdAt: string;
+};
 
 export type AdminProperty = {
   slug: string;
@@ -459,6 +475,16 @@ export const adminApi = {
     }),
   deleteEmailAutomation: (id: string) =>
     req<void>(`/email-automations/${id}`, { method: "DELETE" }),
+  listAdminUsers: () => req<AdminAccount[]>("/users"),
+  createAdminUser: (data: { email: string; displayName: string; password: string }) =>
+    req<AdminAccount>("/users", { method: "POST", body: JSON.stringify(data) }),
+  deleteAdminUser: (id: string) => req<void>(`/users/${id}`, { method: "DELETE" }),
+  changeMyPassword: (currentPassword: string, newPassword: string) =>
+    req<void>("/me/password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
+  listAudit: () => req<AuditEntry[]>("/audit"),
   previewEmailAutomation: (subject: string, body: string) =>
     req<{ subject: string; html: string }>("/email-automations/preview", {
       method: "POST",
