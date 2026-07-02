@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Trash2 } from "lucide-react";
 import {
   adminApi,
@@ -281,6 +282,14 @@ function WeekRow({
         <div className="text-xs font-normal text-muted-foreground">
           {frShort(week.startDate)} → {frShort(week.endDate)}
         </div>
+        {week.status === "booked" && week.bookingReference && (
+          <Link
+            href={`/admin/reservations/${week.bookingReference}`}
+            className="mt-0.5 block text-xs font-normal text-primary underline underline-offset-2 hover:text-foreground"
+          >
+            {week.bookingCustomer ?? week.bookingReference}
+          </Link>
+        )}
       </TableCell>
       <TableCell>
         <select

@@ -13,8 +13,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
-import { ActionsMenu, type Action } from "@/components/ui/actions-menu";
 import { CancelDialog } from "@/components/admin/CancelDialog";
 import { useConfirm, usePrompt } from "@/components/admin/dialogs";
 import { toast } from "@/components/ui/toast";
@@ -33,7 +33,6 @@ const STATUS_VARIANT: Record<string, "success" | "warning" | "muted" | "destruct
   cancelled: "destructive",
   expired: "muted",
 };
-
 const EMAIL_KIND: Record<string, string> = {
   welcome: "Confirmation de réservation",
   magic_link: "Lien de connexion",
@@ -42,14 +41,7 @@ const EMAIL_KIND: Record<string, string> = {
   payment_issue: "Incident de paiement",
   cart_reminder: "Relance panier",
   cancellation: "Annulation",
-};
-const EMAIL_STATUS: Record<string, { label: string; variant: "success" | "warning" | "muted" | "destructive" }> = {
-  sent: { label: "Envoyé", variant: "muted" },
-  delivered: { label: "Délivré", variant: "success" },
-  opened: { label: "Ouvert", variant: "success" },
-  bounced: { label: "Rejeté", variant: "destructive" },
-  complained: { label: "Spam", variant: "destructive" },
-  failed: { label: "Échec", variant: "destructive" },
+  manual: "E-mail manuel",
 };
 const PAYMENT_KIND: Record<string, string> = {
   deposit: "Acompte",
@@ -61,8 +53,11 @@ const PAYMENT_KIND: Record<string, string> = {
 
 const dt = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" }) : "—";
-const d = (iso: string | null) =>
+const dd = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }) : "—";
+const todayIso = () => new Date().toISOString().slice(0, 10);
+
+type Ev = { at: string; title: string; detail?: string; tone: "default" | "success" | "danger" | "muted" };
 
 export default function ReservationDetailPage() {
   const params = useParams<{ reference: string }>();
@@ -71,7 +66,10 @@ export default function ReservationDetailPage() {
   const [error, setError] = useState(false);
   const [pending, setPending] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [markKind, setMarkKind] = useState<"deposit" | "balance" | null>(null);
   const [sig, setSig] = useState<SignatureInfo | null | "loading">(null);
+  const [note, setNote] = useState("");
   const confirm = useConfirm();
   const prompt = usePrompt();
 
@@ -112,21 +110,6 @@ export default function ReservationDetailPage() {
     }
   };
 
-  const markPaid = async (kind: "deposit" | "balance") => {
-    const method = await prompt({
-      title: kind === "deposit" ? "Pointer l'acompte" : "Pointer le solde",
-      description: "Moyen de règlement reçu.",
-      label: "Méthode — cheque ou virement",
-      defaultValue: b.paymentMethod ?? "cheque",
-    });
-    if (method === null) return;
-    const m = method.trim().toLowerCase();
-    if (m !== "cheque" && m !== "virement") return toast.error("Méthode invalide (cheque ou virement).");
-    run(async () => {
-      await adminApi.markPaid(reference, kind, m as "cheque" | "virement");
-      toast.success("Échéance pointée.");
-    });
-  };
   const captureCaution = async () => {
     const max = (b.cautionCents / 100).toFixed(0);
     const amount = parseEuros(
@@ -167,47 +150,109 @@ export default function ReservationDetailPage() {
       setSig({ signaturePng: null, contractVersion: null, signedAt: null });
     }
   };
+  const addNote = async () => {
+    const body = note.trim();
+    if (!body) return;
+    run(async () => {
+      await adminApi.addNote(reference, body);
+      setNote("");
+      toast.success("Note ajoutée.");
+    });
+  };
 
-  const actions: Action[] = [];
+  // Visible actions bar (also usable when the row is manual / caution active…).
+  const actionBtns: { label: string; onClick: () => void; danger?: boolean }[] = [];
   if (b.channel === "manual" && !b.depositPaidAt && active)
-    actions.push({ label: "Pointer l'acompte", onClick: () => markPaid("deposit"), disabled: pending });
+    actionBtns.push({ label: "Pointer l'acompte", onClick: () => setMarkKind("deposit") });
   if (b.channel === "manual" && b.depositPaidAt && !b.balancePaidAt && active)
-    actions.push({ label: "Pointer le solde", onClick: () => markPaid("balance"), disabled: pending });
+    actionBtns.push({ label: "Pointer le solde", onClick: () => setMarkKind("balance") });
   if ((b.status === "confirmed" || b.status === "balance_paid") && b.cautionCents > 0 && !b.cautionReleasedAt) {
-    actions.push({ label: "Débiter des dégâts", onClick: captureCaution, disabled: pending });
-    actions.push({ label: "Clôturer la caution", onClick: releaseCaution, disabled: pending });
+    actionBtns.push({ label: "Débiter des dégâts", onClick: captureCaution });
+    actionBtns.push({ label: "Clôturer la caution", onClick: releaseCaution });
   }
-  if (b.depositPaidAt && active) actions.push({ label: "Rembourser", onClick: refund, disabled: pending });
+  if (b.depositPaidAt && active) actionBtns.push({ label: "Rembourser", onClick: refund });
   if (active && b.status !== "cart")
-    actions.push({ label: "Annuler la réservation", onClick: () => setCancelOpen(true), danger: true });
+    actionBtns.push({ label: "Annuler la réservation", onClick: () => setCancelOpen(true), danger: true });
+
+  // CRM event timeline (derived from booking lifecycle + payments + emails + notes).
+  const events: Ev[] = [];
+  events.push({
+    at: b.createdAt,
+    title: "Dossier créé",
+    detail: b.channel === "manual" ? "Réservation manuelle" : "Réservation en ligne",
+    tone: "default",
+  });
+  if (b.contractSignedAt)
+    events.push({ at: b.contractSignedAt, title: "Contrat signé", detail: b.contractVersion ? `v${b.contractVersion}` : undefined, tone: "success" });
+  data.payments.forEach((p) =>
+    events.push({
+      at: p.createdAt,
+      title: `${PAYMENT_KIND[p.kind] ?? p.kind} — ${fmtEur(p.amountCents)}`,
+      detail: p.method ?? (p.provider === "stripe" ? "carte" : p.provider),
+      tone: p.kind === "refund" ? "danger" : "success",
+    }),
+  );
+  data.emails.forEach((e) => {
+    const name = EMAIL_KIND[e.kind] ?? e.kind;
+    events.push({ at: e.createdAt, title: `E-mail envoyé : ${name}`, detail: e.status === "failed" ? "échec" : e.recipient, tone: e.status === "failed" ? "danger" : "muted" });
+    if (e.deliveredAt) events.push({ at: e.deliveredAt, title: `E-mail délivré : ${name}`, tone: "muted" });
+    if (e.openedAt) events.push({ at: e.openedAt, title: `E-mail ouvert : ${name}`, tone: "success" });
+  });
+  data.notes.forEach((n) =>
+    events.push({ at: n.createdAt, title: "Note interne", detail: n.body + (n.author ? ` — ${n.author}` : ""), tone: "default" }),
+  );
+  if (b.cancelledAt) events.push({ at: b.cancelledAt, title: "Réservation annulée", tone: "danger" });
+  events.sort((x, y) => y.at.localeCompare(x.at));
+
+  const toneDot: Record<Ev["tone"], string> = {
+    default: "bg-primary",
+    success: "bg-emerald-500",
+    danger: "bg-destructive",
+    muted: "bg-muted-foreground/40",
+  };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <Link href="/admin/reservations" className="text-sm text-primary underline underline-offset-2">
-            ‹ Réservations
-          </Link>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight">Dossier {b.reference}</h1>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
+      <div>
+        <Link href="/admin/reservations" className="text-sm text-primary underline underline-offset-2">
+          ‹ Réservations
+        </Link>
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">Dossier {b.reference}</h1>
+          <div className="flex flex-wrap items-center gap-2">
             <Badge variant={STATUS_VARIANT[b.status] ?? "muted"}>{STATUS_LABEL[b.status] ?? b.status}</Badge>
             {b.channel === "manual" && (
               <Badge variant="secondary">Manuel{b.paymentMethod ? ` · ${b.paymentMethod}` : ""}</Badge>
             )}
-            {b.paymentFlag && (
-              <Badge variant="destructive">{PAYMENT_FLAG_LABEL[b.paymentFlag] ?? b.paymentFlag}</Badge>
-            )}
+            {b.paymentFlag && <Badge variant="destructive">{PAYMENT_FLAG_LABEL[b.paymentFlag] ?? b.paymentFlag}</Badge>}
           </div>
         </div>
-        <ActionsMenu actions={actions} label="Actions du dossier" />
+      </div>
+
+      {/* Actions du dossier (visibles) */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" disabled={!b.customerEmail} onClick={() => setEmailOpen(true)}>
+          Envoyer un e-mail
+        </Button>
+        {actionBtns.map((a) => (
+          <Button
+            key={a.label}
+            size="sm"
+            variant={a.danger ? "ghost" : "secondary"}
+            className={a.danger ? "text-destructive hover:text-destructive" : ""}
+            disabled={pending}
+            onClick={a.onClick}
+          >
+            {a.label}
+          </Button>
+        ))}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        {/* Récapitulatif */}
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-base">Récapitulatif</CardTitle></CardHeader>
           <CardContent className="space-y-1.5 text-sm">
-            <Row label="Séjour" value={`${b.weekRange} · arrivée ${b.arrival || d(b.startDate)}`} />
+            <Row label="Séjour" value={`${b.weekRange} · arrivée ${b.arrival || dd(b.startDate)}`} />
             <Row label="Voyageurs" value={`${b.adults} adulte(s)${b.children ? ` · ${b.children} enfant(s)` : ""}`} />
             <Row label="Total séjour" value={fmtEur(b.totalCents)} />
             <Row label={`Acompte (${b.depositPct} %)`} value={fmtEur(b.depositCents)} />
@@ -215,11 +260,10 @@ export default function ReservationDetailPage() {
             {b.touristTaxCents > 0 && <Row label="dont taxe de séjour" value={fmtEur(b.touristTaxCents)} muted />}
             <Row label="Caution" value={`${fmtEur(b.cautionCents)}${b.cautionMethod === "cheque" ? " · chèque" : " · carte"}`} />
             <Row label="Créé le" value={dt(b.createdAt)} muted />
-            {b.adminNotes && <Row label="Notes" value={b.adminNotes} />}
+            {b.adminNotes && <Row label="Notes création" value={b.adminNotes} />}
           </CardContent>
         </Card>
 
-        {/* Client & accès */}
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-base">Client & accès</CardTitle></CardHeader>
           <CardContent className="space-y-1.5 text-sm">
@@ -234,7 +278,6 @@ export default function ReservationDetailPage() {
           </CardContent>
         </Card>
 
-        {/* Contrat */}
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-base">Contrat</CardTitle></CardHeader>
           <CardContent className="space-y-1.5 text-sm">
@@ -254,12 +297,21 @@ export default function ReservationDetailPage() {
           </CardContent>
         </Card>
 
-        {/* Règlement */}
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-base">Règlement</CardTitle></CardHeader>
           <CardContent className="space-y-2 text-sm">
-            <Milestone label="Acompte" amount={b.depositCents} paidAt={b.depositPaidAt} />
-            <Milestone label="Solde" amount={b.balanceCents} paidAt={b.balancePaidAt} />
+            <Milestone
+              label="Acompte"
+              amount={b.depositCents}
+              paidAt={b.depositPaidAt}
+              onPoint={b.channel === "manual" && !b.depositPaidAt && active ? () => setMarkKind("deposit") : undefined}
+            />
+            <Milestone
+              label="Solde"
+              amount={b.balanceCents}
+              paidAt={b.balancePaidAt}
+              onPoint={b.channel === "manual" && b.depositPaidAt && !b.balancePaidAt && active ? () => setMarkKind("balance") : undefined}
+            />
             <div className="flex items-center justify-between border-t pt-2">
               <span className="text-muted-foreground">Caution</span>
               <span>
@@ -277,60 +329,77 @@ export default function ReservationDetailPage() {
                 {b.cautionAttempts > 0 ? ` caution ×${b.cautionAttempts}` : ""}
               </p>
             )}
-            {data.payments.length > 0 && (
-              <div className="mt-2 space-y-1 border-t pt-2 text-xs text-muted-foreground">
-                {data.payments.map((p, i) => (
-                  <div key={i} className="flex items-center justify-between">
-                    <span>
-                      {PAYMENT_KIND[p.kind] ?? p.kind}
-                      {p.method ? ` · ${p.method}` : p.provider === "stripe" ? " · carte" : ""} — {dt(p.createdAt)}
-                    </span>
-                    <span>{fmtEur(p.amountCents)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Suivi des e-mails */}
+      {/* Notes internes */}
       <Card>
-        <CardHeader className="pb-2"><CardTitle className="text-base">Suivi des e-mails</CardTitle></CardHeader>
-        <CardContent>
-          {data.emails.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Aucun e-mail envoyé pour ce dossier.</p>
+        <CardHeader className="pb-2"><CardTitle className="text-base">Notes internes</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex gap-2">
+            <Input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addNote()}
+              placeholder="Ajouter une note (visible en interne uniquement)…"
+            />
+            <Button size="sm" disabled={pending || !note.trim()} onClick={addNote}>
+              Ajouter
+            </Button>
+          </div>
+          {data.notes.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Aucune note.</p>
           ) : (
-            <ul className="divide-y">
-              {data.emails.map((e, i) => {
-                const st = EMAIL_STATUS[e.status] ?? { label: e.status, variant: "muted" as const };
-                return (
-                  <li key={i} className="flex items-center justify-between gap-3 py-2 text-sm">
-                    <div>
-                      <div className="font-medium">{EMAIL_KIND[e.kind] ?? e.kind}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {dt(e.sentAt ?? e.createdAt)} → {e.recipient}
-                        {e.openedAt ? ` · ouvert le ${dt(e.openedAt)}` : ""}
-                        {e.error ? ` · ${e.error}` : ""}
-                      </div>
-                    </div>
-                    <Badge variant={st.variant}>{st.label}</Badge>
-                  </li>
-                );
-              })}
+            <ul className="space-y-2">
+              {data.notes.map((n, i) => (
+                <li key={i} className="rounded-md border p-3 text-sm">
+                  <p className="whitespace-pre-line">{n.body}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {dt(n.createdAt)}{n.author ? ` · ${n.author}` : ""}
+                  </p>
+                </li>
+              ))}
             </ul>
           )}
         </CardContent>
       </Card>
 
+      {/* Historique (CRM) */}
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-base">Historique du dossier</CardTitle></CardHeader>
+        <CardContent>
+          <ol className="relative space-y-4 border-l pl-5">
+            {events.map((e, i) => (
+              <li key={i} className="relative">
+                <span className={`absolute -left-[23px] top-1.5 size-2.5 rounded-full ring-4 ring-background ${toneDot[e.tone]}`} />
+                <div className="text-sm font-medium">{e.title}</div>
+                {e.detail && <div className="text-xs text-muted-foreground">{e.detail}</div>}
+                <div className="text-xs text-muted-foreground">{dt(e.at)}</div>
+              </li>
+            ))}
+          </ol>
+        </CardContent>
+      </Card>
+
       {cancelOpen && (
-        <CancelDialog
-          booking={b}
-          onClose={() => setCancelOpen(false)}
-          onDone={() => {
-            setCancelOpen(false);
-            reload();
-          }}
+        <CancelDialog booking={b} onClose={() => setCancelOpen(false)} onDone={() => { setCancelOpen(false); reload(); }} />
+      )}
+      {emailOpen && b.customerEmail && (
+        <EmailDialog
+          reference={reference}
+          to={b.customerEmail}
+          onClose={() => setEmailOpen(false)}
+          onSent={() => { setEmailOpen(false); reload(); }}
+        />
+      )}
+      {markKind && (
+        <MarkPaidDialog
+          reference={reference}
+          kind={markKind}
+          defaultMethod={(b.paymentMethod as "cheque" | "virement") ?? "cheque"}
+          onClose={() => setMarkKind(null)}
+          onDone={() => { setMarkKind(null); reload(); }}
         />
       )}
       {sig !== null && (
@@ -357,18 +426,146 @@ function Row({ label, value, muted }: { label: string; value: string; muted?: bo
   );
 }
 
-function Milestone({ label, amount, paidAt }: { label: string; amount: number; paidAt: string | null }) {
+function Milestone({
+  label,
+  amount,
+  paidAt,
+  onPoint,
+}: {
+  label: string;
+  amount: number;
+  paidAt: string | null;
+  onPoint?: () => void;
+}) {
   return (
     <div className="flex items-center justify-between">
       <span className="text-muted-foreground">{label}</span>
       <span className="flex items-center gap-2">
         <span className="font-medium">{fmtEur(amount)}</span>
         {paidAt ? (
-          <Badge variant="success">Réglé</Badge>
+          <Badge variant="success">Réglé le {new Date(paidAt).toLocaleDateString("fr-FR")}</Badge>
+        ) : onPoint ? (
+          <Button size="sm" variant="secondary" className="h-6 px-2 text-xs" onClick={onPoint}>
+            Pointer
+          </Button>
         ) : (
           <Badge variant="warning">En attente</Badge>
         )}
       </span>
     </div>
+  );
+}
+
+function EmailDialog({
+  reference,
+  to,
+  onClose,
+  onSent,
+}: {
+  reference: string;
+  to: string;
+  onClose: () => void;
+  onSent: () => void;
+}) {
+  const [subject, setSubject] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const send = async () => {
+    if (!subject.trim() || !message.trim() || busy) return;
+    setBusy(true);
+    try {
+      await adminApi.sendBookingEmail(reference, subject, message);
+      toast.success("E-mail envoyé.");
+      onSent();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Envoyer un e-mail au client"
+      footer={
+        <>
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>Annuler</Button>
+          <Button size="sm" onClick={send} disabled={busy || !subject.trim() || !message.trim()}>
+            {busy ? "…" : "Envoyer"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <p className="text-xs text-muted-foreground">Destinataire : {to}</p>
+        <Input placeholder="Sujet" value={subject} onChange={(e) => setSubject(e.target.value)} />
+        <textarea
+          className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+          rows={6}
+          placeholder="Votre message…"
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+        />
+        <p className="text-xs text-muted-foreground">Le message est habillé du modèle L&apos;Adret et journalisé dans le dossier.</p>
+      </div>
+    </Modal>
+  );
+}
+
+function MarkPaidDialog({
+  reference,
+  kind,
+  defaultMethod,
+  onClose,
+  onDone,
+}: {
+  reference: string;
+  kind: "deposit" | "balance";
+  defaultMethod: "cheque" | "virement";
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [method, setMethod] = useState<"cheque" | "virement">(defaultMethod);
+  const [date, setDate] = useState(todayIso());
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await adminApi.markPaid(reference, kind, method, date);
+      toast.success(kind === "deposit" ? "Acompte pointé." : "Solde pointé.");
+      onDone();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+      setBusy(false);
+    }
+  };
+  const field = "w-full rounded-md border bg-background px-3 py-2 text-sm";
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={kind === "deposit" ? "Pointer l'acompte" : "Pointer le solde"}
+      footer={
+        <>
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>Annuler</Button>
+          <Button size="sm" onClick={submit} disabled={busy}>{busy ? "…" : "Enregistrer le règlement"}</Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <div>
+          <label className="text-xs text-muted-foreground">Moyen de règlement</label>
+          <select className={field} value={method} onChange={(e) => setMethod(e.target.value as "cheque" | "virement")}>
+            <option value="cheque">Chèque</option>
+            <option value="virement">Virement</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground">Date de réception</label>
+          <input type="date" className={field} value={date} onChange={(e) => setDate(e.target.value)} />
+        </div>
+      </div>
+    </Modal>
   );
 }

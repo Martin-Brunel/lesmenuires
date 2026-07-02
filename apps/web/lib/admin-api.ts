@@ -33,6 +33,8 @@ export type AdminWeek = {
   position: number;
   seasonId: string | null;
   tierKey: string | null;
+  bookingReference: string | null;
+  bookingCustomer: string | null;
 };
 
 export type RateTier = { key: string; label: string; priceCents: number };
@@ -160,6 +162,7 @@ export type BookingDetailInfo = {
   contractSignedAt: string | null;
   hasSignature: boolean;
   createdAt: string;
+  cancelledAt: string | null;
   customerName: string | null;
   customerEmail: string | null;
   customerPhone: string | null;
@@ -189,10 +192,17 @@ export type EmailEntry = {
   openedAt: string | null;
 };
 
+export type NoteEntry = {
+  body: string;
+  author: string | null;
+  createdAt: string;
+};
+
 export type BookingDetail = {
   booking: BookingDetailInfo;
   payments: PaymentEntry[];
   emails: EmailEntry[];
+  notes: NoteEntry[];
 };
 
 export type Contact = {
@@ -288,6 +298,13 @@ export const adminApi = {
   listBookings: () => req<AdminBooking[]>("/bookings"),
   bookingDetail: (reference: string) =>
     req<BookingDetail>(`/bookings/${reference}/detail`),
+  addNote: (reference: string, body: string) =>
+    req<void>(`/bookings/${reference}/note`, { method: "POST", body: JSON.stringify({ body }) }),
+  sendBookingEmail: (reference: string, subject: string, message: string) =>
+    req<void>(`/bookings/${reference}/email`, {
+      method: "POST",
+      body: JSON.stringify({ subject, message }),
+    }),
   createManualBooking: (data: {
     weekId: string;
     customer: {
@@ -311,10 +328,15 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  markPaid: (reference: string, kind: "deposit" | "balance", method: "cheque" | "virement") =>
+  markPaid: (
+    reference: string,
+    kind: "deposit" | "balance",
+    method: "cheque" | "virement",
+    date?: string,
+  ) =>
     req<void>(`/bookings/${reference}/mark-paid`, {
       method: "POST",
-      body: JSON.stringify({ kind, method }),
+      body: JSON.stringify({ kind, method, date }),
     }),
   finances: () => req<FinancesResponse>("/finances"),
   listContacts: () => req<Contact[]>("/contacts"),
