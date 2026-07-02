@@ -1178,10 +1178,15 @@ fn validate_automation(p: &EmailAutomationInput) -> Result<(), AppError> {
             "Pour la réservation et l'annulation, le décalage doit être J0 ou plus.".into(),
         ));
     }
-    let re = p.recipient_email.trim();
-    let re_valid = re.contains('@') && re.rsplit('@').next().unwrap_or("").contains('.');
-    if !re.is_empty() && !re_valid {
-        return Err(AppError::BadRequest("Adresse destinataire invalide.".into()));
+    // Une ou plusieurs adresses fixes, séparées par des virgules.
+    for part in p.recipient_email.split(',') {
+        let re = part.trim();
+        let re_valid = re.contains('@') && re.rsplit('@').next().unwrap_or("").contains('.');
+        if !re.is_empty() && !re_valid {
+            return Err(AppError::BadRequest(format!(
+                "Adresse destinataire invalide : « {re} »."
+            )));
+        }
     }
     Ok(())
 }

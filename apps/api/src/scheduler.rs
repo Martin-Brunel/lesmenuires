@@ -329,13 +329,19 @@ async fn run_email_automations(pool: &PgPool, r: &mut TickReport) -> Result<(), 
         }
         r.automations_sent += 1;
 
-        // Destinataire fixe (prestataire) si renseigné, sinon le client.
+        // Destinataires fixes (prestataires, séparés par des virgules) si
+        // renseignés, sinon le client du dossier.
         let fixed = !d.recipient_email.trim().is_empty();
-        let to = if fixed {
-            d.recipient_email.trim().to_string()
+        let recipients: Vec<String> = if fixed {
+            d.recipient_email
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect()
         } else {
             match d.email.clone().filter(|e| !e.is_empty()) {
-                Some(e) => e,
+                Some(e) => vec![e],
                 None => continue,
             }
         };
@@ -360,14 +366,16 @@ async fn run_email_automations(pool: &PgPool, r: &mut TickReport) -> Result<(), 
             ("Mon espace", format!("{}/espace", email::front_url()))
         };
         let html = email::template(&subject, &body, cta_label, &cta_url);
-        email::spawn(
-            pool.clone(),
-            Some(d.booking_id),
-            "automation",
-            to,
-            subject,
-            html,
-        );
+        for to in recipients {
+            email::spawn(
+                pool.clone(),
+                Some(d.booking_id),
+                "automation",
+                to,
+                subject.clone(),
+                html.clone(),
+            );
+        }
     }
     if r.automations_sent > 0 {
         tracing::info!("{} transactionnel(s) automatique(s) envoyé(s)", r.automations_sent);

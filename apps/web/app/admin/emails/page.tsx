@@ -572,15 +572,16 @@ function AutomationDialog({
         </div>
         {form.recipientEmail !== "" && (
           <div className="space-y-1.5">
-            <Label>Adresse du prestataire</Label>
+            <Label>Adresse(s) du prestataire</Label>
             <Input
-              type="email"
-              placeholder="menage@exemple.fr"
-              value={form.recipientEmail.trim()}
+              placeholder="menage@exemple.fr, linge@exemple.fr"
+              value={form.recipientEmail.trimStart()}
               onChange={(e) => set({ recipientEmail: e.target.value || " " })}
             />
             <p className="text-xs text-muted-foreground">
-              Les variables ({"{{prenom}}"}, {"{{depart}}"}…) restent celles du dossier concerné.
+              Plusieurs adresses possibles, séparées par des virgules — chacune reçoit son
+              e-mail. Les variables ({"{{prenom}}"}, {"{{depart}}"}…) restent celles du dossier
+              concerné.
             </p>
           </div>
         )}
