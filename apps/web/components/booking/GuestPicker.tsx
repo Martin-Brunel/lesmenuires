@@ -72,10 +72,10 @@ export function GuestPicker({
     <div style={css("display:flex;flex-direction:column;gap:14px;padding:14px;border:1px solid rgba(0,0,0,.1);border-radius:12px;background:#FFF")}>
       <Stepper
         label="Adultes"
-        hint={`Jusqu'à ${capacity} voyageurs`}
+        hint={`Jusqu'à ${capacity} voyageurs au total`}
         value={adults}
         min={1}
-        max={capacity}
+        max={capacity - children}
         onChange={setAdults}
       />
       <Stepper
@@ -83,7 +83,7 @@ export function GuestPicker({
         hint="Moins de 12 ans"
         value={children}
         min={0}
-        max={capacity}
+        max={capacity - adults}
         onChange={setChildren}
       />
     </div>
