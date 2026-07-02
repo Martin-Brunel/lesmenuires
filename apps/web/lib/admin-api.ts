@@ -350,6 +350,8 @@ export const adminApi = {
   listBookings: () => req<AdminBooking[]>("/bookings"),
   bookingDetail: (reference: string) =>
     req<BookingDetail>(`/bookings/${reference}/detail`),
+  clearFlag: (reference: string) =>
+    req<void>(`/bookings/${reference}/clear-flag`, { method: "POST" }),
   addNote: (reference: string, body: string) =>
     req<void>(`/bookings/${reference}/note`, { method: "POST", body: JSON.stringify({ body }) }),
   sendBookingEmail: (reference: string, subject: string, message: string) =>

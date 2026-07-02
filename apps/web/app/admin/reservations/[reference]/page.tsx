@@ -148,6 +148,13 @@ export default function ReservationDetailPage() {
       toast.success(`${fmtEur(amount)} remboursés.`);
     });
   };
+  const clearFlag = async () => {
+    if (!(await confirm({ title: "Lever le blocage ?", description: "À utiliser une fois le litige / remboursement résolu. Le dossier redevient opérable (prélèvement, paiement client).", confirmLabel: "Lever le blocage" }))) return;
+    run(async () => {
+      await adminApi.clearFlag(reference);
+      toast.success("Blocage levé.");
+    });
+  };
   const viewSignature = async () => {
     setSig("loading");
     try {
@@ -183,6 +190,8 @@ export default function ReservationDetailPage() {
   }
   // Refund stays available after cancellation as long as something remains refundable.
   if (refundable > 0) actionBtns.push({ label: "Rembourser", onClick: refund });
+  if (b.paymentFlag)
+    actionBtns.push({ label: "Lever le blocage", onClick: clearFlag });
   if (active && b.status !== "cart")
     actionBtns.push({ label: "Annuler la réservation", onClick: () => setCancelOpen(true), danger: true });
 

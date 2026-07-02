@@ -1543,6 +1543,21 @@ async fn stripe_webhook(
                 );
             }
         }
+        "charge.dispute.closed" => {
+            // Dispute resolved in our favour → lift the 'disputed' block so the file
+            // is operable again (scheduler + client balance payment). A lost dispute
+            // stays flagged for admin attention.
+            let pi = obj.get("payment_intent").and_then(|v| v.as_str());
+            let won = obj.get("status").and_then(|v| v.as_str()) == Some("won");
+            if let Some(intent_id) = pi.filter(|s| !s.is_empty()) {
+                if won {
+                    clear_flag_by_intent(&st, intent_id, "disputed").await?;
+                    tracing::info!("webhook: litige gagné (intent {intent_id}) — blocage levé");
+                } else {
+                    tracing::warn!("webhook: litige clos non gagné (intent {intent_id})");
+                }
+            }
+        }
         other => {
             tracing::debug!("webhook: event ignoré ({other})");
         }
@@ -1562,6 +1577,22 @@ async fn flag_booking_by_intent(
         "update booking set payment_flag = $2, flagged_at = now(), updated_at = now() \
          where (deposit_intent_id = $1 or balance_intent_id = $1 or caution_intent_id = $1) \
            and payment_flag is null",
+    )
+    .bind(intent_id)
+    .bind(flag)
+    .execute(&st.pool)
+    .await?;
+    Ok(())
+}
+
+/// Clear a specific `flag` on the booking matched by any of its intent ids (e.g. a
+/// dispute resolved in our favour). Only clears if the current flag matches, so a
+/// later/other flag isn't wiped.
+async fn clear_flag_by_intent(st: &AppState, intent_id: &str, flag: &str) -> Result<(), AppError> {
+    sqlx::query(
+        "update booking set payment_flag = null, flagged_at = null, updated_at = now() \
+         where (deposit_intent_id = $1 or balance_intent_id = $1 or caution_intent_id = $1) \
+           and payment_flag = $2",
     )
     .bind(intent_id)
     .bind(flag)

@@ -42,6 +42,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/contacts", get(list_contacts))
         .route("/contacts/:id", get(contact_detail).put(update_contact))
         .route("/bookings/:reference/detail", get(booking_detail))
+        .route("/bookings/:reference/clear-flag", post(clear_payment_flag))
         .route("/bookings/:reference/note", post(add_note))
         .route("/bookings/:reference/email", post(send_booking_email))
         .route("/bookings/:reference/signature", get(get_signature))
@@ -1962,6 +1963,28 @@ async fn perform_refund(
     .execute(&mut **tx)
     .await?;
     Ok(())
+}
+
+/// Lève un blocage de paiement (litige / remboursement externe) posé par le webhook,
+/// une fois la situation résolue manuellement — rend le dossier de nouveau opérable
+/// (scheduler + paiement du solde par le client).
+async fn clear_payment_flag(
+    State(st): State<AppState>,
+    Path(reference): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let res = sqlx::query(
+        "update booking set payment_flag = null, flagged_at = null, updated_at = now() \
+         where reference = $1 and payment_flag is not null",
+    )
+    .bind(&reference)
+    .execute(&st.pool)
+    .await?;
+    if res.rows_affected() == 0 {
+        return Err(AppError::BadRequest(
+            "Aucun blocage à lever sur cette réservation.".into(),
+        ));
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn refund_payment(
