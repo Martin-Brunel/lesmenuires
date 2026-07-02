@@ -416,7 +416,9 @@ function ManualBookingDialog({
   const [adults, setAdults] = useState(2);
   const [children, setChildren] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState<"cheque" | "virement">("cheque");
-  const [cautionMethod, setCautionMethod] = useState<"cheque" | "card">("cheque");
+  // Une réservation hors ligne n'a pas de carte enregistrée : la caution est
+  // toujours un chèque de caution (une caution « carte » serait impossible à débiter).
+  const cautionMethod = "cheque" as const;
   const [depositPaid, setDepositPaid] = useState(false);
   const [balancePaid, setBalancePaid] = useState(false);
   const [adminNotes, setAdminNotes] = useState("");
@@ -509,10 +511,7 @@ function ManualBookingDialog({
           </div>
           <div>
             <label className="text-xs text-muted-foreground">Caution</label>
-            <select className={field} value={cautionMethod} onChange={(e) => setCautionMethod(e.target.value as "cheque" | "card")}>
-              <option value="cheque">Chèque de caution</option>
-              <option value="card">Carte</option>
-            </select>
+            <div className={`${field} flex items-center text-muted-foreground`}>Chèque de caution</div>
           </div>
         </div>
         <div className="flex gap-4 text-sm">

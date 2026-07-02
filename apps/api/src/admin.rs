@@ -1037,8 +1037,12 @@ async fn create_manual_booking(
             "Moyen de règlement invalide (chèque ou virement).".into(),
         ));
     }
-    if !["cheque", "card"].contains(&input.caution_method.as_str()) {
-        return Err(AppError::BadRequest("Type de caution invalide.".into()));
+    // Offline bookings never have a saved card, so the caution can only be a cheque
+    // (a 'card' caution would be impossible to charge later — no card on file).
+    if input.caution_method != "cheque" {
+        return Err(AppError::BadRequest(
+            "La caution d'une réservation hors ligne est un chèque de caution.".into(),
+        ));
     }
     if input.customer.email.trim().is_empty() {
         return Err(AppError::BadRequest("E-mail client requis.".into()));
