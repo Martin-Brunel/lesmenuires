@@ -41,6 +41,8 @@ pub fn routes(state: AppState) -> Router {
         .route("/finances", get(finances))
         .route("/contacts", get(list_contacts))
         .route("/bookings/:reference/detail", get(booking_detail))
+        .route("/bookings/:reference/note", post(add_note))
+        .route("/bookings/:reference/email", post(send_booking_email))
         .route("/bookings/:reference/signature", get(get_signature))
         .route("/bookings/:reference/mark-paid", post(mark_paid))
         .route("/bookings/:reference/cancel", post(cancel_booking))
@@ -409,7 +411,18 @@ struct AdminWeekDto {
     position: i32,
     season_id: Option<Uuid>,
     tier_key: Option<String>,
+    /// Référence + client de la réservation qui tient la semaine (si réservée).
+    booking_reference: Option<String>,
+    booking_customer: Option<String>,
 }
+
+/// Sous-requêtes réf + client de la réservation confirmée qui tient la semaine.
+const WEEK_BOOKING_COLS: &str = ", \
+    (select b.reference from booking b where b.week_id = aw.id \
+        and b.status in ('confirmed','balance_paid') order by b.created_at desc limit 1) as booking_reference, \
+    (select nullif(trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')), '') \
+        from booking b left join customer c on c.id = b.customer_id where b.week_id = aw.id \
+        and b.status in ('confirmed','balance_paid') order by b.created_at desc limit 1) as booking_customer";
 
 async fn list_weeks(
     State(st): State<AppState>,
@@ -417,23 +430,23 @@ async fn list_weeks(
 ) -> Result<Json<Vec<AdminWeekDto>>, AppError> {
     let weeks = match q.season_id {
         Some(season_id) => {
-            sqlx::query_as::<_, AdminWeekDto>(
+            sqlx::query_as::<_, AdminWeekDto>(&format!(
                 "select aw.id, aw.start_date, aw.end_date, aw.range_label, aw.sub_label, \
-                        aw.price_cents, aw.status, aw.position, aw.season_id, aw.tier_key \
+                        aw.price_cents, aw.status, aw.position, aw.season_id, aw.tier_key{WEEK_BOOKING_COLS} \
                  from availability_week aw \
-                 where aw.season_id = $1 order by aw.start_date, aw.position",
-            )
+                 where aw.season_id = $1 order by aw.start_date, aw.position"
+            ))
             .bind(season_id)
             .fetch_all(&st.pool)
             .await?
         }
         None => {
-            sqlx::query_as::<_, AdminWeekDto>(
+            sqlx::query_as::<_, AdminWeekDto>(&format!(
                 "select aw.id, aw.start_date, aw.end_date, aw.range_label, aw.sub_label, \
-                        aw.price_cents, aw.status, aw.position, aw.season_id, aw.tier_key \
+                        aw.price_cents, aw.status, aw.position, aw.season_id, aw.tier_key{WEEK_BOOKING_COLS} \
                  from availability_week aw join property p on p.id = aw.property_id \
-                 where p.slug = $1 order by aw.start_date, aw.position",
-            )
+                 where p.slug = $1 order by aw.start_date, aw.position"
+            ))
             .bind(&q.slug)
             .fetch_all(&st.pool)
             .await?
@@ -750,6 +763,7 @@ struct BookingDetailRow {
     contract_signed_at: Option<DateTime<Utc>>,
     has_signature: bool,
     created_at: DateTime<Utc>,
+    cancelled_at: Option<DateTime<Utc>>,
     customer_name: Option<String>,
     customer_email: Option<String>,
     customer_phone: Option<String>,
@@ -783,12 +797,21 @@ struct EmailDto {
     opened_at: Option<DateTime<Utc>>,
 }
 
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct NoteDto {
+    body: String,
+    author: Option<String>,
+    created_at: DateTime<Utc>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BookingDetail {
     booking: BookingDetailRow,
     payments: Vec<PaymentDto>,
     emails: Vec<EmailDto>,
+    notes: Vec<NoteDto>,
 }
 
 async fn booking_detail(
@@ -809,7 +832,7 @@ async fn booking_detail(
                 b.payment_flag, b.balance_attempts, \
                 b.balance_last_error, b.caution_attempts, b.caution_last_error, \
                 b.contract_version, b.contract_accepted_at as contract_signed_at, \
-                (b.signature_png is not null) as has_signature, b.created_at, \
+                (b.signature_png is not null) as has_signature, b.created_at, b.cancelled_at, \
                 nullif(trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')), '') as customer_name, \
                 c.email as customer_email, c.phone as customer_phone, \
                 nullif(trim(coalesce(c.address_line,'') || ' ' || coalesce(c.postal_code,'') || ' ' || coalesce(c.city,'')), '') as customer_address, \
@@ -844,11 +867,96 @@ async fn booking_detail(
     .fetch_all(&st.pool)
     .await?;
 
+    let notes = sqlx::query_as::<_, NoteDto>(
+        "select n.body, n.author, n.created_at \
+         from booking_note n join booking b on b.id = n.booking_id \
+         where b.reference = $1 order by n.created_at desc",
+    )
+    .bind(&reference)
+    .fetch_all(&st.pool)
+    .await?;
+
     Ok(Json(BookingDetail {
         booking,
         payments,
         emails,
+        notes,
     }))
+}
+
+#[derive(Deserialize)]
+struct NoteInput {
+    body: String,
+}
+
+/// Ajoute une note interne au dossier (CRM).
+async fn add_note(
+    State(st): State<AppState>,
+    Extension(AdminId(admin_id)): Extension<AdminId>,
+    Path(reference): Path<String>,
+    Json(input): Json<NoteInput>,
+) -> Result<StatusCode, AppError> {
+    let body = input.body.trim();
+    if body.is_empty() {
+        return Err(AppError::BadRequest("Note vide.".into()));
+    }
+    let author: Option<String> =
+        sqlx::query_scalar("select display_name from admin_user where id = $1")
+            .bind(admin_id)
+            .fetch_optional(&st.pool)
+            .await?;
+    let n = sqlx::query(
+        "insert into booking_note (booking_id, body, author) \
+         select id, $2, $3 from booking where reference = $1",
+    )
+    .bind(&reference)
+    .bind(body)
+    .bind(author)
+    .execute(&st.pool)
+    .await?;
+    if n.rows_affected() == 0 {
+        return Err(AppError::NotFound("réservation".into()));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct SendEmailInput {
+    subject: String,
+    message: String,
+}
+
+/// Envoie un e-mail au client depuis le dossier (journalisé).
+async fn send_booking_email(
+    State(st): State<AppState>,
+    Path(reference): Path<String>,
+    Json(input): Json<SendEmailInput>,
+) -> Result<StatusCode, AppError> {
+    let subject = input.subject.trim().to_string();
+    let message = input.message.trim();
+    if subject.is_empty() || message.is_empty() {
+        return Err(AppError::BadRequest("Sujet et message requis.".into()));
+    }
+    let row = sqlx::query_as::<_, (Uuid, Option<String>)>(
+        "select b.id, c.email from booking b left join customer c on c.id = b.customer_id \
+         where b.reference = $1",
+    )
+    .bind(&reference)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("réservation".into()))?;
+    let Some(to) = row.1.filter(|e| !e.trim().is_empty()) else {
+        return Err(AppError::BadRequest("Ce client n'a pas d'e-mail.".into()));
+    };
+    // Escape HTML then keep line breaks — the body is admin-authored plain text.
+    let safe = message
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\n', "<br>");
+    let html = crate::email::template(&subject, &safe, "", "");
+    crate::email::spawn(st.pool.clone(), Some(row.0), "manual", to, subject, html);
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ---------------------------------------------------------------------------
@@ -1096,6 +1204,9 @@ struct MarkPaidInput {
     kind: String,
     /// 'cheque' | 'virement'
     method: String,
+    /// Date de réception (ISO 'YYYY-MM-DD'). Vide → aujourd'hui.
+    #[serde(default)]
+    date: Option<String>,
 }
 
 /// Point manuellement une échéance (chèque/virement reçu) d'une réservation.
@@ -1138,11 +1249,15 @@ async fn mark_paid(
     } else {
         "confirmed"
     };
+    // Optional received date (noon, local TZ) — falls back to now().
+    let paid_date = body.date.as_deref().filter(|s| !s.trim().is_empty());
     sqlx::query(&format!(
-        "update booking set {paid_col} = now(), status = $2, updated_at = now() where id = $1"
+        "update booking set {paid_col} = coalesce(($3::date + time '12:00')::timestamptz, now()), \
+            status = $2, updated_at = now() where id = $1"
     ))
     .bind(row.0)
     .bind(new_status)
+    .bind(paid_date)
     .execute(&mut *tx)
     .await?;
     insert_manual_payment(&mut tx, row.0, &body.kind, row.1, &body.method).await?;
