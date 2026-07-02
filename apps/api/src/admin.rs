@@ -816,10 +816,21 @@ struct NoteDto {
     created_at: DateTime<Utc>,
 }
 
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct LineDto {
+    kind: String,
+    label: String,
+    quantity: i32,
+    unit_price_cents: i64,
+    total_cents: i64,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BookingDetail {
     booking: BookingDetailRow,
+    lines: Vec<LineDto>,
     payments: Vec<PaymentDto>,
     emails: Vec<EmailDto>,
     notes: Vec<NoteDto>,
@@ -860,6 +871,15 @@ async fn booking_detail(
     .await?
     .ok_or_else(|| AppError::NotFound("réservation".into()))?;
 
+    let lines = sqlx::query_as::<_, LineDto>(
+        "select l.kind, l.label, l.quantity, l.unit_price_cents, l.total_cents \
+         from booking_line l join booking b on b.id = l.booking_id \
+         where b.reference = $1 order by l.position, l.label",
+    )
+    .bind(&reference)
+    .fetch_all(&st.pool)
+    .await?;
+
     let payments = sqlx::query_as::<_, PaymentDto>(
         "select p.type as kind, p.method, p.provider, p.amount_cents, p.status, p.created_at \
          from payment p join booking b on b.id = p.booking_id \
@@ -890,6 +910,7 @@ async fn booking_detail(
 
     Ok(Json(BookingDetail {
         booking,
+        lines,
         payments,
         emails,
         notes,

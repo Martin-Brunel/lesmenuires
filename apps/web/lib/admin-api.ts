@@ -205,8 +205,17 @@ export type NoteEntry = {
   createdAt: string;
 };
 
+export type BookingLine = {
+  kind: string;
+  label: string;
+  quantity: number;
+  unitPriceCents: number;
+  totalCents: number;
+};
+
 export type BookingDetail = {
   booking: BookingDetailInfo;
+  lines: BookingLine[];
   payments: PaymentEntry[];
   emails: EmailEntry[];
   notes: NoteEntry[];

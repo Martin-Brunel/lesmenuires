@@ -275,6 +275,16 @@ export default function ReservationDetailPage() {
           <CardContent className="space-y-1.5 text-sm">
             <Row label="Séjour" value={`${b.weekRange} · arrivée ${b.arrival || dd(b.startDate)}`} />
             <Row label="Voyageurs" value={`${b.adults} adulte(s)${b.children ? ` · ${b.children} enfant(s)` : ""}`} />
+            {data.lines
+              .filter((l) => l.kind === "product")
+              .map((l, i) => (
+                <Row
+                  key={`${l.label}-${i}`}
+                  label={l.quantity > 1 ? `${l.label} ×${l.quantity}` : l.label}
+                  value={fmtEur(l.totalCents)}
+                  muted
+                />
+              ))}
             <Row label="Total séjour" value={fmtEur(b.totalCents)} />
             <Row label={`Acompte (${b.depositPct} %)`} value={fmtEur(b.depositCents)} />
             <Row label="Solde" value={fmtEur(b.balanceCents)} />
