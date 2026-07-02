@@ -50,6 +50,7 @@ pub fn routes(state: AppState) -> Router {
             "/email-automations/:id",
             put(update_email_automation).delete(delete_email_automation),
         )
+        .route("/email-automations/preview", post(preview_email_automation))
         .route("/bookings/:reference/detail", get(booking_detail))
         .route("/bookings/:reference/clear-flag", post(clear_payment_flag))
         .route("/bookings/:reference/note", post(add_note))
@@ -1116,6 +1117,46 @@ async fn update_email_automation(
     .await?
     .ok_or_else(|| AppError::NotFound("transactionnel".into()))?;
     Ok(Json(row))
+}
+
+#[derive(Deserialize)]
+struct PreviewInput {
+    subject: String,
+    body: String,
+}
+
+/// Aperçu d'un transactionnel : même moteur de rendu que l'envoi réel
+/// (variables d'exemple, instructions d'accès réelles, gabarit L'Adret).
+async fn preview_email_automation(
+    State(st): State<AppState>,
+    Json(p): Json<PreviewInput>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let access: String =
+        sqlx::query_scalar("select arrival_instructions from property order by created_at limit 1")
+            .fetch_optional(&st.pool)
+            .await?
+            .unwrap_or_default();
+    let vars = crate::scheduler::booking_vars(&crate::scheduler::TemplateBooking {
+        first_name: Some("Camille"),
+        last_name: Some("Durand"),
+        reference: "ADR-3F7A2C",
+        week_range: "07 — 14 fév",
+        arrival: "samedi 7 février 2027",
+        end_date: chrono::NaiveDate::from_ymd_opt(2027, 2, 14).unwrap(),
+        total_cents: 169_000,
+        deposit_cents: 50_700,
+        balance_cents: 118_300,
+        arrival_instructions: &access,
+    });
+    let subject = crate::scheduler::render_template(&p.subject, &vars, false);
+    let body = crate::scheduler::render_email_body(&p.body, &vars);
+    let html = crate::email::template(
+        &subject,
+        &body,
+        "Mon espace",
+        &format!("{}/espace", crate::email::front_url()),
+    );
+    Ok(Json(serde_json::json!({ "subject": subject, "html": html })))
 }
 
 async fn delete_email_automation(

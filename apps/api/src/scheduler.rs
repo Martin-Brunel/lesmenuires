@@ -266,7 +266,7 @@ struct AutomationDue {
 
 /// Substitue les variables {{...}} d'un gabarit. `escape` = true pour un corps
 /// HTML (les valeurs viennent des données client), false pour un sujet texte.
-fn render_template(tpl: &str, vars: &[(&str, String)], escape: bool) -> String {
+pub(crate) fn render_template(tpl: &str, vars: &[(&str, String)], escape: bool) -> String {
     let mut out = tpl.to_string();
     for (key, value) in vars {
         let v = if escape {
@@ -280,6 +280,52 @@ fn render_template(tpl: &str, vars: &[(&str, String)], escape: bool) -> String {
         out = out.replace(&format!("{{{{{key}}}}}"), &v);
     }
     out
+}
+
+/// Corps d'un transactionnel : variables substituées (échappées), HTML admin
+/// autorisé mais sanitisé (defense-in-depth XSS, `style` conservé pour la mise
+/// en forme e-mail). Sans balise, les retours à la ligne deviennent des <br>.
+pub(crate) fn render_email_body(tpl: &str, vars: &[(&str, String)]) -> String {
+    let rendered = render_template(tpl, vars, true);
+    let html = if rendered.contains('<') {
+        rendered
+    } else {
+        rendered.replace('\n', "<br>")
+    };
+    ammonia::Builder::default()
+        .add_generic_attributes(&["style"])
+        .clean(&html)
+        .to_string()
+}
+
+/// Données d'un dossier pour les gabarits transactionnels.
+pub(crate) struct TemplateBooking<'a> {
+    pub first_name: Option<&'a str>,
+    pub last_name: Option<&'a str>,
+    pub reference: &'a str,
+    pub week_range: &'a str,
+    pub arrival: &'a str,
+    pub end_date: chrono::NaiveDate,
+    pub total_cents: i64,
+    pub deposit_cents: i64,
+    pub balance_cents: i64,
+    pub arrival_instructions: &'a str,
+}
+
+/// Jeu de variables {{...}} d'un dossier pour les gabarits transactionnels.
+pub(crate) fn booking_vars(b: &TemplateBooking) -> Vec<(&'static str, String)> {
+    vec![
+        ("prenom", b.first_name.unwrap_or_default().to_string()),
+        ("nom", b.last_name.unwrap_or_default().to_string()),
+        ("reference", b.reference.to_string()),
+        ("semaine", b.week_range.to_string()),
+        ("arrivee", b.arrival.to_string()),
+        ("depart", b.end_date.format("%d/%m/%Y").to_string()),
+        ("total", eur(b.total_cents)),
+        ("acompte", eur(b.deposit_cents)),
+        ("solde", eur(b.balance_cents)),
+        ("acces", b.arrival_instructions.trim().to_string()),
+    ]
 }
 
 /// Moteur des transactionnels éditables : pour chaque automatisation active,
@@ -335,21 +381,20 @@ async fn run_email_automations(pool: &PgPool, r: &mut TickReport) -> Result<(), 
         let Some(to) = d.email.clone().filter(|e| !e.is_empty()) else {
             continue;
         };
-        let access = d.arrival_instructions.trim().to_string();
-        let vars: Vec<(&str, String)> = vec![
-            ("prenom", d.first_name.clone().unwrap_or_default()),
-            ("nom", d.last_name.clone().unwrap_or_default()),
-            ("reference", d.reference.clone()),
-            ("semaine", d.week_range.clone()),
-            ("arrivee", d.arrival.clone()),
-            ("depart", d.end_date.format("%d/%m/%Y").to_string()),
-            ("total", eur(d.total_cents)),
-            ("acompte", eur(d.deposit_cents)),
-            ("solde", eur(d.balance_cents)),
-            ("acces", access),
-        ];
+        let vars = booking_vars(&TemplateBooking {
+            first_name: d.first_name.as_deref(),
+            last_name: d.last_name.as_deref(),
+            reference: &d.reference,
+            week_range: &d.week_range,
+            arrival: &d.arrival,
+            end_date: d.end_date,
+            total_cents: d.total_cents,
+            deposit_cents: d.deposit_cents,
+            balance_cents: d.balance_cents,
+            arrival_instructions: &d.arrival_instructions,
+        });
         let subject = render_template(&d.subject, &vars, false);
-        let body = render_template(&d.body, &vars, true).replace('\n', "<br>");
+        let body = render_email_body(&d.body, &vars);
         let html = email::template(
             &subject,
             &body,

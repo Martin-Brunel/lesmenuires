@@ -9,6 +9,7 @@ export function Modal({
   description,
   children,
   footer,
+  wide,
 }: {
   open: boolean;
   onClose: () => void;
@@ -16,6 +17,8 @@ export function Modal({
   description?: string;
   children?: ReactNode;
   footer?: ReactNode;
+  /** Largeur augmentée (aperçus, contenus riches). */
+  wide?: boolean;
 }) {
   if (!open) return null;
   return (
@@ -24,7 +27,10 @@ export function Modal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-lg border bg-background p-5 shadow-xl"
+        className={
+          "w-full rounded-lg border bg-background p-5 shadow-xl " +
+          (wide ? "max-w-3xl" : "max-w-md")
+        }
         onClick={(e) => e.stopPropagation()}
       >
         {title && <h2 className="text-base font-semibold">{title}</h2>}

@@ -455,6 +455,11 @@ export const adminApi = {
     }),
   deleteEmailAutomation: (id: string) =>
     req<void>(`/email-automations/${id}`, { method: "DELETE" }),
+  previewEmailAutomation: (subject: string, body: string) =>
+    req<{ subject: string; html: string }>("/email-automations/preview", {
+      method: "POST",
+      body: JSON.stringify({ subject, body }),
+    }),
   getSignature: (reference: string) =>
     req<SignatureInfo>(`/bookings/${reference}/signature`),
   cancelBooking: (

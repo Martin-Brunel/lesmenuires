@@ -196,10 +196,29 @@ function AutomationDialog({
       : EMPTY,
   );
   const [busy, setBusy] = useState(false);
+  // null = édition ; sinon l'HTML complet renvoyé par l'API (gabarit + exemple).
+  const [preview, setPreview] = useState<{ subject: string; html: string } | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
   const set = (patch: Partial<EmailAutomationInput>) => setForm((f) => ({ ...f, ...patch }));
 
   // Avant l'événement n'a de sens que pour l'arrivée et le départ.
   const allowBefore = form.event === "arrival" || form.event === "departure";
+
+  const showPreview = async () => {
+    if (previewBusy) return;
+    if (!form.subject.trim() || !form.body.trim()) {
+      toast.error("Renseignez le sujet et le message pour prévisualiser.");
+      return;
+    }
+    setPreviewBusy(true);
+    try {
+      setPreview(await adminApi.previewEmailAutomation(form.subject, form.body));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      setPreviewBusy(false);
+    }
+  };
 
   const save = async () => {
     if (busy) return;
@@ -219,6 +238,35 @@ function AutomationDialog({
     }
   };
 
+  if (preview) {
+    return (
+      <Modal
+        open
+        wide
+        onClose={() => setPreview(null)}
+        title={`Aperçu — ${preview.subject}`}
+        description="Rendu réel (gabarit L'Adret) avec des données d'exemple."
+        footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setPreview(null)}>
+              Retour à l'édition
+            </Button>
+            <Button size="sm" onClick={save} disabled={busy}>
+              {busy ? "…" : "Enregistrer"}
+            </Button>
+          </>
+        }
+      >
+        <iframe
+          srcDoc={preview.html}
+          sandbox=""
+          title="Aperçu de l'e-mail"
+          className="h-[60vh] w-full rounded-md border bg-white"
+        />
+      </Modal>
+    );
+  }
+
   return (
     <Modal
       open
@@ -228,6 +276,9 @@ function AutomationDialog({
         <>
           <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>
             Annuler
+          </Button>
+          <Button variant="secondary" size="sm" onClick={showPreview} disabled={previewBusy}>
+            {previewBusy ? "…" : "Aperçu"}
           </Button>
           <Button size="sm" onClick={save} disabled={busy}>
             {busy ? "…" : "Enregistrer"}
@@ -317,6 +368,9 @@ function AutomationDialog({
           />
           <p className="text-xs text-muted-foreground">
             Variables disponibles : <code className="text-[11px]">{VARIABLES}</code>
+            <br />
+            HTML autorisé (sanitisé à l&apos;envoi). Sans balise, les retours à la ligne sont
+            conservés.
           </p>
         </div>
         <label className="flex items-center gap-2 text-sm">
