@@ -25,8 +25,16 @@ const slugify = (s: string) =>
 
 export default function SaisonsPage() {
   const [seasons, setSeasons] = useState<AdminSeason[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
 
-  const load = () => adminApi.listSeasons(SLUG).then(setSeasons).catch(() => setSeasons([]));
+  const load = () =>
+    adminApi
+      .listSeasons(SLUG)
+      .then((s) => {
+        setSeasons(s);
+        setLoadError(false);
+      })
+      .catch(() => setLoadError(true));
   useEffect(() => {
     load();
   }, []);
@@ -41,8 +49,19 @@ export default function SaisonsPage() {
         </p>
       </div>
 
-      {seasons === null && <p className="text-sm text-muted-foreground">Chargement…</p>}
-      {seasons?.map((s) => (
+      {loadError && (
+        <p className="text-sm text-destructive">
+          Impossible de charger les saisons. Rechargez la page.
+        </p>
+      )}
+      {!loadError && seasons === null && (
+        <p className="text-sm text-muted-foreground">Chargement…</p>
+      )}
+      {!loadError && seasons?.length === 0 && (
+        <p className="text-sm text-muted-foreground">Aucune saison. Créez-en une ci-dessous.</p>
+      )}
+      {!loadError &&
+        seasons?.map((s) => (
         <SeasonCard key={s.id} season={s} onChanged={load} />
       ))}
 

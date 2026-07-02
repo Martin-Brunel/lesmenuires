@@ -21,8 +21,16 @@ import {
 
 export default function PrestationsPage() {
   const [products, setProducts] = useState<AdminProduct[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
 
-  const reload = () => adminApi.listProducts().then(setProducts).catch(() => setProducts([]));
+  const reload = () =>
+    adminApi
+      .listProducts()
+      .then((p) => {
+        setProducts(p);
+        setLoadError(false);
+      })
+      .catch(() => setLoadError(true));
   useEffect(() => {
     reload();
   }, []);
@@ -49,16 +57,31 @@ export default function PrestationsPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {products === null && (
+            {loadError && (
+              <TableRow>
+                <TableCell colSpan={6} className="text-destructive py-6 text-center">
+                  Impossible de charger les prestations. Rechargez la page.
+                </TableCell>
+              </TableRow>
+            )}
+            {!loadError && products === null && (
               <TableRow>
                 <TableCell colSpan={6} className="text-muted-foreground py-6 text-center">
                   Chargement…
                 </TableCell>
               </TableRow>
             )}
-            {products?.map((p) => (
-              <ProductRow key={p.id} product={p} onChanged={reload} />
-            ))}
+            {!loadError && products?.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6} className="text-muted-foreground py-6 text-center">
+                  Aucune prestation. Ajoutez-en une ci-dessous.
+                </TableCell>
+              </TableRow>
+            )}
+            {!loadError &&
+              products?.map((p) => (
+                <ProductRow key={p.id} product={p} onChanged={reload} />
+              ))}
           </TableBody>
         </Table>
       </Card>
