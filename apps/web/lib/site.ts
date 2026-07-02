@@ -40,4 +40,5 @@ export const legalIncomplete = site.editor.name.startsWith("[À compléter");
 
 /** Version of the contract/CGV text presented in the funnel. Bump when the
  *  contract wording changes so each booking records which version was signed. */
-export const CONTRACT_VERSION = "2026-07-02";
+// Bump à chaque évolution du texte canonique (lib/contract.ts).
+export const CONTRACT_VERSION = "2026-07-02.2";

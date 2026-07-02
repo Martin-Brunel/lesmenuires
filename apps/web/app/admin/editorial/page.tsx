@@ -12,12 +12,13 @@ import { cn } from "@/lib/utils";
 
 const SLUG = "ladret";
 
-type Tab = "presentation" | "sejour" | "paiement" | "photos";
+type Tab = "presentation" | "sejour" | "paiement" | "proprietaire" | "photos";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "presentation", label: "Présentation" },
   { key: "sejour", label: "Séjour & accès" },
   { key: "paiement", label: "Paiement & taxe" },
+  { key: "proprietaire", label: "Propriétaire" },
   { key: "photos", label: "Photos" },
 ];
 
@@ -243,6 +244,48 @@ export default function EditorialPage() {
                 </>
               )}
 
+              {tab === "proprietaire" && (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Identité du bailleur — affichée dans les contrats de location et sur les
+                    factures / quittances.
+                  </p>
+                  <Field label="Nom / raison sociale" hint="Ex. : Martin Brunel ou SCI Les Cimes">
+                    <Input
+                      value={p.ownerName}
+                      onChange={(e) => set("ownerName", e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Adresse" hint="Adresse complète du bailleur (contrat).">
+                    <Input
+                      value={p.ownerAddress}
+                      onChange={(e) => set("ownerAddress", e.target.value)}
+                    />
+                  </Field>
+                  <div className="grid grid-cols-2 gap-4">
+                    <Field label="Téléphone">
+                      <Input
+                        value={p.ownerPhone}
+                        onChange={(e) => set("ownerPhone", e.target.value)}
+                      />
+                    </Field>
+                    <Field label="E-mail">
+                      <Input
+                        type="email"
+                        value={p.ownerEmail}
+                        onChange={(e) => set("ownerEmail", e.target.value)}
+                      />
+                    </Field>
+                    <Field label="SIRET (facultatif)" hint="Affiché sur les factures si renseigné.">
+                      <Input
+                        value={p.ownerSiret}
+                        onChange={(e) => set("ownerSiret", e.target.value)}
+                      />
+                    </Field>
+                  </div>
+                </>
+              )}
+
               <div className="flex items-center gap-3 pt-2 border-t">
                 <Button type="submit" disabled={saving}>
                   {saving ? "Enregistrement…" : "Enregistrer"}
@@ -250,7 +293,7 @@ export default function EditorialPage() {
                 {saved && <span className="text-sm text-emerald-600">Enregistré ✓</span>}
                 {error && <span className="text-sm text-destructive">{error}</span>}
                 <span className="text-xs text-muted-foreground ml-auto">
-                  Enregistre les trois onglets d&apos;un coup.
+                  Enregistre tous les onglets d&apos;un coup.
                 </span>
               </div>
             </CardContent>

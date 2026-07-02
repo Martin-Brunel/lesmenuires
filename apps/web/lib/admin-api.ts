@@ -38,6 +38,11 @@ export type AdminProperty = {
   touristTaxIncluded: boolean;
   arrivalInstructions: string;
   houseRules: string;
+  ownerName: string;
+  ownerAddress: string;
+  ownerPhone: string;
+  ownerEmail: string;
+  ownerSiret: string;
 };
 
 export type AdminWeek = {
@@ -206,6 +211,9 @@ export type BookingDetailInfo = {
   customerAddress: string | null;
   arrivalInstructions: string;
   houseRules: string;
+  ownerName: string;
+  ownerAddress: string;
+  ownerSiret: string;
 };
 
 export type PaymentEntry = {

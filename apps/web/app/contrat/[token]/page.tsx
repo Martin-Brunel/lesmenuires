@@ -25,6 +25,8 @@ type ContractView = {
   locationLabel: string;
   capacity: number;
   cautionCents: number;
+  ownerName: string;
+  ownerAddress: string;
   signed: boolean;
   signedAt: string | null;
   contractText: string | null;
@@ -38,6 +40,8 @@ const buildText = (d: ContractView) =>
     locationLabel: d.locationLabel,
     cautionCents: d.cautionCents,
     capacity: d.capacity,
+    ownerName: d.ownerName,
+    ownerAddress: d.ownerAddress,
   });
 
 const S: Record<string, CSSProperties> = {

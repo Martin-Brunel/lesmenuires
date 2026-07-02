@@ -372,6 +372,11 @@ struct AdminPropertyDto {
     tourist_tax_included: bool,
     arrival_instructions: String,
     house_rules: String,
+    owner_name: String,
+    owner_address: String,
+    owner_phone: String,
+    owner_email: String,
+    owner_siret: String,
 }
 
 async fn get_property(
@@ -381,7 +386,8 @@ async fn get_property(
     let dto = sqlx::query_as::<_, AdminPropertyDto>(
         "select slug, name, location_label, description, surface_label, capacity, bedrooms, \
                 specs_label, highlight_label, hero_seed, deposit_pct, caution_cents, \
-                tourist_tax_cents, tourist_tax_included, arrival_instructions, house_rules \
+                tourist_tax_cents, tourist_tax_included, arrival_instructions, house_rules, \
+                owner_name, owner_address, owner_phone, owner_email, owner_siret \
          from property where slug = $1",
     )
     .bind(&slug)
@@ -413,6 +419,16 @@ struct UpdateProperty {
     arrival_instructions: String,
     #[serde(default)]
     house_rules: String,
+    #[serde(default)]
+    owner_name: String,
+    #[serde(default)]
+    owner_address: String,
+    #[serde(default)]
+    owner_phone: String,
+    #[serde(default)]
+    owner_email: String,
+    #[serde(default)]
+    owner_siret: String,
 }
 
 async fn update_property(
@@ -434,11 +450,13 @@ async fn update_property(
         "update property set name=$2, location_label=$3, description=$4, surface_label=$5, \
                 capacity=$6, bedrooms=$7, specs_label=$8, highlight_label=$9, hero_seed=$10, \
                 deposit_pct=$11, caution_cents=$12, arrival_instructions=$13, house_rules=$14, \
-                tourist_tax_cents=$15, tourist_tax_included=$16, updated_at=now() \
+                tourist_tax_cents=$15, tourist_tax_included=$16, owner_name=$17, owner_address=$18, \
+                owner_phone=$19, owner_email=$20, owner_siret=$21, updated_at=now() \
          where slug=$1 \
          returning slug, name, location_label, description, surface_label, capacity, bedrooms, \
                    specs_label, highlight_label, hero_seed, deposit_pct, caution_cents, \
-                   tourist_tax_cents, tourist_tax_included, arrival_instructions, house_rules",
+                   tourist_tax_cents, tourist_tax_included, arrival_instructions, house_rules, \
+                   owner_name, owner_address, owner_phone, owner_email, owner_siret",
     )
     .bind(&slug)
     .bind(&p.name)
@@ -456,6 +474,11 @@ async fn update_property(
     .bind(&p.house_rules)
     .bind(p.tourist_tax_cents)
     .bind(p.tourist_tax_included)
+    .bind(p.owner_name.trim())
+    .bind(p.owner_address.trim())
+    .bind(p.owner_phone.trim())
+    .bind(p.owner_email.trim())
+    .bind(p.owner_siret.trim())
     .fetch_optional(&st.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("propriété".into()))?;
@@ -878,6 +901,9 @@ struct BookingDetailRow {
     customer_address: Option<String>,
     arrival_instructions: String,
     house_rules: String,
+    owner_name: String,
+    owner_address: String,
+    owner_siret: String,
 }
 
 #[derive(Serialize, FromRow)]
@@ -956,7 +982,8 @@ async fn booking_detail(
                 nullif(trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')), '') as customer_name, \
                 c.email as customer_email, c.phone as customer_phone, \
                 nullif(trim(coalesce(c.address_line,'') || ' ' || coalesce(c.postal_code,'') || ' ' || coalesce(c.city,'')), '') as customer_address, \
-                p.arrival_instructions, p.house_rules \
+                p.arrival_instructions, p.house_rules, \
+                p.owner_name, p.owner_address, p.owner_siret \
          from booking b \
          join availability_week aw on aw.id = b.week_id \
          join property p on p.id = b.property_id \

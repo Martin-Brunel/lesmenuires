@@ -27,6 +27,8 @@ export type ApiProperty = {
   cautionCents: number;
   touristTaxCents: number;
   touristTaxIncluded: boolean;
+  ownerName: string;
+  ownerAddress: string;
 };
 
 export type ApiWeek = {

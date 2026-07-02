@@ -213,6 +213,8 @@ struct PropertyDto {
     caution_cents: i64,
     tourist_tax_cents: i64,
     tourist_tax_included: bool,
+    owner_name: String,
+    owner_address: String,
 }
 
 #[derive(FromRow, Serialize)]
@@ -280,7 +282,7 @@ async fn booking_context(
     let property = sqlx::query_as::<_, PropertyDto>(
         "select slug, name, location_label, description, surface_label, capacity, bedrooms, \
                 specs_label, highlight_label, hero_seed, deposit_pct, caution_cents, \
-                tourist_tax_cents, tourist_tax_included \
+                tourist_tax_cents, tourist_tax_included, owner_name, owner_address \
          from property where slug = $1",
     )
     .bind(&slug)
@@ -668,6 +670,8 @@ struct ContractLinkView {
     location_label: String,
     capacity: i32,
     caution_cents: i64,
+    owner_name: String,
+    owner_address: String,
     signed: bool,
     signed_at: Option<DateTime<Utc>>,
     contract_text: Option<String>,
@@ -682,6 +686,7 @@ async fn contract_link_view(
         "select b.reference, aw.range_label as week_range, aw.arrival_label as arrival, \
                 nullif(trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')), '') as customer_name, \
                 p.name as property_name, p.location_label, p.capacity, b.caution_cents, \
+                p.owner_name, p.owner_address, \
                 (b.contract_accepted_at is not null) as signed, \
                 b.contract_accepted_at as signed_at, b.contract_text, \
                 case when b.contract_accepted_at is not null then b.signature_png end as signature_png \

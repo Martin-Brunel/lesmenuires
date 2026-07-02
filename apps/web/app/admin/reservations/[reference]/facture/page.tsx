@@ -59,6 +59,13 @@ export default function FacturePage() {
               L&apos;Adret
             </div>
             <div className="text-neutral-500">Location de meublé de tourisme</div>
+            {b.ownerName && (
+              <div className="mt-2 text-neutral-500">
+                {b.ownerName}
+                {b.ownerAddress ? <><br />{b.ownerAddress}</> : null}
+                {b.ownerSiret ? <><br />SIRET {b.ownerSiret}</> : null}
+              </div>
+            )}
           </div>
           <div className="text-right">
             <div className="text-lg font-semibold">
