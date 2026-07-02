@@ -348,10 +348,17 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
                       <span style={css("font-family:'Marcellus';color:#1A1B1A")}>{se.priceCents === 0 ? "Offert" : eur(se.priceCents)}</span>
                     </div>
                   ))}
-                  <div style={css("display:flex;justify-content:space-between;margin:11px 0 12px;padding-top:12px;border-top:1px solid rgba(0,0,0,.08);font:500 15px 'Hanken Grotesk'")}>
+                  <div style={css("display:flex;justify-content:space-between;margin:11px 0 0;padding-top:12px;border-top:1px solid rgba(0,0,0,.08);font:500 15px 'Hanken Grotesk'")}>
                     <span>Total séjour</span>
                     <span style={css("font-family:'Marcellus';font-size:18px")}>{eur(total)}</span>
                   </div>
+                  {touristTax > 0 && (
+                    <div style={css("display:flex;justify-content:space-between;margin:3px 0 12px;font:400 11.5px 'Hanken Grotesk';color:#9A9C97")}>
+                      <span>{property.touristTaxIncluded ? "dont taxe de séjour" : "+ taxe de séjour (ajoutée au solde)"}</span>
+                      <span>{eur(touristTax)}</span>
+                    </div>
+                  )}
+                  {touristTax <= 0 && <div style={css("margin-bottom:12px")} />}
                   <div style={css(`margin-top:4px;padding:13px;border-radius:11px;background:${ACCENT}14`)}>
                     <div style={css("display:flex;justify-content:space-between;font:500 13.5px 'Hanken Grotesk';color:#1A1B1A")}>
                       <span>Acompte {pct}% — aujourd&apos;hui</span>
@@ -361,12 +368,6 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
                       <span>Solde — prélevé le {balanceDueLabel(week.startDate)}</span>
                       <span>{eur(balance)}</span>
                     </div>
-                    {touristTax > 0 && (
-                      <div style={css("display:flex;justify-content:space-between;margin-top:4px;font:400 11.5px 'Hanken Grotesk';color:#9A9C97")}>
-                        <span>dont taxe de séjour</span>
-                        <span>{eur(touristTax)}</span>
-                      </div>
-                    )}
                     <div style={css("display:flex;justify-content:space-between;margin-top:7px;font:400 12.5px 'Hanken Grotesk';color:#6B6E6B")}>
                       <span>Caution (garantie, non débitée)</span>
                       <span>{eur(caution)}</span>

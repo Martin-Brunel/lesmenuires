@@ -14,6 +14,7 @@ export type ApiProperty = {
   depositPct: number;
   cautionCents: number;
   touristTaxCents: number;
+  touristTaxIncluded: boolean;
 };
 
 export type ApiWeek = {

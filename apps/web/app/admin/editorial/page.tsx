@@ -167,6 +167,16 @@ export default function EditorialPage() {
                   }
                 />
               </Field>
+              <Field label="Taxe de séjour — total">
+                <label className="flex items-center gap-2 text-sm h-9">
+                  <input
+                    type="checkbox"
+                    checked={p.touristTaxIncluded}
+                    onChange={(e) => set("touristTaxIncluded", e.target.checked)}
+                  />
+                  Incluse dans le total du dossier
+                </label>
+              </Field>
             </div>
 
             <Field

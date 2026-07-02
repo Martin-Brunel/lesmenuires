@@ -17,6 +17,7 @@ export type AdminProperty = {
   depositPct: number;
   cautionCents: number;
   touristTaxCents: number;
+  touristTaxIncluded: boolean;
   arrivalInstructions: string;
   houseRules: string;
 };

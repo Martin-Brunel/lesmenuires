@@ -95,6 +95,7 @@ export function useBookingFlow(ctx: BookingContext) {
         property.depositPct,
         property.touristTaxCents,
         adults,
+        property.touristTaxIncluded,
       )
     : { extrasTotal: 0, total: 0, deposit: 0, balance: 0, touristTax: 0 };
   const selectedExtras = products.filter((x) => extras[x.key]);

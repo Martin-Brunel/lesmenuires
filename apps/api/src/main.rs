@@ -163,6 +163,7 @@ struct PropertyDto {
     deposit_pct: i32,
     caution_cents: i64,
     tourist_tax_cents: i64,
+    tourist_tax_included: bool,
 }
 
 #[derive(FromRow, Serialize)]
@@ -230,7 +231,7 @@ async fn booking_context(
     let property = sqlx::query_as::<_, PropertyDto>(
         "select slug, name, location_label, description, surface_label, capacity, bedrooms, \
                 specs_label, highlight_label, hero_seed, deposit_pct, caution_cents, \
-                tourist_tax_cents \
+                tourist_tax_cents, tourist_tax_included \
          from property where slug = $1",
     )
     .bind(&slug)
@@ -341,6 +342,7 @@ struct PropRow {
     deposit_pct: i32,
     caution_cents: i64,
     tourist_tax_cents: i64,
+    tourist_tax_included: bool,
 }
 
 #[derive(FromRow)]
@@ -389,7 +391,8 @@ async fn create_booking(
     )?;
 
     let prop = sqlx::query_as::<_, PropRow>(
-        "select id, deposit_pct, caution_cents, tourist_tax_cents from property where slug = $1",
+        "select id, deposit_pct, caution_cents, tourist_tax_cents, tourist_tax_included \
+         from property where slug = $1",
     )
     .bind(&req.property_slug)
     .fetch_optional(&st.pool)
@@ -439,6 +442,7 @@ async fn create_booking(
         prop.tourist_tax_cents,
         adults as i64,
         pricing::NIGHTS_PER_WEEK,
+        prop.tourist_tax_included,
     );
 
     let reference = format!(

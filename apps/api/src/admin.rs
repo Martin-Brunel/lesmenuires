@@ -286,6 +286,7 @@ struct AdminPropertyDto {
     deposit_pct: i32,
     caution_cents: i64,
     tourist_tax_cents: i64,
+    tourist_tax_included: bool,
     arrival_instructions: String,
     house_rules: String,
 }
@@ -297,7 +298,7 @@ async fn get_property(
     let dto = sqlx::query_as::<_, AdminPropertyDto>(
         "select slug, name, location_label, description, surface_label, capacity, bedrooms, \
                 specs_label, highlight_label, hero_seed, deposit_pct, caution_cents, \
-                tourist_tax_cents, arrival_instructions, house_rules \
+                tourist_tax_cents, tourist_tax_included, arrival_instructions, house_rules \
          from property where slug = $1",
     )
     .bind(&slug)
@@ -324,6 +325,8 @@ struct UpdateProperty {
     #[serde(default)]
     tourist_tax_cents: i64,
     #[serde(default)]
+    tourist_tax_included: bool,
+    #[serde(default)]
     arrival_instructions: String,
     #[serde(default)]
     house_rules: String,
@@ -348,11 +351,11 @@ async fn update_property(
         "update property set name=$2, location_label=$3, description=$4, surface_label=$5, \
                 capacity=$6, bedrooms=$7, specs_label=$8, highlight_label=$9, hero_seed=$10, \
                 deposit_pct=$11, caution_cents=$12, arrival_instructions=$13, house_rules=$14, \
-                tourist_tax_cents=$15, updated_at=now() \
+                tourist_tax_cents=$15, tourist_tax_included=$16, updated_at=now() \
          where slug=$1 \
          returning slug, name, location_label, description, surface_label, capacity, bedrooms, \
                    specs_label, highlight_label, hero_seed, deposit_pct, caution_cents, \
-                   tourist_tax_cents, arrival_instructions, house_rules",
+                   tourist_tax_cents, tourist_tax_included, arrival_instructions, house_rules",
     )
     .bind(&slug)
     .bind(&p.name)
@@ -369,6 +372,7 @@ async fn update_property(
     .bind(&p.arrival_instructions)
     .bind(&p.house_rules)
     .bind(p.tourist_tax_cents)
+    .bind(p.tourist_tax_included)
     .fetch_optional(&st.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("propriété".into()))?;
@@ -901,6 +905,7 @@ struct ManualPropRow {
     deposit_pct: i32,
     caution_cents: i64,
     tourist_tax_cents: i64,
+    tourist_tax_included: bool,
 }
 
 #[derive(FromRow)]
@@ -939,7 +944,7 @@ async fn create_manual_booking(
         ));
     }
     let prop = sqlx::query_as::<_, ManualPropRow>(
-        "select p.id, p.deposit_pct, p.caution_cents, p.tourist_tax_cents \
+        "select p.id, p.deposit_pct, p.caution_cents, p.tourist_tax_cents, p.tourist_tax_included \
          from property p join availability_week aw on aw.property_id = p.id where aw.id = $1",
     )
     .bind(input.week_id)
@@ -953,6 +958,7 @@ async fn create_manual_booking(
         prop.tourist_tax_cents,
         input.adults.max(0) as i64,
         crate::pricing::NIGHTS_PER_WEEK,
+        prop.tourist_tax_included,
     );
     let reference = format!(
         "ADR-{}",

@@ -73,17 +73,19 @@ export function computeTotals(
   depositPct: number,
   touristTaxCentsPerAdultNight = 0,
   adults = 0,
+  taxIncluded = false,
 ) {
   const extrasTotal = products.reduce(
     (acc, p) => acc + (extras[p.key] ? p.priceCents : 0),
     0,
   );
-  const total = weekPriceCents + extrasTotal;
-  const deposit = Math.round((total * depositPct) / 100);
-  // Taxe de séjour : par adulte et par nuit (mineurs exonérés), pass-through
-  // ajouté en totalité au solde. Mirrors pricing::compute côté serveur.
+  const rental = weekPriceCents + extrasTotal;
+  // Taxe de séjour : par adulte et par nuit (mineurs exonérés). Mirrors
+  // pricing::compute côté serveur (incluse dans le total ou ajoutée au solde).
   const touristTax =
     Math.max(0, touristTaxCentsPerAdultNight) * Math.max(0, adults) * NIGHTS_PER_WEEK;
-  const balance = total - deposit + touristTax;
+  const total = taxIncluded ? rental + touristTax : rental;
+  const deposit = Math.round((total * depositPct) / 100);
+  const balance = taxIncluded ? total - deposit : rental - deposit + touristTax;
   return { extrasTotal, total, deposit, balance, touristTax };
 }
