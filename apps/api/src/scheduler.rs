@@ -116,11 +116,12 @@ async fn charge_due_balances(
     // cap the customer settles via /espace (they got the dunning e-mail) or the admin
     // steps in — we never set payment_flag here, which would block that recovery path.
     //
-    // Anti-double-charge: skip a booking that has a fresh (<30 min) pending balance
-    // payment — the customer is settling it in the browser (pay_balance). Once they
-    // finish, balance_paid_at is set; if they abandon, the stale pending is ignored
-    // after 30 min and auto-charge resumes. Prevents an off-session charge racing a
-    // concurrent on-session one (two intents → two debits).
+    // Anti-double-charge: skip a booking that has a recent (<2 h) pending balance
+    // payment — the customer is settling it in the browser (pay_balance), possibly
+    // through 3DS. Once they finish, balance_paid_at is set; if they abandon, the
+    // stale pending is ignored after 2 h and auto-charge resumes (negligible vs. the
+    // J-14→arrival window). Prevents an off-session charge racing a concurrent on-
+    // session one (two intents → two debits). The window is a heuristic, not a lock.
     let due = sqlx::query_as::<_, BalanceDue>(
         "select b.id, b.reference, b.balance_cents, b.provider_customer_id, \
                 b.provider_payment_method_id, b.balance_attempts as attempts, \
@@ -133,7 +134,7 @@ async fn charge_due_balances(
            and aw.start_date - 14 <= current_date and aw.start_date >= current_date \
            and not exists (select 1 from payment p where p.booking_id = b.id \
                and p.type = 'balance' and p.status = 'pending' \
-               and p.created_at > now() - interval '30 minutes')",
+               and p.created_at > now() - interval '2 hours')",
     )
     .fetch_all(pool)
     .await?;

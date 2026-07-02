@@ -770,6 +770,7 @@ async fn pay_deposit(
 #[derive(FromRow)]
 struct ConfirmRow {
     id: Uuid,
+    status: String,
     deposit_intent_id: Option<String>,
     customer_id: Option<Uuid>,
 }
@@ -871,12 +872,29 @@ async fn confirm_deposit(
     Path(reference): Path<String>,
 ) -> Result<Response, AppError> {
     let b = sqlx::query_as::<_, ConfirmRow>(
-        "select id, deposit_intent_id, customer_id from booking where reference = $1",
+        "select id, status, deposit_intent_id, customer_id from booking where reference = $1",
     )
     .bind(&reference)
     .fetch_optional(&st.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("réservation".into()))?;
+
+    // Idempotent / terminal states: only a still-pending cart is confirmed here.
+    // Re-confirming an already-confirmed booking would resend the welcome e-mail and
+    // regress its status; a cancelled one (e.g. the loser of a double-booking already
+    // handled by the webhook) must NOT be refunded again (duplicate refund line).
+    match b.status.as_str() {
+        "confirmed" | "balance_paid" => {
+            return Ok(Json(fetch_booking(&st.pool, &reference).await?).into_response())
+        }
+        "cancelled" => {
+            return Err(AppError::BadRequest(
+                "Cette semaine a été réservée par un autre client ; votre acompte a été remboursé."
+                    .into(),
+            ))
+        }
+        _ => {}
+    }
 
     let intent_id = b
         .deposit_intent_id
@@ -1622,13 +1640,23 @@ async fn reconcile_external_refund(
         return Ok(()); // unknown/caution intent — nothing to reconcile
     };
 
+    // Lock the booking first, inside the tx, so this serializes with a concurrent
+    // admin refund (perform_refund also locks it): we then read `recorded` AFTER that
+    // refund committed, so our own refund isn't miscounted as an external one (which
+    // would insert a phantom refund line + wrongly flag the booking).
+    let mut tx = st.pool.begin().await?;
+    sqlx::query("select id from booking where id = $1 for update")
+        .bind(booking_id)
+        .execute(&mut *tx)
+        .await?;
+
     let recorded: i64 = sqlx::query_scalar(
         "select coalesce(sum(amount_cents), 0)::bigint from payment \
          where booking_id = $1 and type = 'refund' and raw->>'source' = $2",
     )
     .bind(booking_id)
     .bind(&source)
-    .fetch_one(&st.pool)
+    .fetch_one(&mut *tx)
     .await?;
 
     let delta = refunded_total - recorded;
@@ -1638,7 +1666,6 @@ async fn reconcile_external_refund(
 
     // Genuinely external refund of `delta`: record it and flag for admin attention
     // (the scheduler then skips this booking).
-    let mut tx = st.pool.begin().await?;
     sqlx::query(
         "insert into payment (booking_id, type, provider, amount_cents, status, raw) \
          values ($1, 'refund', 'stripe', $2, 'refunded', \
