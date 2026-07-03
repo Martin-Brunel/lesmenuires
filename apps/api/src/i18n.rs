@@ -35,8 +35,7 @@ impl Lang {
 fn month_abbr(m: u32, lang: Lang) -> &'static str {
     match lang {
         Lang::Fr => [
-            "jan", "fév", "mars", "avr", "mai", "juin", "juil", "août", "sept", "oct", "nov",
-            "déc",
+            "jan", "fév", "mars", "avr", "mai", "juin", "juil", "août", "sept", "oct", "nov", "déc",
         ][(m - 1) as usize],
         Lang::En => [
             "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -113,7 +112,12 @@ pub fn range_label(start: NaiveDate, end: NaiveDate, lang: Lang) -> String {
 /// « samedi 19 décembre 2026 » / "Saturday 19 December 2026".
 pub fn arrival_full(d: NaiveDate, lang: Lang) -> String {
     match lang {
-        Lang::Fr => format!("samedi {} {} {}", d.day(), month_full(d.month(), lang), d.year()),
+        Lang::Fr => format!(
+            "samedi {} {} {}",
+            d.day(),
+            month_full(d.month(), lang),
+            d.year()
+        ),
         Lang::En => format!(
             "Saturday {} {} {}",
             d.day(),
@@ -126,8 +130,18 @@ pub fn arrival_full(d: NaiveDate, lang: Lang) -> String {
 /// « sam. 19 déc 2026 » / "Sat 19 Dec 2026".
 pub fn short_label(d: NaiveDate, lang: Lang) -> String {
     match lang {
-        Lang::Fr => format!("sam. {} {} {}", d.day(), month_abbr(d.month(), lang), d.year()),
-        Lang::En => format!("Sat {} {} {}", d.day(), month_abbr(d.month(), lang), d.year()),
+        Lang::Fr => format!(
+            "sam. {} {} {}",
+            d.day(),
+            month_abbr(d.month(), lang),
+            d.year()
+        ),
+        Lang::En => format!(
+            "Sat {} {} {}",
+            d.day(),
+            month_abbr(d.month(), lang),
+            d.year()
+        ),
     }
 }
 
@@ -179,9 +193,8 @@ pub fn tier_label(
     rate_tiers
         .as_array()
         .and_then(|arr| {
-            arr.iter().find(|t| {
-                t.get("key").and_then(|k| k.as_str()) == Some(key)
-            })
+            arr.iter()
+                .find(|t| t.get("key").and_then(|k| k.as_str()) == Some(key))
         })
         .and_then(|t| t.get("labelEn"))
         .and_then(|v| v.as_str())
@@ -201,18 +214,39 @@ mod tests {
 
     #[test]
     fn range_labels_both_langs() {
-        assert_eq!(range_label(d("2026-12-26"), d("2027-01-02"), Lang::Fr), "26 déc 2026 — 02 jan 2027");
-        assert_eq!(range_label(d("2026-12-26"), d("2027-01-02"), Lang::En), "26 Dec 2026 — 02 Jan 2027");
-        assert_eq!(range_label(d("2027-02-06"), d("2027-02-13"), Lang::En), "06 — 13 Feb 2027");
-        assert_eq!(range_label(d("2027-01-30"), d("2027-02-06"), Lang::En), "30 Jan — 06 Feb 2027");
+        assert_eq!(
+            range_label(d("2026-12-26"), d("2027-01-02"), Lang::Fr),
+            "26 déc 2026 — 02 jan 2027"
+        );
+        assert_eq!(
+            range_label(d("2026-12-26"), d("2027-01-02"), Lang::En),
+            "26 Dec 2026 — 02 Jan 2027"
+        );
+        assert_eq!(
+            range_label(d("2027-02-06"), d("2027-02-13"), Lang::En),
+            "06 — 13 Feb 2027"
+        );
+        assert_eq!(
+            range_label(d("2027-01-30"), d("2027-02-06"), Lang::En),
+            "30 Jan — 06 Feb 2027"
+        );
     }
 
     #[test]
     fn arrival_and_balance_en() {
-        assert_eq!(arrival_full(d("2026-12-19"), Lang::En), "Saturday 19 December 2026");
+        assert_eq!(
+            arrival_full(d("2026-12-19"), Lang::En),
+            "Saturday 19 December 2026"
+        );
         assert_eq!(short_label(d("2026-12-19"), Lang::En), "Sat 19 Dec 2026");
-        assert_eq!(balance_due_label(d("2026-12-19"), Lang::En), "5 December 2026");
-        assert_eq!(balance_due_label(d("2026-12-19"), Lang::Fr), "5 décembre 2026");
+        assert_eq!(
+            balance_due_label(d("2026-12-19"), Lang::En),
+            "5 December 2026"
+        );
+        assert_eq!(
+            balance_due_label(d("2026-12-19"), Lang::Fr),
+            "5 décembre 2026"
+        );
     }
 
     #[test]
@@ -231,9 +265,18 @@ mod tests {
             { "key": "vac", "label": "Vacances scolaires", "labelEn": "School holidays" },
             { "key": "std", "label": "Semaine standard" }
         ]);
-        assert_eq!(tier_label(&tiers, Some("vac"), Lang::En, "Vacances scolaires"), "School holidays");
-        assert_eq!(tier_label(&tiers, Some("std"), Lang::En, "Semaine standard"), "Semaine standard");
+        assert_eq!(
+            tier_label(&tiers, Some("vac"), Lang::En, "Vacances scolaires"),
+            "School holidays"
+        );
+        assert_eq!(
+            tier_label(&tiers, Some("std"), Lang::En, "Semaine standard"),
+            "Semaine standard"
+        );
         assert_eq!(tier_label(&tiers, None, Lang::En, "fallback"), "fallback");
-        assert_eq!(tier_label(&tiers, Some("vac"), Lang::Fr, "Vacances scolaires"), "Vacances scolaires");
+        assert_eq!(
+            tier_label(&tiers, Some("vac"), Lang::Fr, "Vacances scolaires"),
+            "Vacances scolaires"
+        );
     }
 }

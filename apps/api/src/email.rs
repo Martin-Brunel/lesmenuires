@@ -174,7 +174,15 @@ pub fn template(
     cta_label: &str,
     cta_url: &str,
 ) -> String {
-    template_lang(brand_name, brand_location, heading, body_html, cta_label, cta_url, Lang::Fr)
+    template_lang(
+        brand_name,
+        brand_location,
+        heading,
+        body_html,
+        cta_label,
+        cta_url,
+        Lang::Fr,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

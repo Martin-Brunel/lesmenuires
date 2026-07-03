@@ -218,7 +218,10 @@ async fn charge_due_balances(
                 {
                     let lang = Lang::from_param(d.locale.as_deref());
                     let vars = vec![
-                        ("bonjour", email::bonjour_lang(d.first_name.as_deref(), lang)),
+                        (
+                            "bonjour",
+                            email::bonjour_lang(d.first_name.as_deref(), lang),
+                        ),
                         ("prenom", d.first_name.clone().unwrap_or_default()),
                         ("montant", crate::i18n::eur(d.balance_cents, lang)),
                         ("reference", d.reference.clone()),
@@ -472,7 +475,10 @@ async fn prenotify_balances(pool: &PgPool, r: &mut TickReport) -> Result<(), sql
                 crate::i18n::balance_due_label(d.start_date, lang)
             };
             let vars = vec![
-                ("bonjour", email::bonjour_lang(d.first_name.as_deref(), lang)),
+                (
+                    "bonjour",
+                    email::bonjour_lang(d.first_name.as_deref(), lang),
+                ),
                 ("prenom", d.first_name.clone().unwrap_or_default()),
                 ("montant", crate::i18n::eur(d.balance_cents, lang)),
                 ("date", date),
@@ -611,7 +617,11 @@ async fn remind_abandoned_carts(pool: &PgPool, r: &mut TickReport) -> Result<(),
             &vars,
             // Lien de reprise : le funnel restaure la sélection et les
             // coordonnées du panier (voir resume_booking dans main.rs).
-            &format!("{}/reserver?ref={}", email::front_url_lang(lang), cart.reference),
+            &format!(
+                "{}/reserver?ref={}",
+                email::front_url_lang(lang),
+                cart.reference
+            ),
             lang,
         )
         .await?;
@@ -723,7 +733,10 @@ async fn request_reviews(pool: &PgPool, r: &mut TickReport) -> Result<(), sqlx::
             crate::i18n::range_label(d.start_date, d.end_date, lang)
         };
         let vars = vec![
-            ("bonjour", email::bonjour_lang(d.first_name.as_deref(), lang)),
+            (
+                "bonjour",
+                email::bonjour_lang(d.first_name.as_deref(), lang),
+            ),
             ("prenom", d.first_name.clone().unwrap_or_default()),
             ("semaine", semaine),
         ];

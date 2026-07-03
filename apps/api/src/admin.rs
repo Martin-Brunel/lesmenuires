@@ -867,7 +867,10 @@ const SELECT: &str = "id, key, label, description, price_cents, active, position
 fn product_translations(p: &ProductInput) -> serde_json::Value {
     let mut en = serde_json::Map::new();
     if !p.label_en.trim().is_empty() {
-        en.insert("label".into(), serde_json::Value::String(p.label_en.trim().into()));
+        en.insert(
+            "label".into(),
+            serde_json::Value::String(p.label_en.trim().into()),
+        );
     }
     if !p.description_en.trim().is_empty() {
         en.insert(
@@ -914,14 +917,12 @@ async fn update_product(
     Path(id): Path<Uuid>,
     Json(p): Json<ProductInput>,
 ) -> Result<Json<AdminProductDto>, AppError> {
-    let dto = sqlx::query_as::<_, AdminProductDto>(
-        &format!(
-            "update product set key=$2, label=$3, description=$4, price_cents=$5, active=$6, \
+    let dto = sqlx::query_as::<_, AdminProductDto>(&format!(
+        "update product set key=$2, label=$3, description=$4, price_cents=$5, active=$6, \
                 position=$7, translations=$8 \
          where id=$1 \
          returning {SELECT}"
-        ),
-    )
+    ))
     .bind(id)
     .bind(p.key.trim())
     .bind(&p.label)
@@ -1539,12 +1540,11 @@ async fn list_email_overrides(
 ) -> Result<Json<Vec<SystemEmailDto>>, AppError> {
     // Chaque langue a ses gabarits par défaut et ses overrides (kind, locale).
     let lang = crate::i18n::Lang::from_param(q.locale.as_deref());
-    let overrides: Vec<(String, String, String)> = sqlx::query_as(
-        "select kind, subject, body from email_template_override where locale = $1",
-    )
-    .bind(lang.as_str())
-    .fetch_all(&st.pool)
-    .await?;
+    let overrides: Vec<(String, String, String)> =
+        sqlx::query_as("select kind, subject, body from email_template_override where locale = $1")
+            .bind(lang.as_str())
+            .fetch_all(&st.pool)
+            .await?;
     let en = lang == crate::i18n::Lang::En;
     let list = crate::email::SYSTEM_TEMPLATES
         .iter()
@@ -2160,7 +2160,10 @@ async fn send_contract_link(
     };
     let url = format!("{}/contrat/{token}", crate::email::front_url_lang(lang));
     let vars = vec![
-        ("bonjour", crate::email::bonjour_lang(row.first_name.as_deref(), lang)),
+        (
+            "bonjour",
+            crate::email::bonjour_lang(row.first_name.as_deref(), lang),
+        ),
         ("prenom", row.first_name.clone().unwrap_or_default()),
         ("semaine", semaine),
     ];
@@ -2323,7 +2326,10 @@ async fn request_review(
     };
     let url = format!("{}/avis/{token}", crate::email::front_url_lang(lang));
     let vars = vec![
-        ("bonjour", crate::email::bonjour_lang(row.first_name.as_deref(), lang)),
+        (
+            "bonjour",
+            crate::email::bonjour_lang(row.first_name.as_deref(), lang),
+        ),
         ("prenom", row.first_name.clone().unwrap_or_default()),
         ("semaine", semaine),
     ];
@@ -3435,16 +3441,25 @@ async fn cancel_booking(
 
     // Confirm the cancellation to the customer, stating any refund made.
     let refunded: i64 = body.refund_deposit_cents + body.refund_balance_cents;
-    if let Some((email, first_name, week_range, locale, start_date, end_date)) =
-        sqlx::query_as::<_, (Option<String>, Option<String>, String, Option<String>, chrono::NaiveDate, chrono::NaiveDate)>(
-            "select c.email, c.first_name, aw.range_label, c.locale, aw.start_date, aw.end_date \
+    if let Some((email, first_name, week_range, locale, start_date, end_date)) = sqlx::query_as::<
+        _,
+        (
+            Option<String>,
+            Option<String>,
+            String,
+            Option<String>,
+            chrono::NaiveDate,
+            chrono::NaiveDate,
+        ),
+    >(
+        "select c.email, c.first_name, aw.range_label, c.locale, aw.start_date, aw.end_date \
          from booking b join availability_week aw on aw.id = b.week_id \
          left join customer c on c.id = b.customer_id where b.id = $1",
-        )
-        .bind(b.id)
-        .fetch_optional(&st.pool)
-        .await?
-        .filter(|(e, ..)| e.as_deref().map(|s| !s.is_empty()).unwrap_or(false))
+    )
+    .bind(b.id)
+    .fetch_optional(&st.pool)
+    .await?
+    .filter(|(e, ..)| e.as_deref().map(|s| !s.is_empty()).unwrap_or(false))
     {
         let lang = crate::i18n::Lang::from_param(locale.as_deref());
         let hello = crate::email::bonjour_lang(first_name.as_deref(), lang);

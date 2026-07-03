@@ -360,10 +360,18 @@ async fn booking_context(
             i18n::tr_field(&tr, lang, "highlightLabel", &property.highlight_label);
         property.location_label =
             i18n::tr_field(&tr, lang, "locationLabel", &property.location_label);
-        property.instructions_cheque =
-            i18n::tr_field(&tr, lang, "instructionsCheque", &property.instructions_cheque);
-        property.instructions_virement =
-            i18n::tr_field(&tr, lang, "instructionsVirement", &property.instructions_virement);
+        property.instructions_cheque = i18n::tr_field(
+            &tr,
+            lang,
+            "instructionsCheque",
+            &property.instructions_cheque,
+        );
+        property.instructions_virement = i18n::tr_field(
+            &tr,
+            lang,
+            "instructionsVirement",
+            &property.instructions_virement,
+        );
         property.contract_template =
             i18n::tr_field(&tr, lang, "contractTemplate", &property.contract_template);
     }
@@ -925,10 +933,18 @@ async fn contract_link_view(
     if lang != i18n::Lang::Fr {
         row.week_range = i18n::range_label(row.start_date, row.end_date, lang);
         row.arrival = i18n::arrival_full(row.start_date, lang);
-        row.contract_template =
-            i18n::tr_field(&row.translations, lang, "contractTemplate", &row.contract_template);
-        row.location_label =
-            i18n::tr_field(&row.translations, lang, "locationLabel", &row.location_label);
+        row.contract_template = i18n::tr_field(
+            &row.translations,
+            lang,
+            "contractTemplate",
+            &row.contract_template,
+        );
+        row.location_label = i18n::tr_field(
+            &row.translations,
+            lang,
+            "locationLabel",
+            &row.location_label,
+        );
     }
     Ok(Json(row))
 }
@@ -1376,8 +1392,18 @@ async fn reserve_offline(
         if let Some(to) = b.customer_email.clone().filter(|e| !e.trim().is_empty()) {
             let lang = i18n::Lang::from_param(b.customer_locale.as_deref());
             let instructions = match input.method.as_str() {
-                "cheque" => i18n::tr_field(&b.translations, lang, "instructionsCheque", &b.instructions_cheque),
-                _ => i18n::tr_field(&b.translations, lang, "instructionsVirement", &b.instructions_virement),
+                "cheque" => i18n::tr_field(
+                    &b.translations,
+                    lang,
+                    "instructionsCheque",
+                    &b.instructions_cheque,
+                ),
+                _ => i18n::tr_field(
+                    &b.translations,
+                    lang,
+                    "instructionsVirement",
+                    &b.instructions_virement,
+                ),
             };
             let instructions = if instructions.trim().is_empty() {
                 match lang {
@@ -1394,7 +1420,10 @@ async fn reserve_offline(
                 (_, i18n::Lang::En) => "bank transfer".to_string(),
             };
             let vars = vec![
-                ("bonjour", email::bonjour_lang(b.customer_first_name.as_deref(), lang)),
+                (
+                    "bonjour",
+                    email::bonjour_lang(b.customer_first_name.as_deref(), lang),
+                ),
                 ("prenom", b.customer_first_name.clone().unwrap_or_default()),
                 ("reference", reference.clone()),
                 ("montant", i18n::eur(b.deposit_cents, lang)),
@@ -1784,14 +1813,7 @@ async fn request_link(
                 ),
             };
             let html = email::template_lang(&site, &location, heading, body, cta, &link, lang);
-            email::spawn(
-                st.pool.clone(),
-                None,
-                "magic_link",
-                email_in,
-                subject,
-                html,
-            );
+            email::spawn(st.pool.clone(), None, "magic_link", email_in, subject, html);
         }
     }
     Ok(StatusCode::NO_CONTENT)
@@ -2031,8 +2053,12 @@ async fn customer_me(
     // Consignes d'arrivée / règlement intérieur traduits si disponibles.
     if lang != i18n::Lang::Fr {
         if let Some(p) = property.as_mut() {
-            p.arrival_instructions =
-                i18n::tr_field(&p.translations, lang, "arrivalInstructions", &p.arrival_instructions);
+            p.arrival_instructions = i18n::tr_field(
+                &p.translations,
+                lang,
+                "arrivalInstructions",
+                &p.arrival_instructions,
+            );
             p.house_rules = i18n::tr_field(&p.translations, lang, "houseRules", &p.house_rules);
             p.location_label =
                 i18n::tr_field(&p.translations, lang, "locationLabel", &p.location_label);
