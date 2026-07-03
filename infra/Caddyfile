@@ -2,10 +2,27 @@
 # /api/* et /media/* -> API Rust ; tout le reste -> front Next.js.
 {
 	email {$ACME_EMAIL}
+	# Timeouts serveur : borne le temps qu'une connexion (lente ou malveillante)
+	# peut immobiliser. Read/write généreux pour l'upload de photos admin.
+	servers {
+		timeouts {
+			read_header 10s
+			read_body 60s
+			write 60s
+			idle 120s
+		}
+	}
 }
 
 {$DOMAIN} {
 	encode zstd gzip
+
+	# Plafond de taille de requête : au-delà, 413. Les seules requêtes volumineuses
+	# sont les uploads de photos admin ; 25 Mo couvre large sans laisser un corps
+	# arbitraire saturer la mémoire/le disque.
+	request_body {
+		max_size 25MB
+	}
 
 	# API + fichiers médias servis par le back Rust.
 	# On écrase X-Forwarded-For avec l'IP réelle du pair : le client ne peut pas

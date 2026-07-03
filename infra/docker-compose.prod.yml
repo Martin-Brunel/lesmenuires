@@ -39,6 +39,10 @@ services:
     build:
       context: ../apps/api
     restart: unless-stopped
+    # Graceful shutdown (SIGTERM) drains in-flight requests; a handler blocked on a
+    # Stripe call can run up to ~20 s (reqwest timeout). Docker's 10 s default would
+    # SIGKILL mid-charge on every redeploy — give the drain enough headroom.
+    stop_grace_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
