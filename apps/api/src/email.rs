@@ -46,10 +46,13 @@ async fn send_once(
     subject: &str,
     html: &str,
 ) -> Attempt {
+    // Alternative texte : les e-mails HTML sans partie text/plain sont un
+    // marqueur de spam courant chez Gmail/Outlook.
+    let text = html_to_text(html);
     let res = client
         .post("https://api.resend.com/emails")
         .bearer_auth(key)
-        .json(&json!({ "from": from, "to": [to], "subject": subject, "html": html }))
+        .json(&json!({ "from": from, "to": [to], "subject": subject, "html": html, "text": text }))
         .send()
         .await;
     match res {
@@ -470,7 +473,7 @@ pub(crate) fn html_to_text(html: &str) -> String {
     if !html.contains('<') {
         return html.trim().to_string();
     }
-    let mut s = html.to_string();
+    let mut s = inline_anchor_urls(html);
     for tag in [
         "</p>", "</P>", "<br>", "<br/>", "<br />", "</li>", "</LI>", "</h1>", "</h2>", "</h3>",
     ] {
@@ -506,6 +509,45 @@ pub(crate) fn html_to_text(html: &str) -> String {
     cleaned.join("\n").trim().to_string()
 }
 
+/// « <a href="U">label</a> » → « label (U)» : sans ça, aplatir un e-mail en
+/// texte ferait disparaître l'URL des boutons (confirmation, paiement…).
+fn inline_anchor_urls(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    loop {
+        let Some(start) = rest.find("<a ") else {
+            out.push_str(rest);
+            return out;
+        };
+        out.push_str(&rest[..start]);
+        let tag_rest = &rest[start..];
+        // Balise ouvrante ou fermante introuvable : fragment mal formé, on
+        // laisse le strip générique de html_to_text faire le ménage.
+        let Some(tag_end) = tag_rest.find('>') else {
+            out.push_str(tag_rest);
+            return out;
+        };
+        let Some(close) = tag_rest[tag_end..].find("</a>") else {
+            out.push_str(tag_rest);
+            return out;
+        };
+        let href = tag_rest[..tag_end].find("href=\"").and_then(|h| {
+            let v = &tag_rest[h + 6..tag_end];
+            v.find('"').map(|e| &v[..e])
+        });
+        let inner = &tag_rest[tag_end + 1..tag_end + close];
+        out.push_str(inner);
+        if let Some(url) = href {
+            if !url.is_empty() && inner.trim() != url {
+                out.push_str(" (");
+                out.push_str(url);
+                out.push(')');
+            }
+        }
+        rest = &tag_rest[tag_end + close + 4..];
+    }
+}
+
 /// « Bonjour Camille, » / "Hello Camille," — variable {{bonjour}} des gabarits.
 pub(crate) fn bonjour_lang(first_name: Option<&str>, lang: Lang) -> String {
     let greeting = match lang {
@@ -521,4 +563,52 @@ pub(crate) fn bonjour_lang(first_name: Option<&str>, lang: Lang) -> String {
 /// Variante française historique (campagnes et envois admin, toujours fr).
 pub(crate) fn bonjour(first_name: Option<&str>) -> String {
     bonjour_lang(first_name, Lang::Fr)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn html_to_text_conserve_les_urls_des_liens() {
+        let html = r#"<p>Votre dossier est prêt.</p><a href="https://ex.fr/pay?t=abc" style="x">Payer l'acompte</a>"#;
+        let text = html_to_text(html);
+        assert!(
+            text.contains("Payer l'acompte (https://ex.fr/pay?t=abc)"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn html_to_text_lien_dont_le_libelle_est_l_url() {
+        let text = html_to_text(r#"<a href="https://ex.fr">https://ex.fr</a>"#);
+        assert_eq!(text, "https://ex.fr");
+    }
+
+    #[test]
+    fn html_to_text_anchor_mal_forme_ne_panique_pas() {
+        assert_eq!(
+            html_to_text("<a href=\"https://ex.fr\">jamais fermé"),
+            "jamais fermé"
+        );
+        assert_eq!(html_to_text("texte <a "), "texte");
+    }
+
+    #[test]
+    fn html_to_text_template_complet() {
+        let html = template_lang(
+            "Site",
+            "Les Ménuires",
+            "Titre",
+            "<p>Corps</p>",
+            "Confirmer",
+            "https://ex.fr/c",
+            Lang::Fr,
+        );
+        let text = html_to_text(&html);
+        assert!(text.contains("Titre"), "{text}");
+        assert!(text.contains("Corps"), "{text}");
+        assert!(text.contains("Confirmer (https://ex.fr/c)"), "{text}");
+        assert!(!text.contains('<'), "{text}");
+    }
 }
