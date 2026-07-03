@@ -298,7 +298,11 @@ export function MobileFunnel({
               <div style={css("font:400 21px 'Marcellus'")}>{eur(week.priceCents)}</div>
               <div style={css("font:400 11px 'Hanken Grotesk';color:#9A9C97")}>{week.range} · {t.booking.nights7}</div>
             </div>
-            <div onClick={() => setScreen("extras")} style={css(ctaSmall)}>{t.booking.continue}</div>
+            {week.booked ? (
+              <div style={css(ctaSmall + ";background:#D8D7D2;cursor:default;opacity:.7")}>{t.booking.full}</div>
+            ) : (
+              <div onClick={() => setScreen("extras")} style={css(ctaSmall)}>{t.booking.continue}</div>
+            )}
           </div>
         </div>
       )}
@@ -392,7 +396,7 @@ export function MobileFunnel({
                 <div style={css("display:flex;justify-content:space-between;padding-bottom:12px;border-bottom:1px solid rgba(0,0,0,.08)")}>
                   <div>
                     <div style={css("font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>{t.booking.stay}</div>
-                    <div style={css("margin-top:3px;font:500 15px 'Hanken Grotesk'")}>{week.range} {week.startDate.slice(0, 4)}</div>
+                    <div style={css("margin-top:3px;font:500 15px 'Hanken Grotesk'")}>{week.range}</div>
                     <div style={css("margin-top:1px;font:400 11.5px 'Hanken Grotesk';color:#9A9C97")}>{t.booking.arrivalWord} {week.arrival}</div>
                   </div>
                   <div style={css("text-align:right")}>

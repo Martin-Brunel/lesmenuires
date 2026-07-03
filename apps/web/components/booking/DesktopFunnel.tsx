@@ -347,7 +347,11 @@ export function DesktopFunnel({
                 </div>
               </div>
 
-              <div onClick={() => { setScreen("checkout"); setCheckoutStep(firstStep); }} style={css("margin-top:18px;padding:16px;background:#1A1B1A;color:#fff;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';cursor:pointer")}>{t.booking.continue}</div>
+              {week.booked ? (
+                <div style={css("margin-top:18px;padding:16px;background:#D8D7D2;color:#fff;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';cursor:default;opacity:.7")}>{t.booking.full}</div>
+              ) : (
+                <div onClick={() => { setScreen("checkout"); setCheckoutStep(firstStep); }} style={css("margin-top:18px;padding:16px;background:#1A1B1A;color:#fff;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';cursor:pointer")}>{t.booking.continue}</div>
+              )}
               <div style={css("margin-top:12px;text-align:center;font:400 11.5px/1.5 'Hanken Grotesk';color:#9A9C97")}>{t.booking.freeCancellation}</div>
               <div style={css("margin-top:16px;text-align:center;display:flex;flex-wrap:wrap;gap:4px 14px;justify-content:center;font:400 11px 'Hanken Grotesk';color:#9A9C97")}>
                 <a href={href("/mentions-legales")} style={css("color:#9A9C97")}>{t.footer.legalNotice}</a>

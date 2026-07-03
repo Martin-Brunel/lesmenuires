@@ -48,9 +48,16 @@ export function switchLocalePath(current: Locale, target: Locale, pathname: stri
 
 const INTL_LOCALE: Record<Locale, string> = { fr: "fr-FR", en: "en-GB" };
 
-/** 119000 → « 1 190 € » (fr) / "€1,190" (en). */
+/** 119000 → « 1 190 € », 30630 → « 306,30 € » (fr) / "€1,190", "€306.30" (en).
+ *  Show 2 decimals whenever there are centimes so the funnel matches the amounts in
+ *  the confirmation e-mails (i18n::eur), which always print 2 decimals — otherwise a
+ *  deposit of 30630 would read "306,3 €" here but "306,30 €" in the e-mail. */
 export function money(cents: number, locale: Locale): string {
-  const v = (cents / 100).toLocaleString(INTL_LOCALE[locale]);
+  const hasCents = cents % 100 !== 0;
+  const v = (cents / 100).toLocaleString(INTL_LOCALE[locale], {
+    minimumFractionDigits: hasCents ? 2 : 0,
+    maximumFractionDigits: 2,
+  });
   return locale === "fr" ? `${v} €` : `€${v}`;
 }
 

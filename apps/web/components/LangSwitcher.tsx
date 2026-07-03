@@ -4,12 +4,18 @@
 // Rendu « pilules » aligné sur la direction Premium éditorial.
 
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { LOCALES, switchLocalePath, type Locale } from "@/lib/i18n";
 import { useI18n } from "./I18nProvider";
 
 export function LangSwitcher({ compact = false }: { compact?: boolean }) {
   const { locale } = useI18n();
   const pathname = usePathname() ?? "/";
+  // Preserve the query string (e.g. /reserver?ref=… cart-resume link) when switching
+  // language. Read it after mount rather than via useSearchParams, which would force a
+  // Suspense boundary / dynamic rendering on the static pages that host this switcher.
+  const [search, setSearch] = useState("");
+  useEffect(() => setSearch(window.location.search), [pathname]);
   return (
     <div
       style={{
@@ -24,7 +30,7 @@ export function LangSwitcher({ compact = false }: { compact?: boolean }) {
         return (
           <a
             key={l}
-            href={switchLocalePath(locale, l, pathname)}
+            href={switchLocalePath(locale, l, pathname) + search}
             aria-current={active ? "true" : undefined}
             style={{
               padding: compact ? "4px 8px" : "5px 9px",

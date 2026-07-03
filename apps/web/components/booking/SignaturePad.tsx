@@ -2,6 +2,7 @@
 
 import React, {
   forwardRef,
+  useEffect,
   useImperativeHandle,
   useRef,
   useState,
@@ -37,6 +38,14 @@ export const SignaturePad = forwardRef<SignaturePadHandle, Props>(
     const drawing = useRef(false);
     const last = useRef<[number, number]>([0, 0]);
     const [empty, setEmpty] = useState(true);
+
+    // A remounted pad (e.g. leaving the contract step for payment then coming back)
+    // starts with a blank canvas, so tell the parent it's empty — otherwise its stale
+    // "signed" state would keep the Continue button enabled over an empty signature.
+    useEffect(() => {
+      onEmptyChange?.(true);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     useImperativeHandle(ref, () => ({
       clear() {
