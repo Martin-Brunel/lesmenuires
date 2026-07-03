@@ -28,10 +28,10 @@ export function monthsOf(weeks: { startDate: string }[]) {
   return out;
 }
 
-/** "draps" pre-selected, like the prototype; other products off by default. */
+/** No product pre-selected: extras are strictly opt-in. */
 export function defaultExtras(products: ApiProduct[]): ExtrasState {
   const state: ExtrasState = {};
-  for (const p of products) state[p.key] = p.key === "draps";
+  for (const p of products) state[p.key] = false;
   return state;
 }
 
