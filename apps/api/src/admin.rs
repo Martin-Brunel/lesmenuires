@@ -721,6 +721,23 @@ const WEEK_BOOKING_COLS: &str = ", \
         and b.status in ('confirmed','balance_paid') order by b.created_at desc limit 1) as booking_customer, \
     (select f.name from ical_feed f where f.id = aw.blocked_by_feed) as blocked_source";
 
+/// Relit une semaine avec ses colonnes calculées (réf/client/source iCal).
+/// À utiliser après un insert/update : un `returning` nu ne fournit pas ces
+/// colonnes et le décodage en AdminWeekDto échouerait (ColumnNotFound).
+async fn week_dto_by_id(
+    pool: &sqlx::PgPool,
+    id: Uuid,
+) -> Result<Option<AdminWeekDto>, sqlx::Error> {
+    sqlx::query_as::<_, AdminWeekDto>(&format!(
+        "select aw.id, aw.start_date, aw.end_date, aw.range_label, aw.sub_label, \
+                aw.price_cents, aw.status, aw.position, aw.season_id, aw.tier_key{WEEK_BOOKING_COLS} \
+         from availability_week aw where aw.id = $1"
+    ))
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+}
+
 async fn list_weeks(
     State(st): State<AppState>,
     Query(q): Query<WeeksQuery>,
@@ -773,15 +790,13 @@ async fn update_week(
     if w.price_cents < 0 {
         return Err(AppError::BadRequest("Prix négatif.".into()));
     }
-    let dto = sqlx::query_as::<_, AdminWeekDto>(
+    let updated: Option<Uuid> = sqlx::query_scalar(
         // Un changement de statut hors 'blocked' efface la source iCal : la
         // semaine redevient pilotée à la main (sinon la synchro suivante la
         // re-bloquerait/débloquerait sans que l'exploitant comprenne pourquoi).
         "update availability_week set price_cents=$2, status=$3, sub_label=$4, tier_key=$5, \
                 blocked_by_feed = case when $3 = 'blocked' then blocked_by_feed else null end \
-         where id=$1 \
-         returning id, start_date, end_date, range_label, sub_label, price_cents, status, \
-                   position, season_id, tier_key",
+         where id=$1 returning id",
     )
     .bind(id)
     .bind(w.price_cents)
@@ -789,8 +804,11 @@ async fn update_week(
     .bind(&w.sub_label)
     .bind(w.tier_key.as_deref())
     .fetch_optional(&st.pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("semaine".into()))?;
+    .await?;
+    let id = updated.ok_or_else(|| AppError::NotFound("semaine".into()))?;
+    let dto = week_dto_by_id(&st.pool, id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("semaine".into()))?;
     Ok(Json(dto))
 }
 
@@ -4082,15 +4100,14 @@ async fn generate_weeks(
         let start = g.start_date + Duration::weeks(i);
         let end = start + Duration::days(7);
         let pos = max_pos + 1 + i as i32;
-        let row = sqlx::query_as::<_, AdminWeekDto>(
+        let row: Option<Uuid> = sqlx::query_scalar(
             "insert into availability_week \
                 (property_id, season_id, tier_key, start_date, end_date, range_label, sub_label, \
                  price_cents, status, arrival_label, arrival_short, depart_short, \
                  balance_due_label, position) \
              values ($1,$2,$3,$4,$5,$6,$7,$8,'available',$9,$10,$11,$12,$13) \
              on conflict (property_id, start_date) do nothing \
-             returning id, start_date, end_date, range_label, sub_label, price_cents, status, \
-                       position, season_id, tier_key",
+             returning id",
         )
         .bind(prop_id)
         .bind(g.season_id)
@@ -4107,8 +4124,10 @@ async fn generate_weeks(
         .bind(pos)
         .fetch_optional(&st.pool)
         .await?;
-        if let Some(r) = row {
-            created.push(r);
+        if let Some(week_id) = row {
+            if let Some(dto) = week_dto_by_id(&st.pool, week_id).await? {
+                created.push(dto);
+            }
         }
     }
     Ok(Json(created))
