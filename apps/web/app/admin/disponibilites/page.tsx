@@ -771,7 +771,7 @@ function GenerateWeeks({
           </p>
         ) : (
           <>
-            <form onSubmit={generate} className="grid grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+            <form onSubmit={generate} className="grid grid-cols-2 lg:grid-cols-5 gap-3 items-start">
               <div className="space-y-1.5">
                 <Label>Saison</Label>
                 <select

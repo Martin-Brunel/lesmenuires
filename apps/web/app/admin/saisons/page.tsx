@@ -300,7 +300,7 @@ function CreateSeason({ onCreated }: { onCreated: () => void }) {
         <CardTitle className="text-base">Nouvelle saison</CardTitle>
       </CardHeader>
       <CardContent>
-        <form onSubmit={create} className="grid grid-cols-2 lg:grid-cols-4 gap-3 items-end">
+        <form onSubmit={create} className="grid grid-cols-2 lg:grid-cols-4 gap-3 items-start">
           <div className="space-y-1.5 lg:col-span-2">
             <Label>Nom</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Hiver 2026 – 2027" required />
