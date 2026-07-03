@@ -35,7 +35,6 @@ export function DesktopFunnel({
   // suffisante est servie au lieu de l'original pleine résolution (LCP).
   const photo = (i: number, seed: string, dims: string, width = 960) =>
     media[i] ? mediaVariant(media[i], width) : `https://picsum.photos/seed/${seed}/${dims}`;
-  const photoCount = media.length || 24;
   const galleryImages = media.length
     ? media.map((m) => ({
         url: mediaVariant(m, 1600),
@@ -46,6 +45,8 @@ export function DesktopFunnel({
         url: `https://picsum.photos/seed/${s}/1600/1100`,
         alt: "",
       }));
+  // Le compteur reflète la galerie réellement ouverte par le lightbox.
+  const photoCount = galleryImages.length;
 
   const [screen, setScreen] = useState<Screen>("booking");
   // L'écran « done » sert aux deux issues : acompte payé en ligne (paid) ou
