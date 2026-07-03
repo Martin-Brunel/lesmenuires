@@ -3530,31 +3530,45 @@ fn fr_month_full(m: u32) -> &'static str {
     ][(m - 1) as usize]
 }
 
+// L'année figure toujours dans les libellés : une saison de ski chevauche deux
+// années civiles, « 26 déc — 02 jan » sans année prête à confusion.
 fn range_label(start: NaiveDate, end: NaiveDate) -> String {
-    if start.month() == end.month() {
+    if start.year() != end.year() {
         format!(
-            "{:02} — {:02} {}",
+            "{:02} {} {} — {:02} {} {}",
+            start.day(),
+            fr_month_abbr(start.month()),
+            start.year(),
+            end.day(),
+            fr_month_abbr(end.month()),
+            end.year()
+        )
+    } else if start.month() == end.month() {
+        format!(
+            "{:02} — {:02} {} {}",
             start.day(),
             end.day(),
-            fr_month_abbr(end.month())
+            fr_month_abbr(end.month()),
+            end.year()
         )
     } else {
         format!(
-            "{:02} {} — {:02} {}",
+            "{:02} {} — {:02} {} {}",
             start.day(),
             fr_month_abbr(start.month()),
             end.day(),
-            fr_month_abbr(end.month())
+            fr_month_abbr(end.month()),
+            end.year()
         )
     }
 }
 
 fn arrival_full(d: NaiveDate) -> String {
-    format!("samedi {} {}", d.day(), fr_month_full(d.month()))
+    format!("samedi {} {} {}", d.day(), fr_month_full(d.month()), d.year())
 }
 
 fn short_label(d: NaiveDate) -> String {
-    format!("sam. {} {}", d.day(), fr_month_abbr(d.month()))
+    format!("sam. {} {} {}", d.day(), fr_month_abbr(d.month()), d.year())
 }
 
 fn balance_due_label(start: NaiveDate) -> String {
