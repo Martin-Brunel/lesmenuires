@@ -368,12 +368,13 @@ async fn booking_context(
     .fetch_all(&st.pool)
     .await?;
 
+    // Avis coupés dans les réglages → liste vide, le front masque les sections.
     let reviews = sqlx::query_as::<_, PublicReviewDto>(
         "select r.author_name, r.rating, r.comment, r.admin_reply, r.submitted_at \
          from review r \
          join booking b on b.id = r.booking_id \
          join property p on p.id = b.property_id \
-         where p.slug = $1 and r.published \
+         where p.slug = $1 and r.published and p.reviews_enabled \
          order by r.submitted_at desc",
     )
     .bind(&slug)

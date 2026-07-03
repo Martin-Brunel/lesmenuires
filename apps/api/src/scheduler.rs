@@ -642,6 +642,14 @@ struct ReviewDue {
 /// rétroactif au déploiement de la feature). Les dossiers annulés, flaggés
 /// ou sans e-mail sont ignorés.
 async fn request_reviews(pool: &PgPool, r: &mut TickReport) -> Result<(), sqlx::Error> {
+    // Avis débranchés dans les réglages → aucune demande n'est envoyée.
+    let enabled: bool =
+        sqlx::query_scalar("select coalesce(bool_and(reviews_enabled), true) from property")
+            .fetch_one(pool)
+            .await?;
+    if !enabled {
+        return Ok(());
+    }
     let due: Vec<ReviewDue> = sqlx::query_as(
         "select b.id, aw.range_label as week_range, c.email, c.first_name \
          from booking b \

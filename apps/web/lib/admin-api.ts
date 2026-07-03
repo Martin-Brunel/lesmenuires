@@ -531,6 +531,7 @@ export type GlobalSettings = {
   payVirementEnabled: boolean;
   instructionsCheque: string;
   instructionsVirement: string;
+  reviewsEnabled: boolean;
 };
 
 export type CampaignFilters = {

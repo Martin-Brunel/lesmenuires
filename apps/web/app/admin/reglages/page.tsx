@@ -91,6 +91,24 @@ export default function ReglagesPage() {
       toast.success(next ? "E-mails automatiques réactivés." : "E-mails automatiques coupés.");
   };
 
+  const toggleReviews = async () => {
+    if (!settings || busy) return;
+    const next = !settings.reviewsEnabled;
+    if (
+      !next &&
+      !(await confirm({
+        title: "Désactiver les avis voyageurs ?",
+        description:
+          "Le site n'affichera plus les avis et plus aucune demande d'avis ne sera envoyée. Les avis déjà reçus sont conservés.",
+        danger: true,
+        confirmLabel: "Désactiver les avis",
+      }))
+    )
+      return;
+    if (await apply({ reviewsEnabled: next }))
+      toast.success(next ? "Avis voyageurs réactivés." : "Avis voyageurs désactivés.");
+  };
+
   const saveInstructions = async () => {
     if (!settings || instrBusy) return;
     setInstrBusy(true);
@@ -306,6 +324,39 @@ export default function ReglagesPage() {
               de solde, relances panier, e-mails planifiés, demandes d&apos;avis). Les
               prélèvements continuent normalement. Les envois manuels et liens de connexion
               restent actifs.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ------------------------------------------------------ Avis voyageurs */}
+      <Card>
+        <CardContent className="space-y-3 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-medium">Avis voyageurs</h2>
+              <p className="text-sm text-muted-foreground">
+                Affichage des avis sur le site et demandes d&apos;avis après séjour
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">
+                {settings.reviewsEnabled ? "Actifs" : "Désactivés"}
+              </span>
+              <Switch
+                checked={settings.reviewsEnabled}
+                disabled={busy}
+                onChange={toggleReviews}
+                label="Avis voyageurs"
+              />
+            </div>
+          </div>
+          {!settings.reviewsEnabled && (
+            <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+              Le site n&apos;affiche plus la note ni les avis, et plus aucune demande
+              d&apos;avis n&apos;est envoyée (automatique ou manuelle). Les avis déjà reçus
+              sont conservés dans l&apos;admin et réapparaîtront à la réactivation ; les
+              liens d&apos;avis déjà envoyés restent utilisables.
             </p>
           )}
         </CardContent>

@@ -2061,6 +2061,15 @@ async fn request_review(
     State(st): State<AppState>,
     Path(reference): Path<String>,
 ) -> Result<StatusCode, AppError> {
+    let enabled: bool =
+        sqlx::query_scalar("select coalesce(bool_and(reviews_enabled), true) from property")
+            .fetch_one(&st.pool)
+            .await?;
+    if !enabled {
+        return Err(AppError::BadRequest(
+            "Les avis voyageurs sont désactivés dans les réglages.".into(),
+        ));
+    }
     let row = sqlx::query_as::<_, RequestReviewRow>(
         "select b.id, b.review_token as token, (r.id is not null) as reviewed, \
                 aw.range_label as week_range, c.email, c.first_name \
@@ -2643,11 +2652,12 @@ struct GlobalSettings {
     pay_virement_enabled: bool,
     instructions_cheque: String,
     instructions_virement: String,
+    reviews_enabled: bool,
 }
 
 const SETTINGS_COLS: &str = "transactional_emails_enabled, online_booking_enabled, \
     pay_card_enabled, pay_cheque_enabled, pay_virement_enabled, \
-    instructions_cheque, instructions_virement";
+    instructions_cheque, instructions_virement, reviews_enabled";
 
 /// Réglages globaux (plateforme mono-propriété : portés par la propriété).
 async fn get_settings(State(st): State<AppState>) -> Result<Json<GlobalSettings>, AppError> {
@@ -2670,6 +2680,7 @@ struct SettingsUpdate {
     pay_virement_enabled: Option<bool>,
     instructions_cheque: Option<String>,
     instructions_virement: Option<String>,
+    reviews_enabled: Option<bool>,
 }
 
 async fn update_settings(
@@ -2700,7 +2711,8 @@ async fn update_settings(
             pay_cheque_enabled = coalesce($4, pay_cheque_enabled), \
             pay_virement_enabled = coalesce($5, pay_virement_enabled), \
             instructions_cheque = coalesce($6, instructions_cheque), \
-            instructions_virement = coalesce($7, instructions_virement) \
+            instructions_virement = coalesce($7, instructions_virement), \
+            reviews_enabled = coalesce($8, reviews_enabled) \
          returning {SETTINGS_COLS}"
     ))
     .bind(body.transactional_emails_enabled)
@@ -2710,6 +2722,7 @@ async fn update_settings(
     .bind(body.pay_virement_enabled)
     .bind(body.instructions_cheque)
     .bind(body.instructions_virement)
+    .bind(body.reviews_enabled)
     .fetch_one(&st.pool)
     .await?;
     Ok(Json(s))
