@@ -784,6 +784,8 @@ export const adminApi = {
     req<void>("/password/forgot", { method: "POST", body: JSON.stringify({ email }) }),
   setPassword: (token: string, password: string) =>
     req<Me>("/password/set", { method: "POST", body: JSON.stringify({ token, password }) }),
+  updateMe: (data: { displayName: string; email: string; currentPassword?: string }) =>
+    req<Me>("/me", { method: "PUT", body: JSON.stringify(data) }),
   changeMyPassword: (currentPassword: string, newPassword: string) =>
     req<void>("/me/password", {
       method: "POST",

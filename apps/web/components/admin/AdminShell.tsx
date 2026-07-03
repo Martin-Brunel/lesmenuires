@@ -123,7 +123,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         </nav>
         <div className="p-3 border-t">
           <Link
-            href="/admin/equipe"
+            href="/admin/compte"
             className="flex items-center gap-2.5 rounded-md px-3 pb-2 pt-1 hover:bg-accent"
             title="Mon compte"
           >

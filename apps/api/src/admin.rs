@@ -25,7 +25,7 @@ pub struct AdminId(pub Uuid);
 
 pub fn routes(state: AppState) -> Router {
     let protected = Router::new()
-        .route("/me", get(me))
+        .route("/me", get(me).put(update_me))
         .route("/property/:slug", get(get_property).put(update_property))
         .route("/property/:slug/media", get(list_media).post(upload_media))
         .route("/media/:id", put(update_media).delete(delete_media))
@@ -369,6 +369,72 @@ async fn me(
         "select id, email, display_name, is_super from admin_user where id = $1",
     )
     .bind(id)
+    .fetch_one(&st.pool)
+    .await?;
+    Ok(Json(dto))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateMeInput {
+    display_name: String,
+    email: String,
+    /// Requis uniquement pour changer l'e-mail (identifiant de connexion).
+    #[serde(default)]
+    current_password: String,
+}
+
+/// Mise à jour de mon propre compte : nom affiché librement ; changement
+/// d'e-mail confirmé par le mot de passe actuel (c'est l'identifiant de
+/// connexion — on ne le change ni par accident ni depuis une session volée).
+async fn update_me(
+    State(st): State<AppState>,
+    Extension(AdminId(id)): Extension<AdminId>,
+    Json(body): Json<UpdateMeInput>,
+) -> Result<Json<MeDto>, AppError> {
+    let display_name = body.display_name.trim();
+    let email = body.email.trim().to_lowercase();
+    if display_name.is_empty() {
+        return Err(AppError::BadRequest("Le nom affiché est requis.".into()));
+    }
+    if !email.contains('@') || !email.contains('.') {
+        return Err(AppError::BadRequest("E-mail invalide.".into()));
+    }
+    let (current_email, hash): (String, Option<String>) =
+        sqlx::query_as("select email, password_hash from admin_user where id = $1")
+            .bind(id)
+            .fetch_one(&st.pool)
+            .await?;
+    if email != current_email.to_lowercase() {
+        let ok = hash
+            .as_deref()
+            .map(|h| verify_password(h, &body.current_password))
+            .unwrap_or(false);
+        if !ok {
+            return Err(AppError::BadRequest(
+                "Mot de passe actuel requis pour changer l'e-mail.".into(),
+            ));
+        }
+        let taken: bool = sqlx::query_scalar(
+            "select exists(select 1 from admin_user where lower(email) = $1 and id <> $2)",
+        )
+        .bind(&email)
+        .bind(id)
+        .fetch_one(&st.pool)
+        .await?;
+        if taken {
+            return Err(AppError::BadRequest(
+                "Cet e-mail est déjà utilisé par un autre compte.".into(),
+            ));
+        }
+    }
+    let dto = sqlx::query_as::<_, MeDto>(
+        "update admin_user set display_name = $2, email = $3 \
+         where id = $1 returning id, email, display_name, is_super",
+    )
+    .bind(id)
+    .bind(display_name)
+    .bind(&email)
     .fetch_one(&st.pool)
     .await?;
     Ok(Json(dto))

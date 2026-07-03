@@ -53,6 +53,23 @@ function humanize(e: AuditEntry): string {
     [/^\/users$/, "Compte admin créé"],
     [/^\/users\//, "Compte admin supprimé"],
     [/^\/me\/password$/, "Mot de passe modifié"],
+    [/^\/me$/, "Compte modifié"],
+    [/^\/settings$/, "Réglages modifiés"],
+    [/\/emails-muted$/, `E-mails automatiques basculés${ref ? ` · ${ref}` : ""}`],
+    [/^\/campaigns\/preview$/, "Aperçu de campagne"],
+    [/^\/campaigns$/, "Campagne créée"],
+    [/\/campaigns\/[^/]+\/send$/, "Campagne envoyée"],
+    [/^\/campaigns\//, e.method === "DELETE" ? "Campagne supprimée" : "Campagne modifiée"],
+    [/^\/accounting\/sync$/, "Synchronisation comptable"],
+    [/^\/accounting\/entries\/[^/]+\/reverse$/, "Écriture extournée"],
+    [/^\/accounting\/entries/, e.method === "DELETE" ? "Écriture supprimée" : "Écriture saisie"],
+    [/^\/accounting\/accounts/, "Plan comptable modifié"],
+    [/^\/accounting\/supplier-invoices\/[^/]+\/(un)?pay$/, "Règlement fournisseur pointé"],
+    [
+      /^\/accounting\/supplier-invoices/,
+      e.method === "DELETE" ? "Facture fournisseur supprimée" : "Facture fournisseur saisie",
+    ],
+    [/^\/accounting\/suppliers/, "Fournisseur modifié"],
     [/^\/scheduler\/run$/, "Planificateur lancé manuellement"],
     [/^\/logout$/, "Déconnexion"],
   ];
@@ -115,12 +132,15 @@ export default function EquipePage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Équipe</h1>
         <p className="text-sm text-muted-foreground">
-          Comptes du back-office et journal des actions. Chaque action est signée par son
-          auteur.
+          Comptes du back-office et journal des actions, signées par leur auteur.
+          {me.isSuper
+            ? " Vous êtes le compte principal : vous seul pouvez inviter ou supprimer des comptes."
+            : " Seul le compte principal peut inviter ou supprimer des comptes."}{" "}
+          Vos informations personnelles se gèrent dans « Mon compte ».
         </p>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Comptes ({accounts.length})</CardTitle>
@@ -162,8 +182,6 @@ export default function EquipePage() {
             {me.isSuper && <CreateAccountForm onCreated={reload} />}
           </CardContent>
         </Card>
-
-        <PasswordCard />
       </div>
 
       <Card>
@@ -257,64 +275,4 @@ function CreateAccountForm({ onCreated }: { onCreated: () => void }) {
   );
 }
 
-function PasswordCard() {
-  const [current, setCurrent] = useState("");
-  const [next, setNext] = useState("");
-  const [confirmNext, setConfirmNext] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const change = async () => {
-    if (busy) return;
-    if (next.length < 8) {
-      toast.error("Nouveau mot de passe : 8 caractères minimum.");
-      return;
-    }
-    if (next !== confirmNext) {
-      toast.error("La confirmation ne correspond pas.");
-      return;
-    }
-    setBusy(true);
-    try {
-      await adminApi.changeMyPassword(current, next);
-      toast.success("Mot de passe modifié.");
-      setCurrent("");
-      setNext("");
-      setConfirmNext("");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erreur");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base">Mon mot de passe</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="space-y-1.5">
-          <Label>Mot de passe actuel</Label>
-          <Input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} />
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <div className="space-y-1.5">
-            <Label>Nouveau</Label>
-            <Input type="password" value={next} onChange={(e) => setNext(e.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Confirmation</Label>
-            <Input
-              type="password"
-              value={confirmNext}
-              onChange={(e) => setConfirmNext(e.target.value)}
-            />
-          </div>
-        </div>
-        <Button size="sm" onClick={change} disabled={busy || !current || !next}>
-          {busy ? "…" : "Changer le mot de passe"}
-        </Button>
-      </CardContent>
-    </Card>
-  );
-}
+// Le mot de passe et le profil se gèrent désormais sur /admin/compte.
