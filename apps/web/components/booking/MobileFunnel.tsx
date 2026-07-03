@@ -21,6 +21,7 @@ import {
 import { css } from "./css";
 import { Lightbox } from "./Lightbox";
 import { ReadMore } from "./ReadMore";
+import { RatingBadge, ReviewsSection } from "./Reviews";
 import { SignaturePad, type SignaturePadHandle } from "./SignaturePad";
 import { StripeCheckout } from "./StripeCheckout";
 import { GuestPicker } from "./GuestPicker";
@@ -37,7 +38,7 @@ const STEP_MAP: Record<string, number> = {
 const STEP_LABELS = ["Semaine", "Options", "Infos", "Contrat", "Paiement"];
 
 export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
-  const { property, season, weeks, products, media } = ctx;
+  const { property, season, weeks, products, media, reviews } = ctx;
   const heroImg = media[0]
     ? mediaUrl(media[0].url)
     : "https://picsum.photos/seed/adret-chalet-a/820/640";
@@ -144,6 +145,11 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
               )}
             </div>
             <div style={css("padding:18px 22px 14px")}>
+              {reviews.length > 0 && (
+                <div style={css("margin-bottom:12px")}>
+                  <RatingBadge reviews={reviews} />
+                </div>
+              )}
               <ReadMore
                 content={property.description}
                 lines={5}
@@ -171,6 +177,11 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
                 <span style={css("font:400 26px 'Marcellus'")}>dès {eur(fromPrice)}</span>
                 <span style={css("font:400 13px 'Hanken Grotesk';color:#9A9C97")}>/ semaine</span>
               </div>
+              {reviews.length > 0 && (
+                <div style={css("margin-top:26px")}>
+                  <ReviewsSection reviews={reviews} />
+                </div>
+              )}
             </div>
           </div>
           <div style={css("padding:14px 22px 30px;background:#FFF;border-top:1px solid rgba(0,0,0,.08)")}>

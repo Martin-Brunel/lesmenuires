@@ -22,13 +22,14 @@ import {
 import { css } from "./css";
 import { Lightbox } from "./Lightbox";
 import { ReadMore } from "./ReadMore";
+import { RatingBadge, ReviewsSection } from "./Reviews";
 import { StripeCheckout } from "./StripeCheckout";
 import { SignaturePad, type SignaturePadHandle } from "./SignaturePad";
 
 type Screen = "booking" | "checkout" | "done";
 
 export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
-  const { property, season, weeks, products, media } = ctx;
+  const { property, season, weeks, products, media, reviews } = ctx;
   const photo = (i: number, seed: string, dims: string) =>
     media[i] ? mediaUrl(media[i].url) : `https://picsum.photos/seed/${seed}/${dims}`;
   const photoCount = media.length || 24;
@@ -131,6 +132,9 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
             <div>
               <div style={css("font:500 11px 'Hanken Grotesk';letter-spacing:.2em;text-transform:uppercase;color:#9A9C97")}>{property.locationLabel}</div>
               <h1 style={css("margin:8px 0 0;font:400 42px 'Marcellus';color:#1A1B1A")}>{name}</h1>
+              <div style={css("margin-top:8px")}>
+                <RatingBadge reviews={reviews} />
+              </div>
             </div>
             <div style={css("font:400 15px 'Hanken Grotesk';color:#5A5C58")}>{property.specsLabel}</div>
           </div>
@@ -205,6 +209,13 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
                   </div>
                 );
               })}
+
+              {reviews.length > 0 && (
+                <>
+                  <div style={css("height:1px;background:rgba(0,0,0,.09);margin:34px 0 28px")} />
+                  <ReviewsSection reviews={reviews} />
+                </>
+              )}
             </div>
 
             {/* RIGHT sticky summary */}

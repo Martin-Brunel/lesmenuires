@@ -12,8 +12,9 @@ export default function robots(): MetadataRoute.Robots {
     rules: {
       userAgent: "*",
       allow: "/",
-      // Zones privées / techniques : back-office, espace client, API.
-      disallow: ["/admin", "/espace", "/api"],
+      // Zones privées / techniques : back-office, espace client, API, liens
+      // capability (contrat signé, dépôt d'avis).
+      disallow: ["/admin", "/espace", "/api", "/contrat", "/avis"],
     },
     sitemap: `${SITE_URL}/sitemap.xml`,
   };

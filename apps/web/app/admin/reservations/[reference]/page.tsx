@@ -204,6 +204,22 @@ export default function ReservationDetailPage() {
         }
       },
     });
+  // Post-stay: (re)send the review request (semaine stricte : départ = arrivée + 7 j).
+  const stayEnded =
+    new Date(new Date(b.startDate + "T00:00:00").getTime() + 7 * 86400_000) <= new Date();
+  if (active && b.customerEmail && stayEnded)
+    actionBtns.push({
+      label: "Demander un avis",
+      onClick: async () => {
+        try {
+          await adminApi.requestReview(b.reference);
+          toast.success("Demande d'avis envoyée au client.");
+          reload();
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Erreur");
+        }
+      },
+    });
   // Refund stays available after cancellation as long as something remains refundable.
   if (refundable > 0) actionBtns.push({ label: "Rembourser", onClick: refund });
   if (b.paymentFlag)

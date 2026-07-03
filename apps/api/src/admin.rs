@@ -66,7 +66,10 @@ pub fn routes(state: AppState) -> Router {
         .route("/bookings/:reference/detail", get(booking_detail))
         .route("/bookings/:reference/clear-flag", post(clear_payment_flag))
         .route("/bookings/:reference/note", post(add_note))
-        .route("/bookings/:reference/send-contract", post(send_contract_link))
+        .route(
+            "/bookings/:reference/send-contract",
+            post(send_contract_link),
+        )
         .route("/bookings/:reference/email", post(send_booking_email))
         .route("/bookings/:reference/signature", get(get_signature))
         .route("/bookings/:reference/mark-paid", post(mark_paid))
@@ -80,6 +83,10 @@ pub fn routes(state: AppState) -> Router {
             post(release_caution),
         )
         .route("/bookings/:reference/refund", post(refund_payment))
+        .route("/bookings/:reference/request-review", post(request_review))
+        .route("/reviews", get(list_reviews))
+        .route("/reviews/:id", put(update_review))
+        .route("/property/:slug/ical", get(get_ical_url))
         .route("/scheduler/run", post(run_scheduler))
         .layer(DefaultBodyLimit::max(12 * 1024 * 1024))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_admin));
@@ -187,7 +194,11 @@ async fn require_admin(
                 && !req.uri().path().ends_with("/email-automations/preview");
             let method = req.method().to_string();
             let path = req.uri().path().to_string();
-            let name = if s.display_name.is_empty() { s.email.clone() } else { s.display_name.clone() };
+            let name = if s.display_name.is_empty() {
+                s.email.clone()
+            } else {
+                s.display_name.clone()
+            };
             let admin_id = s.admin_user_id;
             let pool = st.pool.clone();
             let res = next.run(req).await;
@@ -295,7 +306,11 @@ async fn login(
     audit(
         st.pool.clone(),
         admin.id,
-        if admin.display_name.is_empty() { admin.email.clone() } else { admin.display_name.clone() },
+        if admin.display_name.is_empty() {
+            admin.email.clone()
+        } else {
+            admin.display_name.clone()
+        },
         "LOGIN".into(),
         "/api/admin/login".into(),
     );
@@ -1342,7 +1357,10 @@ async fn upsert_email_override(
     Path(kind): Path<String>,
     Json(p): Json<OverrideInput>,
 ) -> Result<StatusCode, AppError> {
-    if !crate::email::SYSTEM_TEMPLATES.iter().any(|t| t.kind == kind) {
+    if !crate::email::SYSTEM_TEMPLATES
+        .iter()
+        .any(|t| t.kind == kind)
+    {
         return Err(AppError::NotFound("e-mail système".into()));
     }
     if p.subject.trim().is_empty() || p.body.trim().is_empty() {
@@ -1407,7 +1425,10 @@ async fn preview_email_automation(
         ("bonjour", "Bonjour Camille,".to_string()),
         ("montant", "1 183 €".to_string()),
         ("date", "24 janvier 2027".to_string()),
-        ("operation", "le prélèvement du solde de votre séjour".to_string()),
+        (
+            "operation",
+            "le prélèvement du solde de votre séjour".to_string(),
+        ),
         ("remboursement", String::new()),
     ]);
     let subject = crate::email::render_template(&p.subject, &vars, false);
@@ -1418,7 +1439,9 @@ async fn preview_email_automation(
         "Mon espace",
         &format!("{}/espace", crate::email::front_url()),
     );
-    Ok(Json(serde_json::json!({ "subject": subject, "html": html })))
+    Ok(Json(
+        serde_json::json!({ "subject": subject, "html": html }),
+    ))
 }
 
 async fn delete_email_automation(
@@ -1477,7 +1500,11 @@ async fn send_password_link(
         "{}/admin/definir-mot-de-passe?token={token}",
         crate::email::front_url()
     );
-    let greeting = if name.is_empty() { "Bonjour".to_string() } else { format!("Bonjour {name}") };
+    let greeting = if name.is_empty() {
+        "Bonjour".to_string()
+    } else {
+        format!("Bonjour {name}")
+    };
     let (subject, body) = if invite {
         (
             "Votre accès administrateur — L'Adret",
@@ -1501,7 +1528,11 @@ async fn send_password_link(
     crate::email::spawn(
         st.pool.clone(),
         None,
-        if invite { "admin_invite" } else { "admin_reset" },
+        if invite {
+            "admin_invite"
+        } else {
+            "admin_reset"
+        },
         email_to.to_string(),
         subject.to_string(),
         html,
@@ -1523,9 +1554,7 @@ async fn require_super(pool: &sqlx::PgPool, admin_id: Uuid) -> Result<(), AppErr
     Ok(())
 }
 
-async fn list_admin_users(
-    State(st): State<AppState>,
-) -> Result<Json<Vec<AdminUserDto>>, AppError> {
+async fn list_admin_users(State(st): State<AppState>) -> Result<Json<Vec<AdminUserDto>>, AppError> {
     let rows = sqlx::query_as::<_, AdminUserDto>(
         "select id, email, display_name, is_super, (password_hash is null) as pending, \
                 created_at from admin_user order by created_at",
@@ -1665,8 +1694,8 @@ async fn password_set(
             "Lien invalide ou expiré — demandez-en un nouveau.".into(),
         ));
     };
-    let hash = hash_password(&p.password)
-        .map_err(|_| AppError::Internal("hash mot de passe".into()))?;
+    let hash =
+        hash_password(&p.password).map_err(|_| AppError::Internal("hash mot de passe".into()))?;
     sqlx::query("update admin_user set password_hash = $2 where id = $1")
         .bind(user_id)
         .bind(&hash)
@@ -1687,7 +1716,11 @@ async fn password_set(
     audit(
         st.pool.clone(),
         admin.id,
-        if admin.display_name.is_empty() { admin.email.clone() } else { admin.display_name.clone() },
+        if admin.display_name.is_empty() {
+            admin.email.clone()
+        } else {
+            admin.display_name.clone()
+        },
         "PASSWORD".into(),
         "/api/admin/password/set".into(),
     );
@@ -1768,7 +1801,9 @@ async fn change_my_password(
         return Err(AppError::NotFound("compte".into()));
     };
     if !verify_password(&hash, &p.current_password) {
-        return Err(AppError::BadRequest("Mot de passe actuel incorrect.".into()));
+        return Err(AppError::BadRequest(
+            "Mot de passe actuel incorrect.".into(),
+        ));
     }
     let new_hash = hash_password(&p.new_password)
         .map_err(|_| AppError::Internal("hash mot de passe".into()))?;
@@ -1853,9 +1888,186 @@ async fn send_contract_link(
         ("prenom", row.first_name.clone().unwrap_or_default()),
         ("semaine", row.week_range.clone()),
     ];
-    crate::email::send_system(st.pool.clone(), Some(row.id), "contract_request", to, &vars, &url)
-        .await?;
+    crate::email::send_system(
+        st.pool.clone(),
+        Some(row.id),
+        "contract_request",
+        to,
+        &vars,
+        &url,
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------------------------------------------------------------------------
+// Avis voyageurs : liste/modération (publication + réponse de l'hôte) et
+// demande manuelle depuis un dossier (en plus de la demande auto post-départ).
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct ReviewDto {
+    id: Uuid,
+    booking_reference: String,
+    week_range: String,
+    customer_name: Option<String>,
+    author_name: String,
+    rating: i32,
+    comment: String,
+    published: bool,
+    admin_reply: Option<String>,
+    submitted_at: DateTime<Utc>,
+}
+
+async fn list_reviews(State(st): State<AppState>) -> Result<Json<Vec<ReviewDto>>, AppError> {
+    let rows = sqlx::query_as::<_, ReviewDto>(
+        "select r.id, b.reference as booking_reference, aw.range_label as week_range, \
+                nullif(trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')), '') as customer_name, \
+                r.author_name, r.rating, r.comment, r.published, r.admin_reply, r.submitted_at \
+         from review r \
+         join booking b on b.id = r.booking_id \
+         join availability_week aw on aw.id = b.week_id \
+         left join customer c on c.id = b.customer_id \
+         order by r.submitted_at desc",
+    )
+    .fetch_all(&st.pool)
+    .await?;
+    Ok(Json(rows))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewUpdate {
+    published: Option<bool>,
+    admin_reply: Option<String>,
+}
+
+async fn update_review(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<ReviewUpdate>,
+) -> Result<StatusCode, AppError> {
+    if let Some(reply) = &input.admin_reply {
+        if reply.len() > 4000 {
+            return Err(AppError::BadRequest("Réponse trop longue.".into()));
+        }
+    }
+    let reply = input
+        .admin_reply
+        .map(|r| r.trim().to_string())
+        .map(|r| (!r.is_empty()).then_some(r));
+    let n = sqlx::query(
+        "update review set published = coalesce($2, published), \
+            admin_reply = case when $3 then $4 else admin_reply end \
+         where id = $1",
+    )
+    .bind(id)
+    .bind(input.published)
+    .bind(reply.is_some())
+    .bind(reply.flatten())
+    .execute(&st.pool)
+    .await?;
+    if n.rows_affected() == 0 {
+        return Err(AppError::NotFound("avis".into()));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(FromRow)]
+struct RequestReviewRow {
+    id: Uuid,
+    token: Option<String>,
+    reviewed: bool,
+    week_range: String,
+    email: Option<String>,
+    first_name: Option<String>,
+}
+
+/// (Ré)envoie la demande d'avis d'un dossier — utile si le client a égaré
+/// l'e-mail automatique ou pour un séjour antérieur à la feature.
+async fn request_review(
+    State(st): State<AppState>,
+    Path(reference): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let row = sqlx::query_as::<_, RequestReviewRow>(
+        "select b.id, b.review_token as token, (r.id is not null) as reviewed, \
+                aw.range_label as week_range, c.email, c.first_name \
+         from booking b \
+         join availability_week aw on aw.id = b.week_id \
+         left join customer c on c.id = b.customer_id \
+         left join review r on r.booking_id = b.id \
+         where b.reference = $1 and b.status in ('confirmed','balance_paid')",
+    )
+    .bind(&reference)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("réservation active".into()))?;
+    if row.reviewed {
+        return Err(AppError::BadRequest(
+            "Ce client a déjà déposé son avis.".into(),
+        ));
+    }
+    let Some(to) = row.email.filter(|e| !e.trim().is_empty()) else {
+        return Err(AppError::BadRequest("Ce client n'a pas d'e-mail.".into()));
+    };
+    let token = match row.token {
+        Some(t) => t,
+        None => {
+            let t = new_token();
+            sqlx::query(
+                "update booking set review_token = $2, review_requested_at = now() where id = $1",
+            )
+            .bind(row.id)
+            .bind(&t)
+            .execute(&st.pool)
+            .await?;
+            t
+        }
+    };
+    let url = format!("{}/avis/{token}", crate::email::front_url());
+    let vars = vec![
+        ("bonjour", crate::email::bonjour(row.first_name.as_deref())),
+        ("prenom", row.first_name.clone().unwrap_or_default()),
+        ("semaine", row.week_range.clone()),
+    ];
+    crate::email::send_system(
+        st.pool.clone(),
+        Some(row.id),
+        "review_request",
+        to,
+        &vars,
+        &url,
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// URL secrète du flux iCal de la propriété (jeton créé paresseusement).
+async fn get_ical_url(
+    State(st): State<AppState>,
+    Path(slug): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let existing: Option<Option<String>> =
+        sqlx::query_scalar("select ical_token from property where slug = $1")
+            .bind(&slug)
+            .fetch_optional(&st.pool)
+            .await?;
+    let token = match existing {
+        None => return Err(AppError::NotFound("propriété".into())),
+        Some(Some(t)) => t,
+        Some(None) => {
+            let t = new_token();
+            sqlx::query("update property set ical_token = $2 where slug = $1")
+                .bind(&slug)
+                .bind(&t)
+                .execute(&st.pool)
+                .await?;
+            t
+        }
+    };
+    let url = format!("{}/api/calendar/{token}.ics", crate::email::api_url());
+    Ok(Json(serde_json::json!({ "url": url })))
 }
 
 /// Note interne sur la fiche contact (hors dossier).
@@ -2072,7 +2284,11 @@ async fn create_manual_booking(
     .bind(&c.address_line)
     .bind(&c.postal_code)
     .bind(&c.city)
-    .bind(if c.country.trim().is_empty() { "FR" } else { c.country.trim() })
+    .bind(if c.country.trim().is_empty() {
+        "FR"
+    } else {
+        c.country.trim()
+    })
     .fetch_one(&mut *tx)
     .await?
     .0;

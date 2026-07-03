@@ -35,6 +35,7 @@ pub struct TickReport {
     pub tokens_purged: i64,
     pub balances_prenotified: i64,
     pub automations_sent: i64,
+    pub reviews_requested: i64,
 }
 
 impl TickReport {
@@ -48,6 +49,7 @@ impl TickReport {
             + self.tokens_purged
             + self.balances_prenotified
             + self.automations_sent
+            + self.reviews_requested
             > 0
     }
 }
@@ -68,6 +70,9 @@ pub async fn run_tick(pool: &PgPool, payments: &Arc<dyn PaymentProvider>) -> Tic
     }
     if let Err(e) = expire_stale_carts(pool, payments, &mut r).await {
         tracing::error!("job expiration panier: {e:?}");
+    }
+    if let Err(e) = request_reviews(pool, &mut r).await {
+        tracing::error!("job demande d'avis: {e:?}");
     }
     if let Err(e) = purge_expired_tokens(pool, &mut r).await {
         tracing::error!("job purge jetons: {e:?}");
@@ -378,7 +383,10 @@ async fn run_email_automations(pool: &PgPool, r: &mut TickReport) -> Result<(), 
         }
     }
     if r.automations_sent > 0 {
-        tracing::info!("{} transactionnel(s) automatique(s) envoyé(s)", r.automations_sent);
+        tracing::info!(
+            "{} transactionnel(s) automatique(s) envoyé(s)",
+            r.automations_sent
+        );
     }
     Ok(())
 }
@@ -581,6 +589,71 @@ async fn expire_stale_carts(
     }
     if r.carts_expired > 0 {
         tracing::info!("{} panier(s) abandonné(s) expiré(s)", r.carts_expired);
+    }
+    Ok(())
+}
+
+#[derive(sqlx::FromRow)]
+struct ReviewDue {
+    id: Uuid,
+    week_range: String,
+    email: String,
+    first_name: Option<String>,
+}
+
+/// Après le départ, demande un avis au client (une seule fois) : jeton
+/// capability + e-mail système avec le lien /avis/{token}. Fenêtre de grâce
+/// de 7 jours — au-delà, une demande manquée n'est plus envoyée (anti-
+/// rétroactif au déploiement de la feature). Les dossiers annulés, flaggés
+/// ou sans e-mail sont ignorés.
+async fn request_reviews(pool: &PgPool, r: &mut TickReport) -> Result<(), sqlx::Error> {
+    let due: Vec<ReviewDue> = sqlx::query_as(
+        "select b.id, aw.range_label as week_range, c.email, c.first_name \
+         from booking b \
+         join availability_week aw on aw.id = b.week_id \
+         join customer c on c.id = b.customer_id \
+         where b.status in ('confirmed','balance_paid') and b.payment_flag is null \
+           and b.review_requested_at is null \
+           and coalesce(c.email, '') <> '' \
+           and aw.end_date <= current_date and current_date <= aw.end_date + 7",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    for d in due {
+        let token = crate::admin::new_token();
+        // Marqueur d'abord (idempotent même si l'envoi est best-effort).
+        let updated = sqlx::query(
+            "update booking set review_token = $2, review_requested_at = now(), \
+                updated_at = now() \
+             where id = $1 and review_requested_at is null",
+        )
+        .bind(d.id)
+        .bind(&token)
+        .execute(pool)
+        .await?;
+        if updated.rows_affected() == 0 {
+            continue;
+        }
+        r.reviews_requested += 1;
+
+        let vars = vec![
+            ("bonjour", email::bonjour(d.first_name.as_deref())),
+            ("prenom", d.first_name.clone().unwrap_or_default()),
+            ("semaine", d.week_range.clone()),
+        ];
+        email::send_system(
+            pool.clone(),
+            Some(d.id),
+            "review_request",
+            d.email,
+            &vars,
+            &format!("{}/avis/{token}", email::front_url()),
+        )
+        .await?;
+    }
+    if r.reviews_requested > 0 {
+        tracing::info!("{} demande(s) d'avis envoyée(s)", r.reviews_requested);
     }
     Ok(())
 }

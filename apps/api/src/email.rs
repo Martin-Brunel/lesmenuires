@@ -278,6 +278,15 @@ pub(crate) const SYSTEM_TEMPLATES: &[SystemTemplate] = &[
         vars: &["bonjour", "reference", "semaine", "remboursement"],
     },
     SystemTemplate {
+        kind: "review_request",
+        label: "Demande d'avis",
+        trigger: "Envoyé au client après son départ, pour recueillir son avis sur le séjour.",
+        subject: "Comment s'est passé votre séjour ? — L'Adret",
+        body: "{{bonjour}}\n\nNous espérons que votre séjour à L'Adret (semaine {{semaine}}) s'est bien passé. Votre avis compte beaucoup : il aide les prochains voyageurs et nous permet de nous améliorer. Cela ne prend qu'une minute.",
+        cta_label: "Laisser un avis",
+        vars: &["bonjour", "prenom", "semaine"],
+    },
+    SystemTemplate {
         kind: "contract_request",
         label: "Contrat à signer",
         trigger: "Envoyé depuis un dossier (résa manuelle) pour faire signer le contrat en ligne.",

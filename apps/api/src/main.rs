@@ -128,6 +128,11 @@ async fn main() -> anyhow::Result<()> {
             "/api/bookings/:reference/confirm-balance",
             post(confirm_balance),
         )
+        .route(
+            "/api/avis/:token",
+            get(review_link_view).post(review_link_submit),
+        )
+        .route("/api/calendar/:token", get(ical_feed))
         .route("/api/payments/webhook", post(stripe_webhook))
         .route("/api/emails/webhook", post(resend_webhook))
         .with_state(state.clone())
@@ -273,6 +278,17 @@ struct BookingContext {
     weeks: Vec<WeekDto>,
     products: Vec<ProductDto>,
     media: Vec<PublicMediaDto>,
+    reviews: Vec<PublicReviewDto>,
+}
+
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct PublicReviewDto {
+    author_name: String,
+    rating: i32,
+    comment: String,
+    admin_reply: Option<String>,
+    submitted_at: DateTime<Utc>,
 }
 
 async fn booking_context(
@@ -338,12 +354,25 @@ async fn booking_context(
     .fetch_all(&st.pool)
     .await?;
 
+    let reviews = sqlx::query_as::<_, PublicReviewDto>(
+        "select r.author_name, r.rating, r.comment, r.admin_reply, r.submitted_at \
+         from review r \
+         join booking b on b.id = r.booking_id \
+         join property p on p.id = b.property_id \
+         where p.slug = $1 and r.published \
+         order by r.submitted_at desc",
+    )
+    .bind(&slug)
+    .fetch_all(&st.pool)
+    .await?;
+
     Ok(Json(BookingContext {
         property,
         season,
         weeks,
         products,
         media,
+        reviews,
     }))
 }
 
@@ -750,6 +779,161 @@ async fn contract_link_sign(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// ---------------------------------------------------------------------------
+// Avis voyageurs par lien : le jeton (review_token) est une capability posée
+// à la demande d'avis post-départ. Une seule soumission par dossier ; l'avis
+// n'apparaît sur le site qu'une fois publié par l'admin.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+struct ReviewLinkView {
+    property_name: String,
+    location_label: String,
+    week_range: String,
+    first_name: Option<String>,
+    submitted: bool,
+    rating: Option<i32>,
+    comment: Option<String>,
+}
+
+async fn review_link_view(
+    State(st): State<AppState>,
+    Path(token): Path<String>,
+) -> Result<Json<ReviewLinkView>, AppError> {
+    let row = sqlx::query_as::<_, ReviewLinkView>(
+        "select p.name as property_name, p.location_label, aw.range_label as week_range, \
+                c.first_name, (r.id is not null) as submitted, r.rating, r.comment \
+         from booking b \
+         join availability_week aw on aw.id = b.week_id \
+         join property p on p.id = b.property_id \
+         left join customer c on c.id = b.customer_id \
+         left join review r on r.booking_id = b.id \
+         where b.review_token = $1",
+    )
+    .bind(&token)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("avis".into()))?;
+    Ok(Json(row))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewInput {
+    rating: i32,
+    #[serde(default)]
+    comment: String,
+    #[serde(default)]
+    author_name: String,
+}
+
+async fn review_link_submit(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+    Json(body): Json<ReviewInput>,
+) -> Result<StatusCode, AppError> {
+    st.rate.check(
+        "review-submit",
+        &crate::rate::client_ip(&headers),
+        10,
+        std::time::Duration::from_secs(600),
+    )?;
+    if !(1..=5).contains(&body.rating) {
+        return Err(AppError::BadRequest("Note invalide (1 à 5).".into()));
+    }
+    if body.comment.len() > 4000 || body.author_name.len() > 120 {
+        return Err(AppError::BadRequest("Avis trop long.".into()));
+    }
+    // Signature par défaut : le prénom du client du dossier.
+    let inserted = sqlx::query(
+        "insert into review (booking_id, rating, comment, author_name) \
+         select b.id, $2, $3, \
+                coalesce(nullif(trim($4), ''), nullif(trim(coalesce(c.first_name, '')), ''), 'Voyageur') \
+         from booking b left join customer c on c.id = b.customer_id \
+         where b.review_token = $1 \
+         on conflict (booking_id) do nothing",
+    )
+    .bind(&token)
+    .bind(body.rating)
+    .bind(body.comment.trim())
+    .bind(&body.author_name)
+    .execute(&st.pool)
+    .await?;
+    if inserted.rows_affected() == 0 {
+        // Jeton inconnu ou avis déjà déposé — le GET distingue les deux côté front.
+        return Err(AppError::BadRequest(
+            "Avis introuvable ou déjà déposé.".into(),
+        ));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------------------------------------------------------------------------
+// Flux iCal du calendrier : URL secrète par propriété (jeton capability), à
+// importer dans Airbnb/Booking/Google Agenda pour éviter les doubles
+// réservations multi-canaux. Semaines réservées et bloquées = occupé.
+// ---------------------------------------------------------------------------
+
+async fn ical_feed(
+    State(st): State<AppState>,
+    Path(token): Path<String>,
+) -> Result<Response, AppError> {
+    let token = token.trim_end_matches(".ics");
+    let prop: Option<(Uuid, String)> =
+        sqlx::query_as("select id, name from property where ical_token = $1")
+            .bind(token)
+            .fetch_optional(&st.pool)
+            .await?;
+    let (property_id, name) = prop.ok_or_else(|| AppError::NotFound("calendrier".into()))?;
+
+    let weeks: Vec<(Uuid, NaiveDate, NaiveDate, String)> = sqlx::query_as(
+        "select id, start_date, end_date, status from availability_week \
+         where property_id = $1 and status in ('booked','blocked') \
+         order by start_date",
+    )
+    .bind(property_id)
+    .fetch_all(&st.pool)
+    .await?;
+
+    let stamp = Utc::now().format("%Y%m%dT%H%M%SZ");
+    let mut ics = String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//L'Adret//lesmenuires//FR\r\nCALSCALE:GREGORIAN\r\n");
+    ics.push_str(&format!("X-WR-CALNAME:{}\r\n", ical_escape(&name)));
+    for (id, start, end, status) in weeks {
+        let summary = if status == "booked" {
+            "Réservé"
+        } else {
+            "Indisponible"
+        };
+        ics.push_str(&format!(
+            "BEGIN:VEVENT\r\nUID:{id}@lesmenuires\r\nDTSTAMP:{stamp}\r\nDTSTART;VALUE=DATE:{}\r\nDTEND;VALUE=DATE:{}\r\nSUMMARY:{} — {}\r\nTRANSP:OPAQUE\r\nEND:VEVENT\r\n",
+            start.format("%Y%m%d"),
+            end.format("%Y%m%d"),
+            ical_escape(summary),
+            ical_escape(&name),
+        ));
+    }
+    ics.push_str("END:VCALENDAR\r\n");
+
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/calendar; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        ics,
+    )
+        .into_response())
+}
+
+/// Échappe une valeur texte iCalendar (RFC 5545 §3.3.11).
+fn ical_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace(';', "\\;")
+        .replace(',', "\\,")
+        .replace('\n', "\\n")
+}
+
 /// Store the signed contract (version + drawn signature + acceptance timestamp)
 /// as legal evidence, before payment. Only a pending cart can be signed.
 async fn sign_contract(
@@ -1154,7 +1338,15 @@ async fn send_welcome_email(pool: &PgPool, booking_id: Uuid, cid: Uuid, referenc
         ("prenom", first_name.clone()),
         ("reference", reference.to_string()),
     ];
-    let _ = email::send_system(pool.clone(), Some(booking_id), "welcome", mail, &vars, &link).await;
+    let _ = email::send_system(
+        pool.clone(),
+        Some(booking_id),
+        "welcome",
+        mail,
+        &vars,
+        &link,
+    )
+    .await;
 }
 
 #[derive(Deserialize)]

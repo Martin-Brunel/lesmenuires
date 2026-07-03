@@ -248,7 +248,64 @@ export default function DisponibilitesPage() {
       </Card>
 
       <GenerateWeeks seasons={seasons} defaultSeasonId={seasonId} onGenerated={reload} />
+
+      <IcalSync />
     </div>
+  );
+}
+
+/** Synchronisation calendrier : URL iCal secrète à importer dans Airbnb,
+ *  Booking ou Google Agenda (semaines réservées et bloquées = occupé). */
+function IcalSync() {
+  const [url, setUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const reveal = async () => {
+    try {
+      const r = await adminApi.getIcalUrl(SLUG);
+      setUrl(r.url);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    }
+  };
+
+  const copy = async () => {
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error("Copie impossible — sélectionnez l'URL à la main.");
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Synchronisation calendrier (iCal)</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm text-muted-foreground">
+          Importez cette URL dans Airbnb (« Importer un calendrier »), Booking ou Google Agenda :
+          les semaines réservées ou bloquées ici y apparaîtront comme occupées, pour éviter les
+          doubles réservations entre canaux. Gardez-la secrète — quiconque la connaît voit vos
+          dates d&apos;occupation.
+        </p>
+        {url ? (
+          <div className="mt-3 flex items-center gap-2">
+            <Input readOnly value={url} onFocus={(e) => e.currentTarget.select()} />
+            <Button variant="secondary" onClick={copy}>
+              {copied ? "Copié !" : "Copier"}
+            </Button>
+          </div>
+        ) : (
+          <Button variant="secondary" className="mt-3" onClick={reveal}>
+            Afficher l&apos;URL du calendrier
+          </Button>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

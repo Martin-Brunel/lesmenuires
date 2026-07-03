@@ -63,12 +63,21 @@ export type ApiSeason = {
   endDate: string;
 };
 
+export type ApiReview = {
+  authorName: string;
+  rating: number;
+  comment: string;
+  adminReply: string | null;
+  submittedAt: string;
+};
+
 export type BookingContext = {
   property: ApiProperty;
   season: ApiSeason | null;
   weeks: ApiWeek[];
   products: ApiProduct[];
   media: ApiMedia[];
+  reviews: ApiReview[];
 };
 
 export type BookingResult = {
@@ -254,6 +263,39 @@ export type MeResponse = {
   property: MeProperty | null;
   bookings: MyBooking[];
 };
+
+export type ReviewLink = {
+  propertyName: string;
+  locationLabel: string;
+  weekRange: string;
+  firstName: string | null;
+  submitted: boolean;
+  rating: number | null;
+  comment: string | null;
+};
+
+/** Le contexte d'une demande d'avis (jeton reçu par e-mail après le séjour). */
+export async function getReviewLink(token: string): Promise<ReviewLink> {
+  const res = await fetch(`${API_URL}/api/avis/${token}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`avis: HTTP ${res.status}`);
+  return res.json();
+}
+
+/** Dépose l'avis (une seule fois par séjour). */
+export async function submitReview(
+  token: string,
+  input: { rating: number; comment: string; authorName: string },
+): Promise<void> {
+  const res = await fetch(`${API_URL}/api/avis/${token}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? `avis: HTTP ${res.status}`);
+  }
+}
 
 /** Request a magic login link by e-mail (always resolves; never leaks existence). */
 export async function requestEspaceLink(email: string): Promise<void> {

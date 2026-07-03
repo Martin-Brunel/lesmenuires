@@ -357,6 +357,19 @@ export type SystemEmail = {
   customized: boolean;
 };
 
+export type AdminReview = {
+  id: string;
+  bookingReference: string;
+  weekRange: string;
+  customerName: string | null;
+  authorName: string;
+  rating: number;
+  comment: string;
+  published: boolean;
+  adminReply: string | null;
+  submittedAt: string;
+};
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -569,6 +582,13 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify({ amountCents, paymentType }),
     }),
+
+  listReviews: () => req<AdminReview[]>("/reviews"),
+  updateReview: (id: string, data: { published?: boolean; adminReply?: string }) =>
+    req<void>(`/reviews/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  requestReview: (reference: string) =>
+    req<void>(`/bookings/${reference}/request-review`, { method: "POST" }),
+  getIcalUrl: (slug: string) => req<{ url: string }>(`/property/${slug}/ical`),
 
   listMedia: (slug: string) => req<AdminMedia[]>(`/property/${slug}/media`),
   uploadMedia: async (slug: string, file: File): Promise<AdminMedia> => {
