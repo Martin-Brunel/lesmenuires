@@ -3,6 +3,7 @@ mod admin;
 mod campaigns;
 mod email;
 mod error;
+mod ical;
 mod payments;
 mod pricing;
 mod rate;

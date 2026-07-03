@@ -89,6 +89,12 @@ pub fn routes(state: AppState) -> Router {
         .route("/reviews", get(list_reviews))
         .route("/reviews/:id", put(update_review))
         .route("/property/:slug/ical", get(get_ical_url))
+        .route(
+            "/property/:slug/ical-feeds",
+            get(list_ical_feeds).post(create_ical_feed),
+        )
+        .route("/ical-feeds/sync", post(sync_ical_feeds))
+        .route("/ical-feeds/:id", delete(delete_ical_feed))
         .route("/scheduler/run", post(run_scheduler))
         .merge(crate::accounting::routes())
         .merge(crate::campaigns::routes())
@@ -618,6 +624,8 @@ struct AdminWeekDto {
     /// Référence + client de la réservation qui tient la semaine (si réservée).
     booking_reference: Option<String>,
     booking_customer: Option<String>,
+    /// Nom du flux iCal externe qui a bloqué la semaine (null = blocage manuel).
+    blocked_source: Option<String>,
 }
 
 /// Sous-requêtes réf + client de la réservation confirmée qui tient la semaine.
@@ -626,7 +634,8 @@ const WEEK_BOOKING_COLS: &str = ", \
         and b.status in ('confirmed','balance_paid') order by b.created_at desc limit 1) as booking_reference, \
     (select nullif(trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')), '') \
         from booking b left join customer c on c.id = b.customer_id where b.week_id = aw.id \
-        and b.status in ('confirmed','balance_paid') order by b.created_at desc limit 1) as booking_customer";
+        and b.status in ('confirmed','balance_paid') order by b.created_at desc limit 1) as booking_customer, \
+    (select f.name from ical_feed f where f.id = aw.blocked_by_feed) as blocked_source";
 
 async fn list_weeks(
     State(st): State<AppState>,
@@ -681,7 +690,11 @@ async fn update_week(
         return Err(AppError::BadRequest("Prix négatif.".into()));
     }
     let dto = sqlx::query_as::<_, AdminWeekDto>(
-        "update availability_week set price_cents=$2, status=$3, sub_label=$4, tier_key=$5 \
+        // Un changement de statut hors 'blocked' efface la source iCal : la
+        // semaine redevient pilotée à la main (sinon la synchro suivante la
+        // re-bloquerait/débloquerait sans que l'exploitant comprenne pourquoi).
+        "update availability_week set price_cents=$2, status=$3, sub_label=$4, tier_key=$5, \
+                blocked_by_feed = case when $3 = 'blocked' then blocked_by_feed else null end \
          where id=$1 \
          returning id, start_date, end_date, range_label, sub_label, price_cents, status, \
                    position, season_id, tier_key",
@@ -2170,6 +2183,110 @@ async fn get_ical_url(
     };
     let url = format!("{}/api/calendar/{token}.ics", crate::email::api_url());
     Ok(Json(serde_json::json!({ "url": url })))
+}
+
+// ---------------------------------------------------------------------------
+// Import iCal entrant : calendriers externes qui bloquent des semaines
+// (Airbnb, Booking, Google Agenda…). Voir src/ical.rs pour la synchro.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct IcalFeedDto {
+    id: Uuid,
+    name: String,
+    url: String,
+    last_synced_at: Option<DateTime<Utc>>,
+    last_error: Option<String>,
+    /// Nombre de semaines actuellement bloquées par ce flux.
+    blocked_weeks: i64,
+}
+
+const ICAL_FEED_COLS: &str = "f.id, f.name, f.url, f.last_synced_at, f.last_error, \
+    (select count(*) from availability_week aw \
+        where aw.blocked_by_feed = f.id and aw.status = 'blocked') as blocked_weeks";
+
+async fn list_ical_feeds(
+    State(st): State<AppState>,
+    Path(slug): Path<String>,
+) -> Result<Json<Vec<IcalFeedDto>>, AppError> {
+    let feeds = sqlx::query_as::<_, IcalFeedDto>(&format!(
+        "select {ICAL_FEED_COLS} from ical_feed f \
+         join property p on p.id = f.property_id where p.slug = $1 \
+         order by f.created_at"
+    ))
+    .bind(&slug)
+    .fetch_all(&st.pool)
+    .await?;
+    Ok(Json(feeds))
+}
+
+#[derive(Deserialize)]
+struct CreateIcalFeed {
+    name: String,
+    url: String,
+}
+
+async fn create_ical_feed(
+    State(st): State<AppState>,
+    Path(slug): Path<String>,
+    Json(input): Json<CreateIcalFeed>,
+) -> Result<Json<Vec<crate::ical::FeedSyncOutcome>>, AppError> {
+    let name = input.name.trim();
+    let url = input.url.trim();
+    if name.is_empty() {
+        return Err(AppError::BadRequest("Nom du calendrier requis.".into()));
+    }
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err(AppError::BadRequest(
+            "URL invalide (elle doit commencer par https://).".into(),
+        ));
+    }
+    let property_id: Option<Uuid> = sqlx::query_scalar("select id from property where slug = $1")
+        .bind(&slug)
+        .fetch_optional(&st.pool)
+        .await?;
+    let property_id = property_id.ok_or_else(|| AppError::NotFound("propriété".into()))?;
+    sqlx::query("insert into ical_feed (property_id, name, url) values ($1, $2, $3)")
+        .bind(property_id)
+        .bind(name)
+        .bind(url)
+        .execute(&st.pool)
+        .await?;
+    // Première synchro immédiate : l'exploitant voit tout de suite l'effet
+    // (et l'erreur éventuelle si l'URL est mauvaise).
+    Ok(Json(crate::ical::sync_all(&st.pool, true).await))
+}
+
+async fn delete_ical_feed(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    let mut tx = st.pool.begin().await?;
+    // Rouvre les semaines que ce flux avait bloquées (un blocage devenu
+    // orphelin serait indébloquable automatiquement).
+    sqlx::query(
+        "update availability_week set status = 'available', blocked_by_feed = null \
+         where blocked_by_feed = $1 and status = 'blocked'",
+    )
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
+    let deleted = sqlx::query("delete from ical_feed where id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    if deleted.rows_affected() == 0 {
+        return Err(AppError::NotFound("calendrier".into()));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn sync_ical_feeds(
+    State(st): State<AppState>,
+) -> Result<Json<Vec<crate::ical::FeedSyncOutcome>>, AppError> {
+    Ok(Json(crate::ical::sync_all(&st.pool, true).await))
 }
 
 /// Note interne sur la fiche contact (hors dossier).

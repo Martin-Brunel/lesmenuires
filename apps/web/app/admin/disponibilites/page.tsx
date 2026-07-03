@@ -8,6 +8,8 @@ import {
   type AdminSeason,
   type AdminWeek,
   type GlobalSettings,
+  type IcalFeed,
+  type IcalSyncOutcome,
   type RateTier,
 } from "@/lib/admin-api";
 import { frLong, frShort } from "@/lib/dates";
@@ -312,7 +314,7 @@ export default function DisponibilitesPage() {
 
       <GenerateWeeks seasons={seasons} defaultSeasonId={seasonId} onGenerated={reload} />
 
-      <IcalSync />
+      <IcalSync onChanged={reload} />
     </div>
   );
 }
@@ -351,11 +353,26 @@ function Switch({
   );
 }
 
-/** Synchronisation calendrier : URL iCal secrète à importer dans Airbnb,
- *  Booking ou Google Agenda (semaines réservées et bloquées = occupé). */
-function IcalSync() {
+/** Synchronisation calendrier, dans les deux sens :
+ *  - export : URL iCal secrète à importer dans Airbnb/Booking/Google Agenda ;
+ *  - import : calendriers externes dont les évènements bloquent automatiquement
+ *    les semaines ici (déblocage auto quand l'évènement disparaît). */
+function IcalSync({ onChanged }: { onChanged: () => void }) {
+  const confirm = useConfirm();
   const [url, setUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [feeds, setFeeds] = useState<IcalFeed[] | null>(null);
+  const [name, setName] = useState("");
+  const [feedUrl, setFeedUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const loadFeeds = () => {
+    adminApi
+      .listIcalFeeds(SLUG)
+      .then(setFeeds)
+      .catch(() => setFeeds([]));
+  };
+  useEffect(loadFeeds, []);
 
   const reveal = async () => {
     try {
@@ -377,30 +394,195 @@ function IcalSync() {
     }
   };
 
+  const reportOutcomes = (outcomes: IcalSyncOutcome[]) => {
+    const errors = outcomes.filter((o) => o.error);
+    errors.forEach((o) => toast.error(`${o.name} : ${o.error}`));
+    if (errors.length === 0) {
+      const blocked = outcomes.reduce((n, o) => n + o.blocked, 0);
+      const unblocked = outcomes.reduce((n, o) => n + o.unblocked, 0);
+      toast.success(
+        blocked + unblocked === 0
+          ? "Synchronisé — aucun changement."
+          : `Synchronisé — ${blocked} semaine(s) bloquée(s), ${unblocked} débloquée(s).`,
+      );
+    }
+  };
+
+  const addFeed = async () => {
+    if (busy) return;
+    if (!name.trim() || !feedUrl.trim()) {
+      toast.error("Nom et URL du calendrier requis.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const outcomes = await adminApi.createIcalFeed(SLUG, {
+        name: name.trim(),
+        url: feedUrl.trim(),
+      });
+      setName("");
+      setFeedUrl("");
+      reportOutcomes(outcomes);
+      loadFeeds();
+      onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const syncNow = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      reportOutcomes(await adminApi.syncIcalFeeds());
+      loadFeeds();
+      onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeFeed = async (f: IcalFeed) => {
+    if (
+      !(await confirm({
+        title: "Retirer ce calendrier ?",
+        description:
+          f.blockedWeeks > 0
+            ? `« ${f.name} » — les ${f.blockedWeeks} semaine(s) qu'il bloque seront remises en vente.`
+            : `« ${f.name} »`,
+        danger: true,
+        confirmLabel: "Retirer",
+      }))
+    )
+      return;
+    try {
+      await adminApi.deleteIcalFeed(f.id);
+      loadFeeds();
+      onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    }
+  };
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Synchronisation calendrier (iCal)</CardTitle>
       </CardHeader>
-      <CardContent>
-        <p className="text-sm text-muted-foreground">
-          Importez cette URL dans Airbnb (« Importer un calendrier »), Booking ou Google Agenda :
-          les semaines réservées ou bloquées ici y apparaîtront comme occupées, pour éviter les
-          doubles réservations entre canaux. Gardez-la secrète — quiconque la connaît voit vos
-          dates d&apos;occupation.
-        </p>
-        {url ? (
-          <div className="mt-3 flex items-center gap-2">
-            <Input readOnly value={url} onFocus={(e) => e.currentTarget.select()} />
-            <Button variant="secondary" onClick={copy}>
-              {copied ? "Copié !" : "Copier"}
+      <CardContent className="space-y-6">
+        <div>
+          <h3 className="text-sm font-medium">Exporter vers Airbnb, Booking, Google Agenda</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Importez cette URL dans Airbnb (« Importer un calendrier »), Booking ou Google Agenda :
+            les semaines réservées ou bloquées ici y apparaîtront comme occupées. Gardez-la
+            secrète — quiconque la connaît voit vos dates d&apos;occupation.
+          </p>
+          {url ? (
+            <div className="mt-3 flex items-center gap-2">
+              <Input readOnly value={url} onFocus={(e) => e.currentTarget.select()} />
+              <Button variant="secondary" onClick={copy}>
+                {copied ? "Copié !" : "Copier"}
+              </Button>
+            </div>
+          ) : (
+            <Button variant="secondary" className="mt-3" onClick={reveal}>
+              Afficher l&apos;URL du calendrier
+            </Button>
+          )}
+        </div>
+
+        <div className="border-t pt-4">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-sm font-medium">Importer les calendriers externes</h3>
+            {feeds && feeds.length > 0 && (
+              <Button variant="secondary" size="sm" onClick={syncNow} disabled={busy}>
+                {busy ? "Synchronisation…" : "Synchroniser maintenant"}
+              </Button>
+            )}
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Ajoutez l&apos;URL iCal d&apos;exportation de vos annonces (Airbnb : « Exporter un
+            calendrier », Booking : « Exporter »). Les semaines occupées là-bas seront bloquées
+            ici automatiquement (vérification ~toutes les 30 min), et rouvertes si
+            l&apos;évènement disparaît. Une semaine bloquée à la main n&apos;est jamais touchée.
+          </p>
+
+          {feeds && feeds.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {feeds.map((f) => (
+                <div
+                  key={f.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-3"
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium">
+                      {f.name}
+                      {f.blockedWeeks > 0 && (
+                        <span className="ml-2 rounded bg-rose-100 px-1.5 py-0.5 text-xs font-normal text-rose-700">
+                          {f.blockedWeeks} semaine(s) bloquée(s)
+                        </span>
+                      )}
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground" title={f.url}>
+                      {f.url}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {f.lastSyncedAt
+                        ? `Synchronisé le ${new Date(f.lastSyncedAt).toLocaleString("fr-FR")}`
+                        : "Jamais synchronisé"}
+                    </div>
+                    {f.lastError && (
+                      <div className="mt-0.5 text-xs text-destructive">{f.lastError}</div>
+                    )}
+                  </div>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8 shrink-0"
+                    onClick={() => removeFeed(f)}
+                    title="Retirer ce calendrier"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-3 flex flex-wrap items-end gap-2">
+            <div className="w-40">
+              <Label htmlFor="ical-name" className="text-xs">
+                Nom
+              </Label>
+              <Input
+                id="ical-name"
+                placeholder="Airbnb"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="h-9"
+              />
+            </div>
+            <div className="min-w-[260px] flex-1">
+              <Label htmlFor="ical-url" className="text-xs">
+                URL du calendrier (.ics)
+              </Label>
+              <Input
+                id="ical-url"
+                placeholder="https://www.airbnb.fr/calendar/ical/…ics"
+                value={feedUrl}
+                onChange={(e) => setFeedUrl(e.target.value)}
+                className="h-9"
+              />
+            </div>
+            <Button onClick={addFeed} disabled={busy}>
+              {busy ? "Ajout…" : "Ajouter"}
             </Button>
           </div>
-        ) : (
-          <Button variant="secondary" className="mt-3" onClick={reveal}>
-            Afficher l&apos;URL du calendrier
-          </Button>
-        )}
+        </div>
       </CardContent>
     </Card>
   );
@@ -451,6 +633,11 @@ function WeekRow({
           >
             {week.bookingCustomer ?? week.bookingReference}
           </Link>
+        )}
+        {week.status === "blocked" && week.blockedSource && (
+          <div className="mt-0.5 text-xs font-normal text-rose-500">
+            Bloqué par « {week.blockedSource} »
+          </div>
         )}
       </TableCell>
       <TableCell>

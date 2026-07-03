@@ -59,6 +59,24 @@ export type AdminWeek = {
   tierKey: string | null;
   bookingReference: string | null;
   bookingCustomer: string | null;
+  blockedSource: string | null;
+};
+
+export type IcalFeed = {
+  id: string;
+  name: string;
+  url: string;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+  blockedWeeks: number;
+};
+
+export type IcalSyncOutcome = {
+  feedId: string;
+  name: string;
+  blocked: number;
+  unblocked: number;
+  error: string | null;
 };
 
 export type RateTier = { key: string; label: string; priceCents: number };
@@ -840,6 +858,14 @@ export const adminApi = {
   requestReview: (reference: string) =>
     req<void>(`/bookings/${reference}/request-review`, { method: "POST" }),
   getIcalUrl: (slug: string) => req<{ url: string }>(`/property/${slug}/ical`),
+  listIcalFeeds: (slug: string) => req<IcalFeed[]>(`/property/${slug}/ical-feeds`),
+  createIcalFeed: (slug: string, data: { name: string; url: string }) =>
+    req<IcalSyncOutcome[]>(`/property/${slug}/ical-feeds`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  deleteIcalFeed: (id: string) => req<void>(`/ical-feeds/${id}`, { method: "DELETE" }),
+  syncIcalFeeds: () => req<IcalSyncOutcome[]>("/ical-feeds/sync", { method: "POST" }),
 
   listMedia: (slug: string) => req<AdminMedia[]>(`/property/${slug}/media`),
   uploadMedia: async (slug: string, file: File): Promise<AdminMedia> => {

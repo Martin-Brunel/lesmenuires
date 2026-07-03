@@ -96,6 +96,9 @@ pub async fn run_tick(pool: &PgPool, payments: &Arc<dyn PaymentProvider>) -> Tic
     if let Err(e) = purge_expired_tokens(pool, &mut r).await {
         tracing::error!("job purge jetons: {e:?}");
     }
+    // Calendriers externes (Airbnb, Booking…) : bloque/débloque les semaines
+    // selon les évènements importés (throttlé par flux, loggé par le module).
+    crate::ical::sync_all(pool, false).await;
     // Comptabilité : matérialise en écritures les flux arrivés depuis le
     // dernier tick (idempotent — les sources déjà comptabilisées sont ignorées).
     match crate::accounting::sync_ledger(pool).await {
