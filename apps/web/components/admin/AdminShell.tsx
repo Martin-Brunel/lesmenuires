@@ -22,6 +22,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { adminApi, type Me } from "@/lib/admin-api";
+import { site } from "@/lib/site";
 import { Avatar } from "@/components/admin/Avatar";
 import { Button } from "@/components/ui/button";
 import { DialogProvider } from "@/components/admin/dialogs";
@@ -122,7 +123,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       <aside className="w-64 shrink-0 border-r bg-background flex flex-col sticky top-0 h-screen print:hidden">
         <div className="h-14 flex items-center px-5 border-b shrink-0">
           <span className="text-lg" style={{ fontFamily: "'Marcellus',serif" }}>
-            L&apos;Adret
+            {site.name}
           </span>
           <span className="ml-2 text-xs text-muted-foreground">admin</span>
         </div>

@@ -482,7 +482,7 @@ function SystemEmailDialog({
         wide
         onClose={() => setPreview(null)}
         title={`Aperçu — ${preview.subject}`}
-        description="Rendu réel (gabarit L'Adret) avec des données d'exemple."
+        description="Rendu réel (gabarit du site) avec des données d'exemple."
         footer={
           <>
             <Button variant="ghost" size="sm" onClick={() => setPreview(null)}>
@@ -633,7 +633,7 @@ function AutomationDialog({
         wide
         onClose={() => setPreview(null)}
         title={`Aperçu — ${preview.subject}`}
-        description="Rendu réel (gabarit L'Adret) avec des données d'exemple."
+        description="Rendu réel (gabarit du site) avec des données d'exemple."
         footer={
           <>
             <Button variant="ghost" size="sm" onClick={() => setPreview(null)}>

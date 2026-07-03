@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { adminApi, type BookingDetail, type SignatureInfo } from "@/lib/admin-api";
+import { site } from "@/lib/site";
 import { Button } from "@/components/ui/button";
 
 const dt = (iso: string) =>
@@ -55,7 +56,7 @@ export default function ContratAdminPage() {
         <div className="flex items-start justify-between border-b pb-6">
           <div>
             <div className="text-2xl" style={{ fontFamily: "'Marcellus',serif" }}>
-              L&apos;Adret
+              {site.name}
             </div>
             <div className="text-neutral-500">Contrat de location saisonnière</div>
           </div>

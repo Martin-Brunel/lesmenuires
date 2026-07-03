@@ -10,7 +10,7 @@ const env = (k: string, fallback: string) =>
   (process.env[k] && process.env[k]!.trim()) || fallback;
 
 export const site = {
-  name: "L'Adret",
+  name: env("NEXT_PUBLIC_SITE_NAME", "L'Adret"),
   // Localisation du bien (résidence Les Ménuires, vallée des Belleville / 3 Vallées).
   location: env("NEXT_PUBLIC_LOCATION", "Les Ménuires"),
   contactEmail: env("NEXT_PUBLIC_CONTACT_EMAIL", "contact@example.fr"),

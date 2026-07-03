@@ -1203,7 +1203,8 @@ async fn send_booking_email(
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('\n', "<br>");
-    let html = crate::email::template(&subject, &safe, "", "");
+    let (site, location) = crate::email::brand(&st.pool).await;
+    let html = crate::email::template(&site, &location, &subject, &safe, "", "");
     crate::email::spawn(st.pool.clone(), Some(row.0), "manual", to, subject, html);
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1469,7 +1470,7 @@ struct PreviewInput {
 }
 
 /// Aperçu d'un transactionnel : même moteur de rendu que l'envoi réel
-/// (variables d'exemple, instructions d'accès réelles, gabarit L'Adret).
+/// (variables d'exemple, instructions d'accès réelles, gabarit du site).
 async fn preview_email_automation(
     State(st): State<AppState>,
     Json(p): Json<PreviewInput>,
@@ -1492,6 +1493,7 @@ async fn preview_email_automation(
         arrival_instructions: &access,
     });
     let mut vars = vars;
+    let (site, location) = crate::email::brand(&st.pool).await;
     vars.extend([
         ("bonjour", "Bonjour Camille,".to_string()),
         ("montant", "1 183 €".to_string()),
@@ -1501,10 +1503,13 @@ async fn preview_email_automation(
             "le prélèvement du solde de votre séjour".to_string(),
         ),
         ("remboursement", String::new()),
+        ("site", site.clone()),
     ]);
     let subject = crate::email::render_template(&p.subject, &vars, false);
     let body = crate::email::render_email_body(&p.body, &vars);
     let html = crate::email::template(
+        &site,
+        &location,
         &subject,
         &body,
         "Mon espace",
@@ -1576,18 +1581,19 @@ async fn send_password_link(
     } else {
         format!("Bonjour {name}")
     };
+    let (site, location) = crate::email::brand(&st.pool).await;
     let (subject, body) = if invite {
         (
-            "Votre accès administrateur — L'Adret",
+            format!("Votre accès administrateur — {site}"),
             format!(
-                "{greeting},<br><br>Un accès au back-office de L'Adret vient de vous être créé. \
+                "{greeting},<br><br>Un accès au back-office de {site} vient de vous être créé. \
                  Définissez votre mot de passe pour activer votre compte. \
                  Ce lien est valable 7 jours."
             ),
         )
     } else {
         (
-            "Réinitialisation de votre mot de passe — L'Adret",
+            format!("Réinitialisation de votre mot de passe — {site}"),
             format!(
                 "{greeting},<br><br>Vous avez demandé la réinitialisation de votre mot de passe. \
                  Ce lien est valable 1 heure. Si vous n'êtes pas à l'origine de cette demande, \
@@ -1595,7 +1601,14 @@ async fn send_password_link(
             ),
         )
     };
-    let html = crate::email::template(subject, &body, "Définir mon mot de passe", &url);
+    let html = crate::email::template(
+        &site,
+        &location,
+        &subject,
+        &body,
+        "Définir mon mot de passe",
+        &url,
+    );
     crate::email::spawn(
         st.pool.clone(),
         None,
@@ -2206,7 +2219,8 @@ async fn send_contact_email(
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('\n', "<br>");
-    let html = crate::email::template(&subject, &safe, "", "");
+    let (site, location) = crate::email::brand(&st.pool).await;
+    let html = crate::email::template(&site, &location, &subject, &safe, "", "");
     crate::email::spawn(st.pool.clone(), None, "manual", email, subject, html);
     Ok(StatusCode::NO_CONTENT)
 }

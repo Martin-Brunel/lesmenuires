@@ -742,7 +742,7 @@ function EmailDialog({
           value={message}
           onChange={(e) => setMessage(e.target.value)}
         />
-        <p className="text-xs text-muted-foreground">Le message est habillé du modèle L&apos;Adret et journalisé dans le dossier.</p>
+        <p className="text-xs text-muted-foreground">Le message est habillé du modèle du site et journalisé dans le dossier.</p>
       </div>
     </Modal>
   );

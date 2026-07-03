@@ -352,6 +352,7 @@ async fn run_email_automations(pool: &PgPool, r: &mut TickReport) -> Result<(), 
     .fetch_all(pool)
     .await?;
 
+    let (site, location) = email::brand(pool).await;
     for d in due {
         // Mark first (idempotent even if the e-mail send is best-effort).
         let inserted = sqlx::query(
@@ -383,7 +384,7 @@ async fn run_email_automations(pool: &PgPool, r: &mut TickReport) -> Result<(), 
                 None => continue,
             }
         };
-        let vars = booking_vars(&TemplateBooking {
+        let mut vars = booking_vars(&TemplateBooking {
             first_name: d.first_name.as_deref(),
             last_name: d.last_name.as_deref(),
             reference: &d.reference,
@@ -395,6 +396,7 @@ async fn run_email_automations(pool: &PgPool, r: &mut TickReport) -> Result<(), 
             balance_cents: d.balance_cents,
             arrival_instructions: &d.arrival_instructions,
         });
+        vars.push(("site", site.clone()));
         let subject = email::render_template(&d.subject, &vars, false);
         let body = email::render_email_body(&d.body, &vars);
         // Le CTA « Mon espace » n'a de sens que pour le client du dossier.
@@ -403,7 +405,7 @@ async fn run_email_automations(pool: &PgPool, r: &mut TickReport) -> Result<(), 
         } else {
             ("Mon espace", format!("{}/espace", email::front_url()))
         };
-        let html = email::template(&subject, &body, cta_label, &cta_url);
+        let html = email::template(&site, &location, &subject, &body, cta_label, &cta_url);
         for to in recipients {
             email::spawn(
                 pool.clone(),

@@ -2,9 +2,10 @@ import type { Metadata } from "next";
 import { BookingFunnel } from "@/components/booking/BookingFunnel";
 import { getBookingContext } from "@/lib/api";
 import { css } from "@/components/booking/css";
+import { site } from "@/lib/site";
 
 export const metadata: Metadata = {
-  title: "Réserver votre séjour — L'Adret",
+  title: `Réserver votre séjour — ${site.name}`,
   description:
     "Choisissez votre semaine, ajoutez vos prestations, signez le contrat et réglez l'acompte en ligne.",
 };

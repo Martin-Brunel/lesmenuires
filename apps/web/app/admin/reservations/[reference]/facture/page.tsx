@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { adminApi, fmtEur, type BookingDetail } from "@/lib/admin-api";
+import { site } from "@/lib/site";
 import { Button } from "@/components/ui/button";
 
 const dd = (iso: string) =>
@@ -56,7 +57,7 @@ export default function FacturePage() {
         <div className="flex items-start justify-between border-b pb-6">
           <div>
             <div className="text-2xl" style={{ fontFamily: "'Marcellus',serif" }}>
-              L&apos;Adret
+              {site.name}
             </div>
             <div className="text-neutral-500">Location de meublé de tourisme</div>
             {b.ownerName && (

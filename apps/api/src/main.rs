@@ -925,7 +925,10 @@ async fn ical_feed(
     .await?;
 
     let stamp = Utc::now().format("%Y%m%dT%H%M%SZ");
-    let mut ics = String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//L'Adret//lesmenuires//FR\r\nCALSCALE:GREGORIAN\r\n");
+    let mut ics = format!(
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//{}//lesmenuires//FR\r\nCALSCALE:GREGORIAN\r\n",
+        ical_escape(&name)
+    );
     ics.push_str(&format!("X-WR-CALNAME:{}\r\n", ical_escape(&name)));
     for (id, start, end, status) in weeks {
         let summary = if status == "booked" {
@@ -1579,7 +1582,10 @@ async fn request_link(
         if let Some(cid) = cid {
             let token = create_magic_token(&st.pool, cid).await?;
             let link = format!("{}/api/espace/login?token={}", email::api_url(), token);
+            let (site, location) = email::brand(&st.pool).await;
             let html = email::template(
+                &site,
+                &location,
                 "Connexion à votre espace",
                 "Cliquez ci-dessous pour accéder à votre espace séjour. Ce lien est valable 30 minutes.",
                 "Ouvrir mon espace",
@@ -1590,7 +1596,7 @@ async fn request_link(
                 None,
                 "magic_link",
                 email_in,
-                "Connexion à votre espace — L'Adret".into(),
+                format!("Connexion à votre espace — {site}"),
                 html,
             );
         }

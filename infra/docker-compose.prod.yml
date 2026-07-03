@@ -102,6 +102,18 @@ services:
       args:
         # Origine publique : le navigateur et le SSR passent par Caddy.
         NEXT_PUBLIC_API_URL: https://${DOMAIN}
+        # Identité du site (inlinée au build — vide = fallback de lib/site.ts).
+        NEXT_PUBLIC_SITE_NAME: ${NEXT_PUBLIC_SITE_NAME:-}
+        NEXT_PUBLIC_LOCATION: ${NEXT_PUBLIC_LOCATION:-}
+        NEXT_PUBLIC_CONTACT_EMAIL: ${NEXT_PUBLIC_CONTACT_EMAIL:-}
+        NEXT_PUBLIC_EDITOR_NAME: ${NEXT_PUBLIC_EDITOR_NAME:-}
+        NEXT_PUBLIC_EDITOR_STATUS: ${NEXT_PUBLIC_EDITOR_STATUS:-}
+        NEXT_PUBLIC_EDITOR_ADDRESS: ${NEXT_PUBLIC_EDITOR_ADDRESS:-}
+        NEXT_PUBLIC_EDITOR_SIRET: ${NEXT_PUBLIC_EDITOR_SIRET:-}
+        NEXT_PUBLIC_EDITOR_PHONE: ${NEXT_PUBLIC_EDITOR_PHONE:-}
+        NEXT_PUBLIC_HOST_NAME: ${NEXT_PUBLIC_HOST_NAME:-}
+        NEXT_PUBLIC_HOST_ADDRESS: ${NEXT_PUBLIC_HOST_ADDRESS:-}
+        NEXT_PUBLIC_LEGAL_DATE: ${NEXT_PUBLIC_LEGAL_DATE:-}
     restart: unless-stopped
     depends_on:
       api:

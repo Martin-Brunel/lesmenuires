@@ -383,6 +383,7 @@ async fn send_campaign(
         ));
     }
 
+    let (site, location) = email::brand(&st.pool).await;
     let mut sent = 0i64;
     for (rid, to, first_name, last_name) in pending {
         let vars: Vec<(&str, String)> = vec![
@@ -393,7 +394,7 @@ async fn send_campaign(
         let subject = email::render_template(&campaign.0, &vars, false);
         let body_html = email::render_email_body(&campaign.1, &vars);
         let heading = subject.clone();
-        let html = email::template(&heading, &body_html, "", "");
+        let html = email::template(&site, &location, &heading, &body_html, "", "");
         email::spawn(st.pool.clone(), None, "campaign", to, subject, html);
         sqlx::query(
             "update email_campaign_recipient set status = 'sent', sent_at = now() where id = $1",

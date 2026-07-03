@@ -311,7 +311,7 @@ function ContactEmailDialog({
           onChange={(e) => setMessage(e.target.value)}
         />
         <p className="text-xs text-muted-foreground">
-          Le message est habillé du modèle L&apos;Adret et journalisé sur la fiche.
+          Le message est habillé du modèle du site et journalisé sur la fiche.
         </p>
       </div>
     </Modal>

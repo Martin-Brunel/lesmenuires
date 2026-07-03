@@ -15,6 +15,7 @@ import {
 import { ACCENT, eur, balanceDueLabel } from "@/components/booking/data";
 import { css } from "@/components/booking/css";
 import { StripeCheckout } from "@/components/booking/StripeCheckout";
+import { site } from "@/lib/site";
 
 const STATUS: Record<string, { label: string; color: string }> = {
   cart: { label: "Paiement en attente", color: "#B8860B" },
@@ -81,7 +82,7 @@ export default function EspacePage() {
     <div style={css("min-height:100vh;background:#F5F4F1;color:#1A1B1A;font-family:'Hanken Grotesk',system-ui,sans-serif")}>
       <div style={css("position:sticky;top:0;z-index:30;height:62px;background:rgba(245,244,241,.86);backdrop-filter:blur(10px);border-bottom:1px solid rgba(0,0,0,.08);display:flex;align-items:center;justify-content:space-between;padding:0 clamp(20px,5vw,40px)")}>
         <Link href="/reserver" style={css("font:400 24px 'Marcellus';letter-spacing:.02em;text-decoration:none;color:#1A1B1A")}>
-          L&apos;Adret
+          {me?.property?.name ?? site.name}
         </Link>
         {me ? (
           <button

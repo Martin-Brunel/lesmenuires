@@ -145,7 +145,26 @@ pub fn spawn(
 }
 
 /// Branded HTML wrapper with an optional call-to-action button.
-pub fn template(heading: &str, body_html: &str, cta_label: &str, cta_url: &str) -> String {
+/// Identité du site pour les e-mails : (nom, localisation), lus depuis la
+/// propriété — la source de vérité, éditable dans l'admin (Éditorial). Le nom
+/// n'est jamais codé en dur dans un e-mail.
+pub(crate) async fn brand(pool: &sqlx::PgPool) -> (String, String) {
+    sqlx::query_as::<_, (String, String)>("select name, location_label from property limit 1")
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| ("Votre location".into(), String::new()))
+}
+
+pub fn template(
+    brand_name: &str,
+    brand_location: &str,
+    heading: &str,
+    body_html: &str,
+    cta_label: &str,
+    cta_url: &str,
+) -> String {
     let cta = if cta_label.is_empty() {
         String::new()
     } else {
@@ -153,11 +172,16 @@ pub fn template(heading: &str, body_html: &str, cta_label: &str, cta_url: &str) 
             r#"<a href="{cta_url}" style="display:inline-block;margin-top:24px;padding:14px 26px;background:#1A1B1A;color:#ffffff;text-decoration:none;border-radius:12px;font:600 14px Helvetica,Arial,sans-serif">{cta_label}</a>"#
         )
     };
+    let footer_brand = if brand_location.trim().is_empty() {
+        brand_name.to_string()
+    } else {
+        format!("{brand_name} · {brand_location}")
+    };
     format!(
         r#"<div style="background:#F5F4F1;padding:32px 0;font-family:Helvetica,Arial,sans-serif;color:#1A1B1A">
   <div style="max-width:520px;margin:0 auto;background:#ffffff;border:1px solid #ececec;border-radius:18px;overflow:hidden">
     <div style="padding:24px 32px;border-bottom:1px solid #f0efec">
-      <div style="font:400 24px Georgia,serif;letter-spacing:.02em">L'Adret</div>
+      <div style="font:400 24px Georgia,serif;letter-spacing:.02em">{brand_name}</div>
     </div>
     <div style="padding:28px 32px">
       <h1 style="margin:0 0 14px;font:400 24px Georgia,serif">{heading}</h1>
@@ -165,7 +189,7 @@ pub fn template(heading: &str, body_html: &str, cta_label: &str, cta_url: &str) 
       {cta}
     </div>
     <div style="padding:18px 32px;border-top:1px solid #f0efec;font:400 12px Helvetica,Arial,sans-serif;color:#9A9C97">
-      L'Adret · Les Ménuires — cet e-mail vous est envoyé suite à votre démarche de réservation.
+      {footer_brand} — cet e-mail vous est envoyé suite à votre démarche de réservation.
     </div>
   </div>
 </div>"#
@@ -227,82 +251,82 @@ pub(crate) const SYSTEM_TEMPLATES: &[SystemTemplate] = &[
         kind: "welcome",
         label: "Confirmation de réservation",
         trigger: "Envoyé au client dès que l'acompte est réglé.",
-        subject: "Votre réservation est confirmée — L'Adret",
+        subject: "Votre réservation est confirmée — {{site}}",
         body: "{{bonjour}}\n\nVotre réservation {{reference}} est confirmée — merci de votre confiance. Retrouvez le détail de votre séjour, les échéances de paiement et les consignes d'arrivée dans votre espace personnel.",
         cta_label: "Accéder à mon espace",
-        vars: &["bonjour", "prenom", "reference"],
+        vars: &["bonjour", "prenom", "reference", "site"],
     },
     SystemTemplate {
         kind: "offline_pending",
         label: "Instructions de règlement (chèque/virement)",
         trigger: "Envoyé quand une réservation en ligne choisit le règlement par chèque ou virement.",
-        subject: "Votre réservation est en attente de règlement — L'Adret",
+        subject: "Votre réservation est en attente de règlement — {{site}}",
         body: "{{bonjour}}\n\nVotre demande de réservation {{reference}} est bien enregistrée : la semaine est retenue pour vous.\n\nPour la confirmer définitivement, réglez l'acompte de {{montant}} par {{methode}} :\n\n{{instructions}}\n\nPensez à indiquer la référence {{reference}} avec votre règlement. Dès réception, nous validerons votre réservation et vous recevrez une confirmation.",
         cta_label: "Suivre ma réservation",
-        vars: &["bonjour", "prenom", "reference", "montant", "methode", "instructions"],
+        vars: &["bonjour", "prenom", "reference", "montant", "methode", "instructions", "site"],
     },
     SystemTemplate {
         kind: "balance_prenotify",
         label: "Prélèvement du solde à venir",
         trigger: "Envoyé ~16 jours avant l'arrivée, avant le prélèvement automatique (J-14).",
-        subject: "Prélèvement du solde à venir — L'Adret",
-        body: "{{bonjour}}\n\nLe solde de votre séjour à L'Adret, soit {{montant}}, sera prélevé automatiquement le {{date}} sur la carte enregistrée lors de votre réservation {{reference}}.\n\nVous n'avez rien à faire : assurez-vous simplement que votre carte est toujours valide. Vous pouvez aussi régler le solde dès maintenant depuis votre espace.",
+        subject: "Prélèvement du solde à venir — {{site}}",
+        body: "{{bonjour}}\n\nLe solde de votre séjour à {{site}}, soit {{montant}}, sera prélevé automatiquement le {{date}} sur la carte enregistrée lors de votre réservation {{reference}}.\n\nVous n'avez rien à faire : assurez-vous simplement que votre carte est toujours valide. Vous pouvez aussi régler le solde dès maintenant depuis votre espace.",
         cta_label: "Voir ma réservation",
-        vars: &["bonjour", "prenom", "montant", "date", "reference"],
+        vars: &["bonjour", "prenom", "montant", "date", "reference", "site"],
     },
     SystemTemplate {
         kind: "balance_paid",
         label: "Solde réglé",
         trigger: "Envoyé quand le solde a été prélevé avec succès.",
-        subject: "Solde réglé — L'Adret",
-        body: "{{bonjour}}\n\nLe solde de votre séjour à L'Adret ({{montant}}) vient d'être prélevé sur votre moyen de paiement enregistré. Votre réservation {{reference}} est entièrement réglée.\n\nAucune caution n'est prélevée : votre carte reste simplement enregistrée et ne serait débitée qu'en cas de dégâts constatés à l'état des lieux de sortie.",
+        subject: "Solde réglé — {{site}}",
+        body: "{{bonjour}}\n\nLe solde de votre séjour à {{site}} ({{montant}}) vient d'être prélevé sur votre moyen de paiement enregistré. Votre réservation {{reference}} est entièrement réglée.\n\nAucune caution n'est prélevée : votre carte reste simplement enregistrée et ne serait débitée qu'en cas de dégâts constatés à l'état des lieux de sortie.",
         cta_label: "Voir ma réservation",
-        vars: &["bonjour", "prenom", "montant", "reference"],
+        vars: &["bonjour", "prenom", "montant", "reference", "site"],
     },
     SystemTemplate {
         kind: "payment_issue",
         label: "Incident de paiement",
         trigger: "Envoyé quand un prélèvement automatique échoue définitivement.",
-        subject: "Action requise sur votre réservation — L'Adret",
+        subject: "Action requise sur votre réservation — {{site}}",
         body: "{{bonjour}}\n\nNous n'avons pas pu effectuer {{operation}} (réservation {{reference}}). Votre banque a peut-être refusé l'opération ou une confirmation est nécessaire. Merci de nous contacter ou de vérifier votre moyen de paiement depuis votre espace afin de finaliser votre réservation.",
         cta_label: "Mon espace",
-        vars: &["bonjour", "prenom", "operation", "reference"],
+        vars: &["bonjour", "prenom", "operation", "reference", "site"],
     },
     SystemTemplate {
         kind: "cart_reminder",
         label: "Relance panier",
         trigger: "Envoyé au client qui a commencé une réservation sans la finaliser.",
-        subject: "Votre réservation vous attend — L'Adret",
-        body: "{{bonjour}}\n\nVous avez commencé une réservation à L'Adret sans la finaliser. Votre sélection vous attend — il ne reste que le règlement de l'acompte pour la confirmer.",
+        subject: "Votre réservation vous attend — {{site}}",
+        body: "{{bonjour}}\n\nVous avez commencé une réservation à {{site}} sans la finaliser. Votre sélection vous attend — il ne reste que le règlement de l'acompte pour la confirmer.",
         cta_label: "Finaliser ma réservation",
-        vars: &["bonjour", "prenom"],
+        vars: &["bonjour", "prenom", "site"],
     },
     SystemTemplate {
         kind: "cancellation",
         label: "Annulation",
         trigger: "Envoyé au client quand sa réservation est annulée.",
-        subject: "Annulation de votre réservation — L'Adret",
-        body: "{{bonjour}}\n\nVotre réservation {{reference}} (semaine {{semaine}}) à L'Adret a bien été annulée.{{remboursement}}\n\nPour toute question, répondez simplement à cet e-mail.",
+        subject: "Annulation de votre réservation — {{site}}",
+        body: "{{bonjour}}\n\nVotre réservation {{reference}} (semaine {{semaine}}) à {{site}} a bien été annulée.{{remboursement}}\n\nPour toute question, répondez simplement à cet e-mail.",
         cta_label: "",
-        vars: &["bonjour", "reference", "semaine", "remboursement"],
+        vars: &["bonjour", "reference", "semaine", "remboursement", "site"],
     },
     SystemTemplate {
         kind: "review_request",
         label: "Demande d'avis",
         trigger: "Envoyé au client après son départ, pour recueillir son avis sur le séjour.",
-        subject: "Comment s'est passé votre séjour ? — L'Adret",
-        body: "{{bonjour}}\n\nNous espérons que votre séjour à L'Adret (semaine {{semaine}}) s'est bien passé. Votre avis compte beaucoup : il aide les prochains voyageurs et nous permet de nous améliorer. Cela ne prend qu'une minute.",
+        subject: "Comment s'est passé votre séjour ? — {{site}}",
+        body: "{{bonjour}}\n\nNous espérons que votre séjour à {{site}} (semaine {{semaine}}) s'est bien passé. Votre avis compte beaucoup : il aide les prochains voyageurs et nous permet de nous améliorer. Cela ne prend qu'une minute.",
         cta_label: "Laisser un avis",
-        vars: &["bonjour", "prenom", "semaine"],
+        vars: &["bonjour", "prenom", "semaine", "site"],
     },
     SystemTemplate {
         kind: "contract_request",
         label: "Contrat à signer",
         trigger: "Envoyé depuis un dossier (résa manuelle) pour faire signer le contrat en ligne.",
-        subject: "Votre contrat de location à signer — L'Adret",
-        body: "{{bonjour}}\n\nVotre contrat de location pour la semaine du {{semaine}} à L'Adret est prêt. Merci de le lire et de le signer en ligne — cela ne prend qu'une minute. Ce lien restera ensuite accessible comme copie de votre contrat signé.",
+        subject: "Votre contrat de location à signer — {{site}}",
+        body: "{{bonjour}}\n\nVotre contrat de location pour la semaine du {{semaine}} à {{site}} est prêt. Merci de le lire et de le signer en ligne — cela ne prend qu'une minute. Ce lien restera ensuite accessible comme copie de votre contrat signé.",
         cta_label: "Lire et signer le contrat",
-        vars: &["bonjour", "prenom", "semaine"],
+        vars: &["bonjour", "prenom", "semaine", "site"],
     },
 ];
 
@@ -329,16 +353,20 @@ pub(crate) async fn send_system(
         .as_ref()
         .map(|(s, b)| (s.as_str(), b.as_str()))
         .unwrap_or((def.subject, def.body));
-    let subject = render_template(subject_tpl, vars, false);
-    let body = render_email_body(body_tpl, vars);
+    // {{site}} est injecté automatiquement dans tous les e-mails système.
+    let (site, location) = brand(&pool).await;
+    let mut all_vars: Vec<(&str, String)> = vars.to_vec();
+    all_vars.push(("site", site.clone()));
+    let subject = render_template(subject_tpl, &all_vars, false);
+    let body = render_email_body(body_tpl, &all_vars);
     // Le titre dans le gabarit visuel reprend le sujet, sans le suffixe marque.
-    let heading = subject.trim_end_matches(" — L'Adret").to_string();
+    let heading = subject.trim_end_matches(&format!(" — {site}")).to_string();
     let (label, url) = if cta_url.is_empty() {
         ("", "")
     } else {
         (def.cta_label, cta_url)
     };
-    let html = template(&heading, &body, label, url);
+    let html = template(&site, &location, &heading, &body, label, url);
     spawn(pool, booking_id, kind, to, subject, html);
     Ok(())
 }
