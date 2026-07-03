@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { CancelDialog } from "@/components/admin/CancelDialog";
 import { useConfirm, usePrompt } from "@/components/admin/dialogs";
+import { attentionReasons, daysFromToday } from "@/lib/attention";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 
@@ -95,6 +96,24 @@ export default function ReservationDetailPage() {
 
   const b = data.booking;
   const active = b.status !== "cancelled";
+  // Mêmes « Actions requises » que le tableau de bord (helper partagé). La
+  // fiche ne reçoit ni endDate ni balanceOverdue : recalculés ici (semaine
+  // stricte samedi→samedi ; solde en retard = impayé au jour de l'arrivée).
+  const endDateIso = (() => {
+    const d = new Date(b.startDate + "T00:00:00");
+    d.setDate(d.getDate() + 7);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  })();
+  const attention = attentionReasons({
+    ...b,
+    endDate: endDateIso,
+    balanceOverdue:
+      b.status === "confirmed" &&
+      !b.balancePaidAt &&
+      b.balanceCents > 0 &&
+      daysFromToday(b.startDate) <= 0,
+  });
   // Damages assessed at check-out: no caution action before the stay begins.
   const stayStarted = new Date(b.startDate + "T00:00:00") <= new Date();
   // Refundable amount still owed (works even after cancellation).
@@ -312,6 +331,19 @@ export default function ReservationDetailPage() {
           </p>
         )}
       </div>
+
+      {attention.length > 0 && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3">
+          <div className="text-sm font-medium text-destructive">Actions requises</div>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {attention.map((r) => (
+              <Badge key={r} variant="destructive">
+                {r}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Actions du dossier (visibles) */}
       <div className="flex flex-wrap items-center gap-2">

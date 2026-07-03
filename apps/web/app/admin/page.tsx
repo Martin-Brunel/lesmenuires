@@ -10,7 +10,7 @@ import {
 } from "@/lib/admin-api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { PAYMENT_FLAG_LABEL } from "@/lib/admin-api";
+import { attentionReasons } from "@/lib/attention";
 
 const SLUG = "ladret";
 
@@ -43,28 +43,7 @@ function paxLabel(b: AdminBooking): string {
   return parts.join(" + ");
 }
 
-/** Reasons a booking needs the operator's attention. */
-function attentionReasons(b: AdminBooking): string[] {
-  const out: string[] = [];
-  if (b.paymentFlag) out.push(PAYMENT_FLAG_LABEL[b.paymentFlag] ?? b.paymentFlag);
-  if (b.balanceOverdue) out.push("Solde en retard");
-  if (b.balanceAttempts > 0 && b.status !== "cancelled")
-    out.push(`Échec prélèvement solde ×${b.balanceAttempts}`);
-  if (b.cautionAttempts > 0 && b.status !== "cancelled")
-    out.push(`Échec caution ×${b.cautionAttempts}`);
-  // Stay is over but the caution was neither released nor charged: the guest is
-  // waiting for their guarantee to be closed (card) or their cheque back.
-  if (
-    isActive(b) &&
-    b.cautionCents > 0 &&
-    daysFromToday(b.endDate) <= 0 &&
-    !b.cautionReleasedAt &&
-    b.cautionCapturedCents == null
-  ) {
-    out.push(b.cautionMethod === "cheque" ? "Chèque de caution à rendre" : "Caution à clôturer");
-  }
-  return out;
-}
+// attentionReasons vient de lib/attention — partagé avec la fiche réservation.
 
 /** Payment / paperwork readiness badges for an upcoming stay. */
 function readinessBadges(b: AdminBooking) {
