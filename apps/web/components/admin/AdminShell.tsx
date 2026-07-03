@@ -22,7 +22,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { adminApi, type Me } from "@/lib/admin-api";
-import { site } from "@/lib/site";
+import { site, legalIncomplete } from "@/lib/site";
 import { Avatar } from "@/components/admin/Avatar";
 import { Button } from "@/components/ui/button";
 import { DialogProvider } from "@/components/admin/dialogs";
@@ -178,6 +178,15 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
       <main className="flex-1 min-w-0">
+        {legalIncomplete && (
+          <div className="border-b border-amber-300 bg-amber-50 px-8 py-2.5 text-sm text-amber-900 print:hidden">
+            <strong>Mentions légales incomplètes</strong> — l&apos;identité de
+            l&apos;éditeur/hébergeur du site n&apos;est pas renseignée (variables{" "}
+            <code className="text-xs">NEXT_PUBLIC_EDITOR_*</code> /{" "}
+            <code className="text-xs">NEXT_PUBLIC_HOST_*</code> au build, cf.
+            checklist DEPLOY.md). Les pages publiques affichent « à compléter ».
+          </div>
+        )}
         <div className="mx-auto max-w-5xl p-8 print:max-w-none print:p-0">{children}</div>
       </main>
     </div>

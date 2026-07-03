@@ -143,6 +143,40 @@ docker run --rm \
 > Pensez à **externaliser** régulièrement le volume `backups` (le service protège
 > d'une corruption logique, pas d'une perte du serveur entier).
 
+### Externalisation off-site (rclone)
+
+Le sidecar `backup` peut pousser automatiquement les sauvegardes vers un stockage
+distant après chaque cycle, via **rclone** (installé au démarrage du conteneur si
+configuré). Dans le `.env` du compose prod :
+
+```bash
+# Destination : <remote>:<bucket>/<préfixe>. Le remote s'appelle "offsite".
+BACKUP_RCLONE_REMOTE=offsite:mon-bucket/lesmenuires
+
+# Configuration du remote "offsite" par variables d'env (S3-compatible :
+# AWS, Scaleway, OVH, Backblaze B2 via S3, MinIO…)
+RCLONE_CONFIG_OFFSITE_TYPE=s3
+RCLONE_CONFIG_OFFSITE_PROVIDER=Scaleway          # ou AWS, Other…
+RCLONE_CONFIG_OFFSITE_ACCESS_KEY_ID=…
+RCLONE_CONFIG_OFFSITE_SECRET_ACCESS_KEY=…
+RCLONE_CONFIG_OFFSITE_ENDPOINT=s3.fr-par.scw.cloud
+RCLONE_CONFIG_OFFSITE_REGION=fr-par
+```
+
+Le script fait un `rclone sync /backups → remote` : la rétention locale
+(`BACKUP_RETENTION_DAYS`) s'applique donc aussi au remote. Pour conserver un
+historique plus long côté remote, utilisez plutôt une règle de cycle de vie du
+bucket et/ou le versionnage objet. Un échec off-site (réseau, credentials) est
+**non bloquant** : les sauvegardes locales continuent, l'envoi est retenté au
+cycle suivant (visible dans `docker compose … logs backup`).
+
+Vérification après mise en place :
+
+```bash
+docker compose -f infra/docker-compose.prod.yml logs backup | grep off-site
+# attendu : "[backup] off-site OK -> offsite:…"
+```
+
 Volumes persistants : `pgdata` (base), `media` (photos), `backups` (sauvegardes),
 `caddy_data` (certificats).
 
@@ -192,8 +226,10 @@ Volumes persistants : `pgdata` (base), `media` (photos), `backups` (sauvegardes)
 ### Exploitation
 - [ ] `NEXT_PUBLIC_API_URL` est inliné au build (build-arg = `https://$DOMAIN`) :
       un changement de domaine impose de reconstruire l'image `web`.
-- [ ] **Externaliser** le volume `backups` hors du serveur (cron `docker cp` +
-      copie off-site) et tester une restauration réelle au moins une fois.
+- [ ] **Externaliser** le volume `backups` hors du serveur : configurer
+      `BACKUP_RCLONE_REMOTE` + `RCLONE_CONFIG_OFFSITE_*` (voir « Externalisation
+      off-site »), vérifier `logs backup` (« off-site OK »), et tester une
+      restauration réelle au moins une fois.
 - [ ] Surveiller `/api/health` (sonde externe) et le panneau « Actions requises »
       du tableau de bord (soldes en retard, litiges, échecs de prélèvement).
 - [ ] Ne pas scaler l'API à plusieurs replicas : le scheduler tourne in-process
