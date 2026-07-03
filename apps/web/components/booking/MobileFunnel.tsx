@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { BookingContext } from "@/lib/api";
-import { mediaUrl } from "@/lib/api";
+import { mediaVariant } from "@/lib/api";
 import { contractText } from "@/lib/contract";
 import { useBookingFlow } from "./useBookingFlow";
 import {
@@ -45,11 +45,17 @@ export function MobileFunnel({
   resumeRef?: string | null;
 }) {
   const { property, season, weeks, products, media, reviews } = ctx;
+  // Variantes redimensionnées : héro ≈ largeur écran (960 couvre les mobiles
+  // haute densité), plein écran 1600, vignettes 480.
   const heroImg = media[0]
-    ? mediaUrl(media[0].url)
+    ? mediaVariant(media[0], 960)
     : "https://picsum.photos/seed/adret-chalet-a/820/640";
   const galleryImages = media.length
-    ? media.map((m) => ({ url: mediaUrl(m.url), alt: m.alt }))
+    ? media.map((m) => ({
+        url: mediaVariant(m, 1600),
+        thumb: mediaVariant(m, 480),
+        alt: m.alt,
+      }))
     : [{ url: "https://picsum.photos/seed/adret-chalet-a/1200/1600", alt: "" }];
 
   const [screen, setScreen] = useState<Screen>("home");

@@ -62,6 +62,8 @@ export type ApiProduct = {
 export type ApiMedia = {
   url: string;
   alt: string;
+  /** Largeurs des variantes redimensionnées disponibles (px), vide = original seul. */
+  widths: number[];
 };
 
 export type ApiSeason = {
@@ -124,6 +126,16 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 /** Absolute URL for a media path returned by the API (e.g. "/media/x.jpg"). */
 export function mediaUrl(path: string) {
   return `${API_URL}${path}`;
+}
+
+/** URL de la plus petite variante suffisante pour `targetWidth` px d'affichage
+ *  (fichiers `<stem>-w<width>.jpg` générés à l'upload) ; à défaut, l'original. */
+export function mediaVariant(m: ApiMedia, targetWidth: number) {
+  const fit = (m.widths ?? [])
+    .filter((w) => w >= targetWidth)
+    .sort((a, b) => a - b)[0];
+  if (!fit) return mediaUrl(m.url);
+  return mediaUrl(`${m.url.replace(/\.[^./]+$/, "")}-w${fit}.jpg`);
 }
 
 export async function getBookingContext(slug: string): Promise<BookingContext> {

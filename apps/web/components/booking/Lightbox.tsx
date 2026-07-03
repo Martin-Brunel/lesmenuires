@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect } from "react";
 
-type Img = { url: string; alt: string };
+// `thumb` : variante réduite pour la bande de vignettes (défaut : l'image
+// plein format, pour les appelants sans variantes).
+type Img = { url: string; alt: string; thumb?: string };
 
 /** Full-screen photo viewer: prev/next, thumbnails, keyboard (← → Esc). */
 export function Lightbox({
@@ -160,7 +162,7 @@ export function Lightbox({
                 border: i === index ? "2px solid #fff" : "2px solid transparent",
                 padding: 0,
                 cursor: "pointer",
-                backgroundImage: `url('${im.url}')`,
+                backgroundImage: `url('${im.thumb ?? im.url}')`,
                 backgroundSize: "cover",
                 backgroundPosition: "center",
                 opacity: i === index ? 1 : 0.55,

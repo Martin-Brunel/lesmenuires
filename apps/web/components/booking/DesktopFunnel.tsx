@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { BookingContext } from "@/lib/api";
-import { mediaUrl } from "@/lib/api";
+import { mediaVariant } from "@/lib/api";
 import { contractText } from "@/lib/contract";
 import { useBookingFlow } from "./useBookingFlow";
 import { GuestPicker } from "./GuestPicker";
@@ -36,11 +36,17 @@ export function DesktopFunnel({
   resumeRef?: string | null;
 }) {
   const { property, season, weeks, products, media, reviews } = ctx;
-  const photo = (i: number, seed: string, dims: string) =>
-    media[i] ? mediaUrl(media[i].url) : `https://picsum.photos/seed/${seed}/${dims}`;
+  // `width` = largeur d'affichage approximative → la variante redimensionnée
+  // suffisante est servie au lieu de l'original pleine résolution (LCP).
+  const photo = (i: number, seed: string, dims: string, width = 960) =>
+    media[i] ? mediaVariant(media[i], width) : `https://picsum.photos/seed/${seed}/${dims}`;
   const photoCount = media.length || 24;
   const galleryImages = media.length
-    ? media.map((m) => ({ url: mediaUrl(m.url), alt: m.alt }))
+    ? media.map((m) => ({
+        url: mediaVariant(m, 1600),
+        thumb: mediaVariant(m, 480),
+        alt: m.alt,
+      }))
     : ["adret-d1", "adret-d2", "adret-d3"].map((s) => ({
         url: `https://picsum.photos/seed/${s}/1600/1100`,
         alt: "",
@@ -188,8 +194,8 @@ export function DesktopFunnel({
           <div style={css("display:grid;grid-template-columns:2fr 1fr;gap:10px;height:380px;border-radius:18px;overflow:hidden")}>
             <div onClick={() => setLightbox(0)} style={css(`background:#E5E4DF url('${photo(0, "adret-d1", "900/760")}') center/cover;cursor:pointer`)} />
             <div style={css("display:grid;grid-template-rows:1fr 1fr;gap:10px")}>
-              <div onClick={() => setLightbox(1)} style={css(`background:#E5E4DF url('${photo(1, "adret-d2", "500/380")}') center/cover;cursor:pointer`)} />
-              <div onClick={() => setLightbox(2)} style={css(`position:relative;background:#E5E4DF url('${photo(2, "adret-d3", "500/380")}') center/cover;cursor:pointer`)}>
+              <div onClick={() => setLightbox(1)} style={css(`background:#E5E4DF url('${photo(1, "adret-d2", "500/380", 480)}') center/cover;cursor:pointer`)} />
+              <div onClick={() => setLightbox(2)} style={css(`position:relative;background:#E5E4DF url('${photo(2, "adret-d3", "500/380", 480)}') center/cover;cursor:pointer`)}>
                 <div onClick={(e) => { e.stopPropagation(); setLightbox(0); }} style={css("position:absolute;right:14px;bottom:14px;padding:8px 14px;background:rgba(255,255,255,.92);border-radius:9px;font:500 12px 'Hanken Grotesk';cursor:pointer")}>Voir les {photoCount} photos</div>
               </div>
             </div>
@@ -542,7 +548,7 @@ export function DesktopFunnel({
             {/* RIGHT: recap */}
             <div style={css("position:sticky;top:86px;background:#FFF;border:1px solid rgba(0,0,0,.08);border-radius:18px;padding:24px;box-shadow:0 16px 40px rgba(0,0,0,.06)")}>
               <div style={css("display:flex;gap:14px;align-items:center;padding-bottom:18px;border-bottom:1px solid rgba(0,0,0,.08)")}>
-                <div style={css(`width:64px;height:64px;border-radius:12px;background:#E5E4DF url('${photo(0, "adret-d2", "200/200")}') center/cover;flex:none`)} />
+                <div style={css(`width:64px;height:64px;border-radius:12px;background:#E5E4DF url('${photo(0, "adret-d2", "200/200", 480)}') center/cover;flex:none`)} />
                 <div>
                   <div style={css("font:400 18px 'Marcellus'")}>{name}</div>
                   <div style={css("margin-top:2px;font:400 12px 'Hanken Grotesk';color:#9A9C97")}>{property.locationLabel}</div>

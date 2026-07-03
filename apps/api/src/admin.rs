@@ -3662,6 +3662,19 @@ async fn upload_media(
             .await
             .map_err(|e| AppError::Internal(format!("écriture fichier : {e}")))?;
 
+        // Variantes redimensionnées (vignettes/héro) + validation par décodage
+        // réel : un fichier qui n'est pas une image est rejeté ici, quel que
+        // soit son content-type déclaré.
+        let widths = match crate::media::generate_variants(&st.media_dir, &filename).await {
+            Ok(w) => w,
+            Err(_) => {
+                let _ = tokio::fs::remove_file(st.media_dir.join(&filename)).await;
+                return Err(AppError::BadRequest(
+                    "Fichier illisible : ce n'est pas une image valide.".into(),
+                ));
+            }
+        };
+
         let pos: i32 = sqlx::query_scalar(
             "select coalesce(max(position), -1) + 1 from property_media where property_id = $1",
         )
@@ -3670,12 +3683,14 @@ async fn upload_media(
         .await?;
 
         let dto = sqlx::query_as::<_, AdminMediaDto>(
-            "insert into property_media (property_id, filename, position) values ($1, $2, $3) \
+            "insert into property_media (property_id, filename, position, widths) \
+             values ($1, $2, $3, $4) \
              returning id, '/media/' || filename as url, alt, position",
         )
         .bind(prop_id)
         .bind(&filename)
         .bind(pos)
+        .bind(&widths)
         .fetch_one(&st.pool)
         .await?;
         return Ok(Json(dto));
@@ -3712,13 +3727,14 @@ async fn delete_media(
     State(st): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    let filename: Option<String> =
-        sqlx::query_scalar("delete from property_media where id = $1 returning filename")
+    let row: Option<(String, Vec<i32>)> =
+        sqlx::query_as("delete from property_media where id = $1 returning filename, widths")
             .bind(id)
             .fetch_optional(&st.pool)
             .await?;
-    match filename {
-        Some(f) => {
+    match row {
+        Some((f, widths)) => {
+            crate::media::remove_variants(&st.media_dir, &f, &widths).await;
             let _ = tokio::fs::remove_file(st.media_dir.join(f)).await;
             Ok(StatusCode::NO_CONTENT)
         }

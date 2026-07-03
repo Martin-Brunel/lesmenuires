@@ -4,6 +4,7 @@ mod campaigns;
 mod email;
 mod error;
 mod ical;
+mod media;
 mod payments;
 mod pricing;
 mod rate;
@@ -106,6 +107,8 @@ async fn main() -> anyhow::Result<()> {
         state.payments.clone(),
         scheduler_interval,
     );
+    // Variantes d'images manquantes (photos uploadées avant la fonctionnalité).
+    media::spawn_backfill(state.pool.clone(), state.media_dir.clone());
 
     let app = Router::new()
         .route("/api/health", get(health))
@@ -267,6 +270,9 @@ struct ProductDto {
 struct PublicMediaDto {
     url: String,
     alt: String,
+    /// Largeurs des variantes redimensionnées disponibles (voir media.rs) —
+    /// le front choisit la taille adaptée ; vide = original seulement.
+    widths: Vec<i32>,
 }
 
 #[derive(Serialize)]
@@ -364,7 +370,8 @@ async fn booking_context(
     .await?;
 
     let media = sqlx::query_as::<_, PublicMediaDto>(
-        "select '/media/' || pm.filename as url, pm.alt \
+        "select '/media/' || pm.filename as url, pm.alt, \
+                array_remove(pm.widths, -1) as widths \
          from property_media pm join property p on p.id = pm.property_id \
          where p.slug = $1 order by pm.position, pm.created_at",
     )
