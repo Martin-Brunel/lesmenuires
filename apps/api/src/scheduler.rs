@@ -312,7 +312,9 @@ pub(crate) fn booking_vars(b: &TemplateBooking) -> Vec<(&'static str, String)> {
         ("total", eur(b.total_cents)),
         ("acompte", eur(b.deposit_cents)),
         ("solde", eur(b.balance_cents)),
-        ("acces", b.arrival_instructions.trim().to_string()),
+        // Les consignes d'accès sont du HTML riche (éditeur admin) ; dans les
+        // e-mails texte la variable {{acces}} est aplatie en texte brut.
+        ("acces", email::html_to_text(b.arrival_instructions)),
     ]
 }
 

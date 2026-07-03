@@ -27,6 +27,7 @@ type ContractView = {
   cautionCents: number;
   ownerName: string;
   ownerAddress: string;
+  contractTemplate: string;
   signed: boolean;
   signedAt: string | null;
   contractText: string | null;
@@ -42,6 +43,7 @@ const buildText = (d: ContractView) =>
     capacity: d.capacity,
     ownerName: d.ownerName,
     ownerAddress: d.ownerAddress,
+    template: d.contractTemplate,
   });
 
 const S: Record<string, CSSProperties> = {

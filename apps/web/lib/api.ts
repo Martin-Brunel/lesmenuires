@@ -35,6 +35,7 @@ export type ApiProperty = {
   payVirementEnabled: boolean;
   instructionsCheque: string;
   instructionsVirement: string;
+  contractTemplate: string;
 };
 
 export type ApiWeek = {

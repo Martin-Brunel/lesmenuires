@@ -232,6 +232,7 @@ struct PropertyDto {
     pay_virement_enabled: bool,
     instructions_cheque: String,
     instructions_virement: String,
+    contract_template: String,
 }
 
 #[derive(FromRow, Serialize)]
@@ -312,7 +313,8 @@ async fn booking_context(
                 specs_label, highlight_label, hero_seed, deposit_pct, caution_cents, \
                 tourist_tax_cents, tourist_tax_included, owner_name, owner_address, \
                 online_booking_enabled, pay_card_enabled, pay_cheque_enabled, \
-                pay_virement_enabled, instructions_cheque, instructions_virement \
+                pay_virement_enabled, instructions_cheque, instructions_virement, \
+                contract_template \
          from property where slug = $1",
     )
     .bind(&slug)
@@ -728,6 +730,7 @@ struct ContractLinkView {
     caution_cents: i64,
     owner_name: String,
     owner_address: String,
+    contract_template: String,
     signed: bool,
     signed_at: Option<DateTime<Utc>>,
     contract_text: Option<String>,
@@ -742,7 +745,7 @@ async fn contract_link_view(
         "select b.reference, aw.range_label as week_range, aw.arrival_label as arrival, \
                 nullif(trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')), '') as customer_name, \
                 p.name as property_name, p.location_label, p.capacity, b.caution_cents, \
-                p.owner_name, p.owner_address, \
+                p.owner_name, p.owner_address, p.contract_template, \
                 (b.contract_accepted_at is not null) as signed, \
                 b.contract_accepted_at as signed_at, b.contract_text, \
                 case when b.contract_accepted_at is not null then b.signature_png end as signature_png \

@@ -424,7 +424,7 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
               {/* contract text */}
               <div style={css("margin-top:16px;font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>CONTRAT DE LOCATION SAISONNIÈRE</div>
               <div style={css("margin-top:8px;max-height:120px;overflow:auto;white-space:pre-line;background:#FFF;border:1px solid rgba(0,0,0,.07);border-radius:12px;padding:14px;font:400 11.5px/1.6 'Hanken Grotesk';color:#6B6E6B")}>
-                {contractText({ propertyName: name, locationLabel: location, cautionCents: caution, capacity, ownerName: property.ownerName, ownerAddress: property.ownerAddress })}
+                {contractText({ propertyName: name, locationLabel: location, cautionCents: caution, capacity, ownerName: property.ownerName, ownerAddress: property.ownerAddress, template: property.contractTemplate })}
               </div>
 
               {/* accept */}

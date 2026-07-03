@@ -463,6 +463,7 @@ struct AdminPropertyDto {
     tourist_tax_included: bool,
     arrival_instructions: String,
     house_rules: String,
+    contract_template: String,
     owner_name: String,
     owner_address: String,
     owner_phone: String,
@@ -478,7 +479,7 @@ async fn get_property(
         "select slug, name, location_label, description, surface_label, capacity, bedrooms, \
                 specs_label, highlight_label, hero_seed, deposit_pct, caution_cents, \
                 tourist_tax_cents, tourist_tax_included, arrival_instructions, house_rules, \
-                owner_name, owner_address, owner_phone, owner_email, owner_siret \
+                contract_template, owner_name, owner_address, owner_phone, owner_email, owner_siret \
          from property where slug = $1",
     )
     .bind(&slug)
@@ -511,6 +512,8 @@ struct UpdateProperty {
     #[serde(default)]
     house_rules: String,
     #[serde(default)]
+    contract_template: String,
+    #[serde(default)]
     owner_name: String,
     #[serde(default)]
     owner_address: String,
@@ -533,21 +536,26 @@ async fn update_property(
     if p.tourist_tax_cents < 0 {
         return Err(AppError::BadRequest("Taxe de séjour invalide.".into()));
     }
-    // Sanitize the rich-text description server-side: it is rendered on the public
-    // site via dangerouslySetInnerHTML, so a compromised admin session must not be
-    // able to inject executable HTML/JS. ammonia keeps the safe Tiptap subset.
+    // Sanitize the rich-text fields server-side: they are rendered (site public,
+    // espace client, fiches admin) via dangerouslySetInnerHTML, so a compromised
+    // admin session must not be able to inject executable HTML/JS. ammonia keeps
+    // the safe Tiptap subset. Consignes d'accès et règlement intérieur sont du
+    // HTML riche au même titre que la description.
     let clean_description = ammonia::clean(&p.description);
+    let clean_instructions = ammonia::clean(&p.arrival_instructions);
+    let clean_rules = ammonia::clean(&p.house_rules);
     let dto = sqlx::query_as::<_, AdminPropertyDto>(
         "update property set name=$2, location_label=$3, description=$4, surface_label=$5, \
                 capacity=$6, bedrooms=$7, specs_label=$8, highlight_label=$9, hero_seed=$10, \
                 deposit_pct=$11, caution_cents=$12, arrival_instructions=$13, house_rules=$14, \
                 tourist_tax_cents=$15, tourist_tax_included=$16, owner_name=$17, owner_address=$18, \
-                owner_phone=$19, owner_email=$20, owner_siret=$21, updated_at=now() \
+                owner_phone=$19, owner_email=$20, owner_siret=$21, contract_template=$22, \
+                updated_at=now() \
          where slug=$1 \
          returning slug, name, location_label, description, surface_label, capacity, bedrooms, \
                    specs_label, highlight_label, hero_seed, deposit_pct, caution_cents, \
                    tourist_tax_cents, tourist_tax_included, arrival_instructions, house_rules, \
-                   owner_name, owner_address, owner_phone, owner_email, owner_siret",
+                   contract_template, owner_name, owner_address, owner_phone, owner_email, owner_siret",
     )
     .bind(&slug)
     .bind(&p.name)
@@ -561,8 +569,8 @@ async fn update_property(
     .bind(&p.hero_seed)
     .bind(p.deposit_pct)
     .bind(p.caution_cents)
-    .bind(&p.arrival_instructions)
-    .bind(&p.house_rules)
+    .bind(&clean_instructions)
+    .bind(&clean_rules)
     .bind(p.tourist_tax_cents)
     .bind(p.tourist_tax_included)
     .bind(p.owner_name.trim())
@@ -570,6 +578,7 @@ async fn update_property(
     .bind(p.owner_phone.trim())
     .bind(p.owner_email.trim())
     .bind(p.owner_siret.trim())
+    .bind(p.contract_template.trim())
     .fetch_optional(&st.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("propriété".into()))?;

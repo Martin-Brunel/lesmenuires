@@ -197,6 +197,9 @@ export function useBookingFlow(ctx: BookingContext) {
           locationLabel: property.locationLabel,
           cautionCents: property.cautionCents,
           capacity,
+          ownerName: property.ownerName,
+          ownerAddress: property.ownerAddress,
+          template: property.contractTemplate,
         }),
       });
       return true;

@@ -63,6 +63,7 @@ const dt = (iso: string | null) =>
 const dd = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }) : "—";
 const todayIso = () => new Date().toISOString().slice(0, 10);
+const isHtml = (s: string) => s.includes("<");
 
 type Ev = { at: string; title: string; detail?: string; tone: "default" | "success" | "danger" | "muted" };
 
@@ -414,7 +415,14 @@ export default function ReservationDetailPage() {
             <Row label="Adresse" value={b.customerAddress || "—"} />
             <div className="pt-2 text-xs text-muted-foreground">
               <div className="font-medium text-foreground">Consignes d&apos;arrivée</div>
-              <p className="mt-1 whitespace-pre-line">{b.arrivalInstructions || "—"}</p>
+              {b.arrivalInstructions && isHtml(b.arrivalInstructions) ? (
+                <div
+                  className="mt-1 rich-text text-sm"
+                  dangerouslySetInnerHTML={{ __html: b.arrivalInstructions }}
+                />
+              ) : (
+                <p className="mt-1 whitespace-pre-line">{b.arrivalInstructions || "—"}</p>
+              )}
             </div>
           </CardContent>
         </Card>

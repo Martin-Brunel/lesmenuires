@@ -38,6 +38,7 @@ export type AdminProperty = {
   touristTaxIncluded: boolean;
   arrivalInstructions: string;
   houseRules: string;
+  contractTemplate: string;
   ownerName: string;
   ownerAddress: string;
   ownerPhone: string;

@@ -198,7 +198,11 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function PrepareStay({ next, property }: { next: MyBooking; property: MeProperty }) {
-  const rules = property.houseRules.split("\n").map((r) => r.trim()).filter(Boolean);
+  const isHtml = (s: string) => s.includes("<");
+  const rulesAreHtml = isHtml(property.houseRules);
+  const rules = rulesAreHtml
+    ? []
+    : property.houseRules.split("\n").map((r) => r.trim()).filter(Boolean);
   const arrivalDays = Math.ceil((+new Date(next.startDate) - Date.now()) / 86_400_000);
   return (
     <div style={css(`background:linear-gradient(180deg,#FFFDF9,#FFF);border:1px solid ${ACCENT}33;border-radius:20px;padding:26px;box-shadow:0 16px 40px rgba(0,0,0,.06)`)}>
@@ -217,25 +221,41 @@ function PrepareStay({ next, property }: { next: MyBooking; property: MeProperty
           <div style={css("font:500 12px 'Hanken Grotesk';letter-spacing:.04em;color:#1A1B1A;margin-bottom:6px")}>
             Consignes d&apos;arrivée
           </div>
-          <p style={css("margin:0;font:400 14px/1.65 'Hanken Grotesk';color:#5A5C58")}>
-            {property.arrivalInstructions}
-          </p>
+          {isHtml(property.arrivalInstructions) ? (
+            <div
+              className="rich-text"
+              style={css("font:400 14px/1.65 'Hanken Grotesk';color:#5A5C58")}
+              dangerouslySetInnerHTML={{ __html: property.arrivalInstructions }}
+            />
+          ) : (
+            <p style={css("margin:0;font:400 14px/1.65 'Hanken Grotesk';color:#5A5C58")}>
+              {property.arrivalInstructions}
+            </p>
+          )}
         </div>
       )}
 
-      {rules.length > 0 && (
+      {(rulesAreHtml || rules.length > 0) && (
         <div style={css("margin-top:20px")}>
           <div style={css("font:500 12px 'Hanken Grotesk';letter-spacing:.04em;color:#1A1B1A;margin-bottom:8px")}>
             Règlement intérieur
           </div>
-          <div style={css("display:flex;flex-direction:column;gap:6px")}>
-            {rules.map((r, i) => (
-              <div key={i} style={css("display:flex;gap:9px;align-items:flex-start;font:400 13.5px/1.5 'Hanken Grotesk';color:#5A5C58")}>
-                <span style={css(`flex:none;margin-top:6px;width:5px;height:5px;border-radius:50%;background:${ACCENT}`)} />
-                {r}
-              </div>
-            ))}
-          </div>
+          {rulesAreHtml ? (
+            <div
+              className="rich-text"
+              style={css("font:400 13.5px/1.5 'Hanken Grotesk';color:#5A5C58")}
+              dangerouslySetInnerHTML={{ __html: property.houseRules }}
+            />
+          ) : (
+            <div style={css("display:flex;flex-direction:column;gap:6px")}>
+              {rules.map((r, i) => (
+                <div key={i} style={css("display:flex;gap:9px;align-items:flex-start;font:400 13.5px/1.5 'Hanken Grotesk';color:#5A5C58")}>
+                  <span style={css(`flex:none;margin-top:6px;width:5px;height:5px;border-radius:50%;background:${ACCENT}`)} />
+                  {r}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -8,17 +8,19 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { PhotosManager } from "@/components/admin/PhotosManager";
 import { RichTextEditor } from "@/components/admin/RichTextEditor";
+import { contractText } from "@/lib/contract";
 import { cn } from "@/lib/utils";
 
 const SLUG = "ladret";
 
-type Tab = "presentation" | "sejour" | "paiement" | "proprietaire" | "photos";
+type Tab = "presentation" | "sejour" | "paiement" | "proprietaire" | "contrat" | "photos";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "presentation", label: "Présentation" },
   { key: "sejour", label: "Séjour & accès" },
   { key: "paiement", label: "Paiement & taxe" },
   { key: "proprietaire", label: "Propriétaire" },
+  { key: "contrat", label: "Contrat" },
   { key: "photos", label: "Photos" },
 ];
 
@@ -170,20 +172,18 @@ export default function EditorialPage() {
                     label="Consignes d'arrivée"
                     hint="Espace client avant le séjour, et variable {{acces}} des e-mails automatiques (récupération des clés, parking, horaires…)."
                   >
-                    <textarea
-                      className="flex min-h-[140px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    <RichTextEditor
                       value={p.arrivalInstructions}
-                      onChange={(e) => set("arrivalInstructions", e.target.value)}
+                      onChange={(html) => set("arrivalInstructions", html)}
                     />
                   </Field>
                   <Field
                     label="Règlement intérieur"
-                    hint="Une règle par ligne — affichée en liste dans l'espace client."
+                    hint="Utilisez une liste à puces — affiché tel quel dans l'espace client."
                   >
-                    <textarea
-                      className="flex min-h-[140px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    <RichTextEditor
                       value={p.houseRules}
-                      onChange={(e) => set("houseRules", e.target.value)}
+                      onChange={(html) => set("houseRules", html)}
                     />
                   </Field>
                 </>
@@ -283,6 +283,77 @@ export default function EditorialPage() {
                       />
                     </Field>
                   </div>
+                </>
+              )}
+
+              {tab === "contrat" && (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Texte du contrat signé par le client à la réservation. Laissez vide pour
+                    utiliser le texte par défaut. Les contrats déjà signés ne sont jamais
+                    modifiés (le texte exact signé est archivé sur chaque dossier).
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Variables disponibles :{" "}
+                    <code className="rounded bg-muted px-1 py-0.5">{"{{bailleur}}"}</code>{" "}
+                    (identité du propriétaire, construite depuis l&apos;onglet Propriétaire),{" "}
+                    <code className="rounded bg-muted px-1 py-0.5">{"{{nom}}"}</code> (nom du
+                    bien),{" "}
+                    <code className="rounded bg-muted px-1 py-0.5">{"{{localisation}}"}</code>,{" "}
+                    <code className="rounded bg-muted px-1 py-0.5">{"{{capacite}}"}</code>,{" "}
+                    <code className="rounded bg-muted px-1 py-0.5">{"{{caution}}"}</code>.
+                  </p>
+                  <Field label="Texte du contrat">
+                    <textarea
+                      rows={14}
+                      className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      value={p.contractTemplate}
+                      onChange={(e) => set("contractTemplate", e.target.value)}
+                    />
+                  </Field>
+                  {p.contractTemplate.trim() === "" ? (
+                    <div className="rounded-md border bg-muted/50 p-4 space-y-2">
+                      <p className="text-xs font-medium text-muted-foreground">
+                        Texte par défaut actuellement utilisé :
+                      </p>
+                      <p className="text-sm text-muted-foreground whitespace-pre-line">
+                        {contractText({
+                          propertyName: p.name,
+                          locationLabel: p.locationLabel,
+                          cautionCents: p.cautionCents,
+                          capacity: p.capacity,
+                          ownerName: p.ownerName,
+                          ownerAddress: p.ownerAddress,
+                        })}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="rounded-md border bg-muted/50 p-4 space-y-2">
+                      <p className="text-xs font-medium text-muted-foreground">
+                        Aperçu avec les variables remplacées :
+                      </p>
+                      <p className="text-sm text-muted-foreground whitespace-pre-line">
+                        {contractText({
+                          propertyName: p.name,
+                          locationLabel: p.locationLabel,
+                          cautionCents: p.cautionCents,
+                          capacity: p.capacity,
+                          ownerName: p.ownerName,
+                          ownerAddress: p.ownerAddress,
+                          template: p.contractTemplate,
+                        })}
+                      </p>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="text-muted-foreground"
+                        onClick={() => set("contractTemplate", "")}
+                      >
+                        Revenir au texte par défaut
+                      </Button>
+                    </div>
+                  )}
                 </>
               )}
 

@@ -431,7 +431,7 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
                 <>
                   <div style={css("font:500 11px 'Hanken Grotesk';letter-spacing:.06em;color:#9A9C97")}>CONTRAT DE LOCATION SAISONNIÈRE</div>
                   <div style={css("margin-top:12px;max-height:220px;overflow:auto;white-space:pre-line;background:#FFF;border:1px solid rgba(0,0,0,.08);border-radius:13px;padding:18px;font:400 12.5px/1.7 'Hanken Grotesk';color:#6B6E6B")}>
-                    {contractText({ propertyName: name, locationLabel: property.locationLabel, cautionCents: caution, capacity, ownerName: property.ownerName, ownerAddress: property.ownerAddress })}
+                    {contractText({ propertyName: name, locationLabel: property.locationLabel, cautionCents: caution, capacity, ownerName: property.ownerName, ownerAddress: property.ownerAddress, template: property.contractTemplate })}
                   </div>
                   <div onClick={() => setAccepted((a) => !a)} style={css("margin-top:14px;display:flex;align-items:center;gap:11px;cursor:pointer")}>
                     <div style={css(`flex:none;width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;color:#fff;transition:background .15s;${accepted ? `background:${ACCENT};border:1.5px solid ${ACCENT};` : "background:#FFF;border:1.5px solid rgba(0,0,0,.2);"}`)}>{accepted ? "✓" : ""}</div>

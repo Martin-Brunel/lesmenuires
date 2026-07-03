@@ -371,6 +371,50 @@ pub(crate) async fn send_system(
     Ok(())
 }
 
+/// Aplati un fragment HTML riche (Tiptap) en texte brut : les fins de blocs
+/// (</p>, <br>, </li>) deviennent des sauts de ligne, les balises sont
+/// retirées, les entités usuelles décodées. Pour injecter un champ riche dans
+/// un e-mail texte ({{acces}}) sans exposer de balises au destinataire.
+pub(crate) fn html_to_text(html: &str) -> String {
+    if !html.contains('<') {
+        return html.trim().to_string();
+    }
+    let mut s = html.to_string();
+    for tag in [
+        "</p>", "</P>", "<br>", "<br/>", "<br />", "</li>", "</LI>", "</h1>", "</h2>", "</h3>",
+    ] {
+        s = s.replace(tag, "\n");
+    }
+    // Retire toutes les balises restantes.
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    let out = out
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&#39;", "'")
+        .replace("&quot;", "\"");
+    // Compacte les lignes vides successives et espaces de bord.
+    let lines: Vec<&str> = out.lines().map(str::trim).collect();
+    let mut cleaned: Vec<&str> = Vec::new();
+    for l in lines {
+        if l.is_empty() && cleaned.last().is_none_or(|p| p.is_empty()) {
+            continue;
+        }
+        cleaned.push(l);
+    }
+    cleaned.join("\n").trim().to_string()
+}
+
 /// « Bonjour Camille, » / « Bonjour, » — variable {{bonjour}} des gabarits.
 pub(crate) fn bonjour(first_name: Option<&str>) -> String {
     match first_name.map(str::trim).filter(|s| !s.is_empty()) {
