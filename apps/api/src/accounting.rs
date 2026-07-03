@@ -35,7 +35,10 @@ pub fn routes() -> Router<AppState> {
             put(update_account).delete(delete_account),
         )
         .route("/accounting/entries", get(list_entries).post(create_entry))
-        .route("/accounting/entries/:id", axum::routing::delete(delete_entry))
+        .route(
+            "/accounting/entries/:id",
+            axum::routing::delete(delete_entry),
+        )
         .route("/accounting/entries/:id/reverse", post(reverse_entry))
         .route("/accounting/ledger/:account_id", get(account_ledger))
         .route("/accounting/balance", get(trial_balance))
@@ -55,7 +58,10 @@ pub fn routes() -> Router<AppState> {
             "/accounting/supplier-invoices/:id",
             put(update_supplier_invoice).delete(delete_supplier_invoice),
         )
-        .route("/accounting/supplier-invoices/:id/pay", post(pay_supplier_invoice))
+        .route(
+            "/accounting/supplier-invoices/:id/pay",
+            post(pay_supplier_invoice),
+        )
         .route(
             "/accounting/supplier-invoices/:id/unpay",
             post(unpay_supplier_invoice),
@@ -261,7 +267,8 @@ async fn create_account(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let code = body.code.trim();
     let name = body.name.trim();
-    if !code.chars().all(|c| c.is_ascii_digit()) || !(3..=8).contains(&code.len())
+    if !code.chars().all(|c| c.is_ascii_digit())
+        || !(3..=8).contains(&code.len())
         || !('1'..='8').contains(&code.chars().next().unwrap_or('0'))
     {
         return Err(AppError::BadRequest(
@@ -657,15 +664,17 @@ async fn account_ledger(
             .ok_or_else(|| AppError::NotFound("compte".into()))?;
     // Report à nouveau : solde des écritures antérieures à la période.
     let opening: i64 = match q.from {
-        Some(from) => sqlx::query_scalar(
-            "select coalesce(sum(l.debit_cents - l.credit_cents),0)::bigint \
+        Some(from) => {
+            sqlx::query_scalar(
+                "select coalesce(sum(l.debit_cents - l.credit_cents),0)::bigint \
              from ledger_line l join ledger_entry e on e.id = l.entry_id \
              where l.account_id = $1 and e.entry_date < $2",
-        )
-        .bind(account_id)
-        .bind(from)
-        .fetch_one(&st.pool)
-        .await?,
+            )
+            .bind(account_id)
+            .bind(from)
+            .fetch_one(&st.pool)
+            .await?
+        }
         None => 0,
     };
     let mut rows = sqlx::query_as::<_, LedgerRow>(

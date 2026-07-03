@@ -2433,7 +2433,9 @@ async fn mark_paid(
     .bind(&reference)
     .fetch_optional(&st.pool)
     .await?
-    .ok_or_else(|| AppError::NotFound("réservation pointable (manuelle ou chèque/virement)".into()))?;
+    .ok_or_else(|| {
+        AppError::NotFound("réservation pointable (manuelle ou chèque/virement)".into())
+    })?;
     if row.2 {
         return Err(AppError::BadRequest("Échéance déjà pointée.".into()));
     }
@@ -2658,12 +2660,14 @@ async fn set_emails_muted(
     Path(reference): Path<String>,
     Json(body): Json<MutedInput>,
 ) -> Result<StatusCode, AppError> {
-    let n = sqlx::query("update booking set emails_muted = $2, updated_at = now() where reference = $1")
-        .bind(&reference)
-        .bind(body.muted)
-        .execute(&st.pool)
-        .await?
-        .rows_affected();
+    let n = sqlx::query(
+        "update booking set emails_muted = $2, updated_at = now() where reference = $1",
+    )
+    .bind(&reference)
+    .bind(body.muted)
+    .execute(&st.pool)
+    .await?
+    .rows_affected();
     if n == 0 {
         return Err(AppError::NotFound("réservation".into()));
     }
@@ -3564,7 +3568,12 @@ fn range_label(start: NaiveDate, end: NaiveDate) -> String {
 }
 
 fn arrival_full(d: NaiveDate) -> String {
-    format!("samedi {} {} {}", d.day(), fr_month_full(d.month()), d.year())
+    format!(
+        "samedi {} {} {}",
+        d.day(),
+        fr_month_full(d.month()),
+        d.year()
+    )
 }
 
 fn short_label(d: NaiveDate) -> String {

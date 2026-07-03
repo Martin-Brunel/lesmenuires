@@ -1209,10 +1209,7 @@ async fn reserve_offline(
             };
             let vars = vec![
                 ("bonjour", email::bonjour(b.customer_first_name.as_deref())),
-                (
-                    "prenom",
-                    b.customer_first_name.clone().unwrap_or_default(),
-                ),
+                ("prenom", b.customer_first_name.clone().unwrap_or_default()),
                 ("reference", reference.clone()),
                 ("montant", scheduler::eur(b.deposit_cents)),
                 ("methode", methode),
@@ -1500,7 +1497,12 @@ async fn create_magic_token(pool: &PgPool, cid: Uuid) -> Result<String, AppError
 
 /// Welcome e-mail after a confirmed booking, with a magic link to the espace.
 /// Best-effort: failures are logged, never bubbled to the payment response.
-pub(crate) async fn send_welcome_email(pool: &PgPool, booking_id: Uuid, cid: Uuid, reference: &str) {
+pub(crate) async fn send_welcome_email(
+    pool: &PgPool,
+    booking_id: Uuid,
+    cid: Uuid,
+    reference: &str,
+) {
     // E-mails automatiques coupés (globalement ou pour ce dossier) → silence.
     if !scheduler::transactional_emails_enabled(pool).await {
         return;

@@ -22,7 +22,9 @@ pub fn routes() -> Router<AppState> {
         .route("/campaigns/preview", post(preview_recipients))
         .route(
             "/campaigns/:id",
-            get(campaign_detail).put(update_campaign).delete(delete_campaign),
+            get(campaign_detail)
+                .put(update_campaign)
+                .delete(delete_campaign),
         )
         .route("/campaigns/:id/send", post(send_campaign))
 }
@@ -190,10 +192,12 @@ async fn snapshot_recipients(
 ) -> Result<i64, AppError> {
     let recipients = resolve_recipients(pool, filters).await?;
     let mut tx = pool.begin().await?;
-    sqlx::query("delete from email_campaign_recipient where campaign_id = $1 and status = 'pending'")
-        .bind(campaign_id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "delete from email_campaign_recipient where campaign_id = $1 and status = 'pending'",
+    )
+    .bind(campaign_id)
+    .execute(&mut *tx)
+    .await?;
     let mut n = 0i64;
     for r in &recipients {
         let inserted = sqlx::query(
@@ -211,12 +215,11 @@ async fn snapshot_recipients(
         .rows_affected();
         n += inserted as i64;
     }
-    let total: i64 = sqlx::query_scalar(
-        "select count(*) from email_campaign_recipient where campaign_id = $1",
-    )
-    .bind(campaign_id)
-    .fetch_one(&mut *tx)
-    .await?;
+    let total: i64 =
+        sqlx::query_scalar("select count(*) from email_campaign_recipient where campaign_id = $1")
+            .bind(campaign_id)
+            .fetch_one(&mut *tx)
+            .await?;
     sqlx::query("update email_campaign set recipient_count = $2 where id = $1")
         .bind(campaign_id)
         .bind(total as i32)
@@ -343,7 +346,10 @@ async fn campaign_detail(
     .bind(id)
     .fetch_all(&st.pool)
     .await?;
-    Ok(Json(CampaignDetail { campaign, recipients }))
+    Ok(Json(CampaignDetail {
+        campaign,
+        recipients,
+    }))
 }
 
 // ---------------------------------------------------------------------------
