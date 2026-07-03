@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { BookingContext } from "@/lib/api";
 import { mediaUrl } from "@/lib/api";
@@ -28,7 +28,13 @@ import { SignaturePad, type SignaturePadHandle } from "./SignaturePad";
 
 type Screen = "booking" | "checkout" | "done";
 
-export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
+export function DesktopFunnel({
+  ctx,
+  resumeRef,
+}: {
+  ctx: BookingContext;
+  resumeRef?: string | null;
+}) {
   const { property, season, weeks, products, media, reviews } = ctx;
   const photo = (i: number, seed: string, dims: string) =>
     media[i] ? mediaUrl(media[i].url) : `https://picsum.photos/seed/${seed}/${dims}`;
@@ -65,7 +71,7 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
 
   // Shared flow orchestration (cart/payment) — single source of truth with the
   // mobile funnel, see useBookingFlow.
-  const flow = useBookingFlow(ctx);
+  const flow = useBookingFlow(ctx, resumeRef);
   const {
     info, setField, adults, setAdults, children, setChildren, capacity,
     monthIdx, setMonthIdx, weekIdx, selectWeek, extras, toggleExtra, selectedExtras,
@@ -77,6 +83,15 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
   const pct = property.depositPct;
   const name = property.name;
   const caution = property.cautionCents;
+
+  // Reprise de panier : la sélection et les coordonnées sont restaurées par le
+  // hook — on reprend le parcours directement à l'étape « Vos infos ».
+  useEffect(() => {
+    if (flow.resumed === "restored") {
+      setScreen("checkout");
+      setCheckoutStep("infos");
+    }
+  }, [flow.resumed]);
 
   if (!week || !property.onlineBookingEnabled) {
     const closed = !property.onlineBookingEnabled;
@@ -163,6 +178,12 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
       {/* ============== BOOKING ============== */}
       {screen === "booking" && (
         <div style={css("max-width:1180px;margin:0 auto;padding:26px 40px 80px")}>
+          {flow.resumed === "unavailable" && (
+            <div style={css("margin-bottom:18px;padding:14px 18px;background:#FBF3E4;border:1px solid #E8D5AC;border-radius:12px;font:400 14px/1.5 'Hanken Grotesk';color:#7A5B18")}>
+              Votre panier n&apos;a pas pu être repris : la semaine choisie n&apos;est plus
+              disponible ou la réservation a expiré. Choisissez une nouvelle semaine ci-dessous.
+            </div>
+          )}
           {/* gallery */}
           <div style={css("display:grid;grid-template-columns:2fr 1fr;gap:10px;height:380px;border-radius:18px;overflow:hidden")}>
             <div onClick={() => setLightbox(0)} style={css(`background:#E5E4DF url('${photo(0, "adret-d1", "900/760")}') center/cover;cursor:pointer`)} />
@@ -361,6 +382,13 @@ export function DesktopFunnel({ ctx }: { ctx: BookingContext }) {
               );
             })}
           </div>
+
+          {flow.resumed === "restored" && (
+            <div style={css("margin:-10px 0 24px;padding:12px 16px;background:#EEF4EE;border:1px solid #CBDECB;border-radius:12px;font:400 13.5px/1.5 'Hanken Grotesk';color:#3C5A3C;max-width:640px")}>
+              Nous avons retrouvé votre réservation en cours — votre sélection et vos
+              coordonnées ont été restaurées.
+            </div>
+          )}
 
           <div style={css("display:grid;grid-template-columns:1fr 380px;gap:52px;align-items:start")}>
             {/* LEFT: current step */}

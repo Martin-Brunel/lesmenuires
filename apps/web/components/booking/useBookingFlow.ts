@@ -5,7 +5,7 @@
 // funnels stay in lockstep (no divergence). Screen/navigation stays in each
 // funnel (their models differ); this hook is UI-agnostic.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { BookingContext } from "@/lib/api";
 import {
   ApiError,
@@ -13,10 +13,12 @@ import {
   createBooking,
   payDeposit,
   reserveOffline as reserveOfflineApi,
+  resumeBooking,
   saveContract,
 } from "@/lib/api";
 import { CONTRACT_VERSION } from "@/lib/site";
 import { contractText } from "@/lib/contract";
+import { track } from "@/lib/analytics";
 import {
   computeTotals,
   defaultExtras,
@@ -49,7 +51,7 @@ const EMPTY_INFO: ContactInfo = {
   city: "",
 };
 
-export function useBookingFlow(ctx: BookingContext) {
+export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
   const { property, weeks, products } = ctx;
 
   const [info, setInfo] = useState<ContactInfo>(EMPTY_INFO);
@@ -103,6 +105,40 @@ export function useBookingFlow(ctx: BookingContext) {
   } | null>(null);
   const sigRef = useRef<SignaturePadHandle>(null);
 
+  // Reprise de panier (`/reserver?ref=…`, lien de l'e-mail de relance) :
+  // restaure la sélection, les coordonnées et la référence du panier, puis les
+  // funnels sautent à l'étape « Vos infos ». Si la semaine n'est plus en vente
+  // (réservée/bloquée entre-temps), on prévient et on repart de zéro.
+  const [resumed, setResumed] = useState<"restored" | "unavailable" | null>(null);
+  const resumeTried = useRef(false);
+  useEffect(() => {
+    if (!resumeRef || resumeTried.current) return;
+    resumeTried.current = true;
+    resumeBooking(resumeRef)
+      .then((r) => {
+        const idx = weeks.findIndex((w) => w.id === r.weekId);
+        if (idx < 0 || weeks[idx].booked) {
+          setResumed("unavailable");
+          return;
+        }
+        setWeekIdx(idx);
+        const mi = monthsOf(weeks).indexOf(monthKey(weeks[idx].startDate));
+        if (mi >= 0) setMonthIdx(mi);
+        setExtras(
+          Object.fromEntries(products.map((p) => [p.key, r.extras.includes(p.key)])),
+        );
+        setAdultsRaw(Math.min(capacity, Math.max(1, r.adults)));
+        setChildrenRaw(Math.min(capacity, Math.max(0, r.children)));
+        setInfo(r.customer);
+        setReference(r.reference);
+        setResumed("restored");
+        track("panier_repris");
+      })
+      .catch(() => setResumed("unavailable"));
+    // Restauration one-shot au montage — les états listés sont des setters stables.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeRef]);
+
   const week = weeks[weekIdx];
   const months = monthsOf(weeks);
   const totals = week
@@ -152,6 +188,7 @@ export function useBookingFlow(ctx: BookingContext) {
       customer: { ...info, country: "FR" },
     });
     setReference(res.reference);
+    track("panier_cree");
     return res.reference;
   };
 
@@ -202,6 +239,7 @@ export function useBookingFlow(ctx: BookingContext) {
           template: property.contractTemplate,
         }),
       });
+      track("contrat_signe");
       return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Une erreur est survenue.");
@@ -227,6 +265,7 @@ export function useBookingFlow(ctx: BookingContext) {
         return;
       }
       await confirmDeposit(ref);
+      track("acompte_paye", { mode: "direct" });
       onDone();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Une erreur est survenue.");
@@ -246,6 +285,7 @@ export function useBookingFlow(ctx: BookingContext) {
     try {
       const ref = await ensureBooking();
       await reserveOfflineApi(ref, payMethod);
+      track("reservation_offline", { mode: payMethod });
       onDone();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Une erreur est survenue.");
@@ -263,6 +303,7 @@ export function useBookingFlow(ctx: BookingContext) {
     if (!stripeSession) return;
     try {
       await confirmDeposit(stripeSession.reference);
+      track("acompte_paye", { mode: "stripe" });
       onDone();
     } catch (e) {
       setStripeSession(null);
@@ -298,7 +339,7 @@ export function useBookingFlow(ctx: BookingContext) {
     monthIdx, setMonthIdx, weekIdx, selectWeek,
     extras, toggleExtra, selectedExtras,
     accepted, setAccepted, sigEmpty, setSigEmpty, sigRef,
-    reference, submitting, error, setError,
+    reference, submitting, error, setError, resumed,
     stripeSession, setStripeSession,
     payMethod, setPayMethod,
     week, months, totals, infoComplete,

@@ -557,6 +557,7 @@ async fn notify_payment_issue(
 #[derive(sqlx::FromRow)]
 struct CartRow {
     id: Uuid,
+    reference: String,
     email: String,
     first_name: String,
 }
@@ -569,8 +570,8 @@ async fn remind_abandoned_carts(pool: &PgPool, r: &mut TickReport) -> Result<(),
             where status = 'cart' and cart_reminder_sent_at is null \
               and not emails_muted \
               and created_at < now() - interval '1 hour' \
-            returning id, customer_id ) \
-         select u.id, c.email, c.first_name \
+            returning id, reference, customer_id ) \
+         select u.id, u.reference, c.email, c.first_name \
          from updated u join customer c on c.id = u.customer_id \
          where coalesce(c.email, '') <> ''",
     )
@@ -588,7 +589,9 @@ async fn remind_abandoned_carts(pool: &PgPool, r: &mut TickReport) -> Result<(),
             "cart_reminder",
             cart.email,
             &vars,
-            &format!("{}/reserver", email::front_url()),
+            // Lien de reprise : le funnel restaure la sélection et les
+            // coordonnées du panier (voir resume_booking dans main.rs).
+            &format!("{}/reserver?ref={}", email::front_url(), cart.reference),
         )
         .await?;
         r.carts_reminded += 1;

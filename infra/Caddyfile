@@ -30,3 +30,18 @@
 		-Server
 	}
 }
+
+# Mesure d'audience Umami (optionnelle) — décommenter APRÈS avoir :
+# 1. créé l'enregistrement DNS stats.<domaine> vers ce serveur ;
+# 2. lancé le service (docker compose --profile analytics up -d).
+# Sinon Caddy tenterait d'émettre un certificat pour un sous-domaine sans DNS.
+#
+# stats.{$DOMAIN} {
+# 	encode zstd gzip
+# 	reverse_proxy umami:3000
+# 	header {
+# 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+# 		X-Content-Type-Options "nosniff"
+# 		-Server
+# 	}
+# }

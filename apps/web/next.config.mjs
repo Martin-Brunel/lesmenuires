@@ -23,17 +23,25 @@ const nextConfig = {
     } catch {
       apiOrigin = "";
     }
+    // Origine de l'instance Umami (mesure d'audience self-hosted, optionnelle) :
+    // le script et ses POST /api/send doivent être autorisés par la CSP.
+    let analyticsOrigin = "";
+    try {
+      analyticsOrigin = new URL(process.env.NEXT_PUBLIC_ANALYTICS_SRC ?? "").origin;
+    } catch {
+      analyticsOrigin = "";
+    }
     // React en mode dev utilise eval() (debugging) ; la prod ne l'utilise jamais.
     // On n'autorise 'unsafe-eval' qu'en développement.
     const devEval = process.env.NODE_ENV !== "production" ? " 'unsafe-eval'" : "";
     const csp = [
       "default-src 'self'",
-      `script-src 'self' 'unsafe-inline'${devEval} https://js.stripe.com`,
+      `script-src 'self' 'unsafe-inline'${devEval} https://js.stripe.com ${analyticsOrigin}`.trim(),
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       `img-src 'self' data: ${apiOrigin} https://*.stripe.com https://picsum.photos https://*.picsum.photos`,
       "frame-src https://js.stripe.com https://hooks.stripe.com",
-      `connect-src 'self' ${apiOrigin} https://api.stripe.com https://*.stripe.com`,
+      `connect-src 'self' ${apiOrigin} https://api.stripe.com https://*.stripe.com ${analyticsOrigin}`.trim(),
       "object-src 'none'",
       "base-uri 'self'",
       "form-action 'self'",

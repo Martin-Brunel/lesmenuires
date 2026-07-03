@@ -13,7 +13,13 @@ import { MobileFunnel } from "./MobileFunnel";
  * desktop so the server render and first client render match (no hydration
  * mismatch), then correct on mount.
  */
-export function BookingFunnel({ ctx }: { ctx: BookingContext }) {
+export function BookingFunnel({
+  ctx,
+  resumeRef,
+}: {
+  ctx: BookingContext;
+  resumeRef?: string | null;
+}) {
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
@@ -24,5 +30,9 @@ export function BookingFunnel({ ctx }: { ctx: BookingContext }) {
     return () => mq.removeEventListener("change", update);
   }, []);
 
-  return isMobile ? <MobileFunnel ctx={ctx} /> : <DesktopFunnel ctx={ctx} />;
+  return isMobile ? (
+    <MobileFunnel ctx={ctx} resumeRef={resumeRef} />
+  ) : (
+    <DesktopFunnel ctx={ctx} resumeRef={resumeRef} />
+  );
 }

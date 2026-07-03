@@ -8,6 +8,12 @@ const SITE_URL =
   process.env.NEXT_PUBLIC_API_URL ??
   "http://localhost:3000";
 
+// Mesure d'audience self-hosted (Umami), activée seulement si configurée au
+// build — voir lib/analytics.ts et DEPLOY.md « Mesure d'audience ».
+const ANALYTICS_SRC = process.env.NEXT_PUBLIC_ANALYTICS_SRC ?? "";
+const ANALYTICS_WEBSITE_ID = process.env.NEXT_PUBLIC_ANALYTICS_WEBSITE_ID ?? "";
+const analyticsEnabled = ANALYTICS_SRC !== "" && ANALYTICS_WEBSITE_ID !== "";
+
 const title = `${site.name} — Réservez votre semaine à ${site.location}`;
 const description = `Location saisonnière à ${site.location}. Réservez votre semaine en autonomie : tarifs, prestations, signature électronique et acompte en ligne.`;
 
@@ -38,6 +44,11 @@ export default function RootLayout({
           rel="stylesheet"
           href="https://fonts.googleapis.com/css2?family=Marcellus&family=Hanken+Grotesk:wght@400;500;600;700&display=swap"
         />
+        {analyticsEnabled && (
+          // Umami : script léger, sans cookie (pas de consentement requis),
+          // données hébergées sur notre propre infra.
+          <script defer src={ANALYTICS_SRC} data-website-id={ANALYTICS_WEBSITE_ID} />
+        )}
       </head>
       <body>
         {children}

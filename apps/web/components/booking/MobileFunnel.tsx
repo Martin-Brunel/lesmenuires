@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { BookingContext } from "@/lib/api";
 import { mediaUrl } from "@/lib/api";
@@ -37,7 +37,13 @@ const STEP_MAP: Record<string, number> = {
 };
 const STEP_LABELS = ["Semaine", "Options", "Infos", "Contrat", "Paiement"];
 
-export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
+export function MobileFunnel({
+  ctx,
+  resumeRef,
+}: {
+  ctx: BookingContext;
+  resumeRef?: string | null;
+}) {
   const { property, season, weeks, products, media, reviews } = ctx;
   const heroImg = media[0]
     ? mediaUrl(media[0].url)
@@ -55,7 +61,7 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
 
   // Shared flow orchestration (cart/payment) — single source of truth with the
   // desktop funnel, see useBookingFlow.
-  const flow = useBookingFlow(ctx);
+  const flow = useBookingFlow(ctx, resumeRef);
   const {
     info, setField, adults, setAdults, children, setChildren, capacity,
     monthIdx, setMonthIdx, weekIdx, selectWeek, extras, toggleExtra, selectedExtras,
@@ -68,6 +74,12 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
   const name = property.name;
   const location = property.locationLabel;
   const caution = property.cautionCents;
+
+  // Reprise de panier : sélection/coordonnées restaurées par le hook — on
+  // reprend le parcours à l'étape « Infos » (stepper complet en amont).
+  useEffect(() => {
+    if (flow.resumed === "restored") setScreen("infos");
+  }, [flow.resumed]);
   const partyLabel =
     `${adults} adulte${adults > 1 ? "s" : ""}` +
     (children > 0 ? ` · ${children} enfant${children > 1 ? "s" : ""}` : "");
@@ -164,6 +176,12 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
       {screen === "home" && (
         <div style={css("height:100%;display:flex;flex-direction:column")}>
           <div style={css("flex:1;overflow:auto")}>
+            {flow.resumed === "unavailable" && (
+              <div style={css("margin:12px 16px 0;padding:12px 14px;background:#FBF3E4;border:1px solid #E8D5AC;border-radius:12px;font:400 13px/1.5 'Hanken Grotesk';color:#7A5B18")}>
+                Votre panier n&apos;a pas pu être repris : la semaine choisie n&apos;est plus
+                disponible ou la réservation a expiré. Choisissez une nouvelle semaine.
+              </div>
+            )}
             <div onClick={() => setLightbox(0)} style={css(`position:relative;height:320px;background-color:#E5E4DF;background-image:url('${heroImg}');background-size:cover;background-position:center;cursor:pointer`)}>
               <div style={css("position:absolute;left:0;right:0;bottom:0;height:170px;background:linear-gradient(to top,rgba(245,244,241,1),rgba(245,244,241,0))")} />
               <div style={css("position:absolute;left:22px;bottom:20px")}>

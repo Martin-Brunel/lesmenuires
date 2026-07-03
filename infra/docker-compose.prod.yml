@@ -123,10 +123,35 @@ services:
         NEXT_PUBLIC_HOST_NAME: ${NEXT_PUBLIC_HOST_NAME:-}
         NEXT_PUBLIC_HOST_ADDRESS: ${NEXT_PUBLIC_HOST_ADDRESS:-}
         NEXT_PUBLIC_LEGAL_DATE: ${NEXT_PUBLIC_LEGAL_DATE:-}
+        # Mesure d'audience Umami (optionnelle — voir DEPLOY.md) :
+        # src = https://stats.<domaine>/script.js, id = UUID du site dans Umami.
+        NEXT_PUBLIC_ANALYTICS_SRC: ${NEXT_PUBLIC_ANALYTICS_SRC:-}
+        NEXT_PUBLIC_ANALYTICS_WEBSITE_ID: ${NEXT_PUBLIC_ANALYTICS_WEBSITE_ID:-}
     restart: unless-stopped
     depends_on:
       api:
         condition: service_healthy
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  # Mesure d'audience self-hosted (optionnelle) : activer avec
+  # `docker compose --profile analytics up -d` après avoir créé la base
+  # (voir DEPLOY.md « Mesure d'audience ») et décommenté le bloc stats.* du
+  # Caddyfile. Sans le profil, ce service n'existe pas.
+  umami:
+    image: ghcr.io/umami-software/umami:postgresql-latest
+    profiles: ["analytics"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-lesmenuires}:${POSTGRES_PASSWORD}@postgres:5432/umami
+      DATABASE_TYPE: postgresql
+      # Chaîne aléatoire longue (signature des sessions Umami).
+      APP_SECRET: ${UMAMI_APP_SECRET:-}
+      TZ: Europe/Paris
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "5" }

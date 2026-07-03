@@ -80,6 +80,31 @@ En production, vérifier le domaine sur resend.com/domains (SPF/DKIM) et régler
 `MAIL_FROM` sur une adresse de ce domaine. En mode test, Resend ne délivre qu'à
 l'adresse du compte.
 
+## 6 bis. Mesure d'audience (Umami, optionnel)
+
+Analytics self-hosted, sans cookie (pas de bandeau de consentement supplémentaire),
+données chez vous. Le funnel émet en plus 5 évènements : `panier_cree`,
+`panier_repris`, `contrat_signe`, `acompte_paye`, `reservation_offline` — de quoi
+voir où les visiteurs abandonnent.
+
+1. **DNS** : créer `stats.<domaine>` → IP du serveur.
+2. **Base dédiée** (une fois) :
+   ```bash
+   docker compose -f infra/docker-compose.prod.yml exec postgres \
+     createdb -U "$POSTGRES_USER" umami
+   ```
+3. **`.env`** : `UMAMI_APP_SECRET=<chaîne aléatoire longue>` (ex. `openssl rand -hex 32`).
+4. **Caddy** : décommenter le bloc `stats.{$DOMAIN}` du `Caddyfile`.
+5. **Lancer** : `docker compose -f infra/docker-compose.prod.yml --profile analytics up -d`
+   puis se connecter sur `https://stats.<domaine>` (admin / umami — **changer le mot
+   de passe**), créer le site et copier son « Website ID ».
+6. **Front** : dans `.env`, `NEXT_PUBLIC_ANALYTICS_SRC=https://stats.<domaine>/script.js`
+   et `NEXT_PUBLIC_ANALYTICS_WEBSITE_ID=<uuid>`, puis rebuild du web
+   (`up -d --build web`) — variables inlinées au build, comme les autres
+   `NEXT_PUBLIC_*`. La CSP s'ouvre automatiquement à cette origine.
+
+Sans ces variables, aucun script n'est injecté et le site fonctionne à l'identique.
+
 ## 7. Exploitation
 
 ```bash

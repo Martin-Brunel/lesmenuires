@@ -150,6 +150,34 @@ export async function createBooking(
   return res.json();
 }
 
+export type ResumeData = {
+  reference: string;
+  weekId: string;
+  adults: number;
+  children: number;
+  extras: string[];
+  customer: {
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string;
+    addressLine: string;
+    postalCode: string;
+    city: string;
+  };
+};
+
+/** Restore an abandoned cart (reminder e-mail link `/reserver?ref=…`).
+ *  Only works while the booking is still a cart; 404 otherwise. */
+export async function resumeBooking(reference: string): Promise<ResumeData> {
+  const res = await fetch(`${API_URL}/api/bookings/${reference}/resume`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? `resume: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
 /** Persist the signed contract (version + drawn signature) before payment. */
 export async function saveContract(
   reference: string,

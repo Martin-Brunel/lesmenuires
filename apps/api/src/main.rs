@@ -112,6 +112,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/booking-context/:slug", get(booking_context))
         .route("/api/bookings", post(create_booking))
         .route("/api/bookings/:reference", get(get_booking))
+        .route("/api/bookings/:reference/resume", get(resume_booking))
         .route("/api/me", get(customer_me))
         .route("/api/espace/request-link", post(request_link))
         .route("/api/espace/login", get(espace_login))
@@ -674,6 +675,76 @@ async fn get_booking(
     Path(reference): Path<String>,
 ) -> Result<Json<BookingDto>, AppError> {
     Ok(Json(fetch_booking(&st.pool, &reference).await?))
+}
+
+/// Reprise de panier : l'e-mail de relance renvoie vers
+/// `/reserver?ref=<reference>` et le funnel restaure la sélection + les
+/// coordonnées via cet endpoint. Uniquement pour un panier (`status='cart'`,
+/// expiré au bout de 48 h) ; toute autre référence → 404 indistinct. Rate-limité
+/// sévèrement : la référence (6 hex) est le seul secret de l'URL.
+#[derive(FromRow)]
+struct ResumeRow {
+    id: Uuid,
+    reference: String,
+    week_id: Uuid,
+    adults: i32,
+    children: i32,
+    first_name: Option<String>,
+    last_name: Option<String>,
+    email: Option<String>,
+    phone: Option<String>,
+    address_line: Option<String>,
+    postal_code: Option<String>,
+    city: Option<String>,
+}
+
+async fn resume_booking(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Path(reference): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    st.rate.check(
+        "resume",
+        &rate::client_ip(&headers),
+        10,
+        std::time::Duration::from_secs(600),
+    )?;
+    let row = sqlx::query_as::<_, ResumeRow>(
+        "select b.id, b.reference, b.week_id, b.adults, b.children, \
+                c.first_name, c.last_name, c.email, c.phone, \
+                c.address_line, c.postal_code, c.city \
+         from booking b join customer c on c.id = b.customer_id \
+         where b.reference = $1 and b.status = 'cart'",
+    )
+    .bind(&reference)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("réservation".into()))?;
+
+    let extras: Vec<String> = sqlx::query_scalar(
+        "select p.key from booking_line l join product p on p.id = l.product_id \
+         where l.booking_id = $1 and l.kind = 'product' order by l.position",
+    )
+    .bind(row.id)
+    .fetch_all(&st.pool)
+    .await?;
+
+    Ok(Json(serde_json::json!({
+        "reference": row.reference,
+        "weekId": row.week_id,
+        "adults": row.adults,
+        "children": row.children,
+        "extras": extras,
+        "customer": {
+            "firstName": row.first_name.unwrap_or_default(),
+            "lastName": row.last_name.unwrap_or_default(),
+            "email": row.email.unwrap_or_default(),
+            "phone": row.phone.unwrap_or_default(),
+            "addressLine": row.address_line.unwrap_or_default(),
+            "postalCode": row.postal_code.unwrap_or_default(),
+            "city": row.city.unwrap_or_default(),
+        },
+    })))
 }
 
 async fn fetch_booking(pool: &PgPool, reference: &str) -> Result<BookingDto, AppError> {

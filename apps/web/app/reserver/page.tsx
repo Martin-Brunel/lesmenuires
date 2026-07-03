@@ -10,7 +10,15 @@ export const metadata: Metadata = {
     "Choisissez votre semaine, ajoutez vos prestations, signez le contrat et réglez l'acompte en ligne.",
 };
 
-export default async function ReserverPage() {
+export default async function ReserverPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ ref?: string }>;
+}) {
+  // Reprise de panier depuis l'e-mail de relance : /reserver?ref=ADR-XXXXXX.
+  const rawRef = (await searchParams).ref;
+  const resumeRef =
+    rawRef && /^[A-Z]{2,6}-[0-9A-Fa-f]{4,12}$/.test(rawRef) ? rawRef : null;
   let ctx;
   try {
     ctx = await getBookingContext("ladret");
@@ -24,5 +32,5 @@ export default async function ReserverPage() {
       </div>
     );
   }
-  return <BookingFunnel ctx={ctx} />;
+  return <BookingFunnel ctx={ctx} resumeRef={resumeRef} />;
 }
