@@ -187,6 +187,7 @@ export type BookingDetailInfo = {
   paymentMethod: string | null;
   cautionMethod: string | null;
   adminNotes: string | null;
+  emailsMuted: boolean;
   depositPaidAt: string | null;
   balancePaidAt: string | null;
   cautionReleasedAt: string | null;
@@ -368,6 +369,252 @@ export type AdminReview = {
   published: boolean;
   adminReply: string | null;
   submittedAt: string;
+};
+
+// --- Comptabilité (partie double) -----------------------------------------
+
+export type LedgerAccount = {
+  id: string;
+  code: string;
+  name: string;
+  isSystem: boolean;
+  isActive: boolean;
+  debitCents: number;
+  creditCents: number;
+  balanceCents: number;
+};
+
+export type LedgerEntryLine = {
+  id: string;
+  accountId: string;
+  accountCode: string;
+  accountName: string;
+  label: string;
+  debitCents: number;
+  creditCents: number;
+  supplierName: string | null;
+  bookingReference: string | null;
+};
+
+export type LedgerEntry = {
+  id: string;
+  journal: "VE" | "AC" | "BQ" | "OD";
+  entryDate: string;
+  piece: string;
+  label: string;
+  sourceType: string | null;
+  reverses: string | null;
+  reversedBy: string | null;
+  createdAt: string;
+  lines: LedgerEntryLine[];
+};
+
+export type NewLedgerEntry = {
+  journal: "VE" | "AC" | "BQ" | "OD";
+  entryDate: string;
+  label: string;
+  lines: { accountId: string; label?: string; debitCents: number; creditCents: number }[];
+};
+
+export type LedgerRow = {
+  entryId: string;
+  entryDate: string;
+  journal: string;
+  piece: string;
+  entryLabel: string;
+  lineLabel: string;
+  debitCents: number;
+  creditCents: number;
+  runningCents: number;
+};
+
+export type LedgerResponse = {
+  accountCode: string;
+  accountName: string;
+  openingCents: number;
+  rows: LedgerRow[];
+  totalDebitCents: number;
+  totalCreditCents: number;
+  closingCents: number;
+};
+
+export type BalanceRow = {
+  accountId: string;
+  code: string;
+  name: string;
+  debitCents: number;
+  creditCents: number;
+  balanceCents: number;
+};
+
+export type Supplier = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+  iban: string;
+  notes: string;
+  defaultAccountId: string | null;
+  isActive: boolean;
+  invoiceCount: number;
+  totalCents: number;
+  unpaidCents: number;
+};
+
+export type SupplierInput = {
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+  iban: string;
+  notes: string;
+  defaultAccountId: string | null;
+  isActive: boolean;
+};
+
+export type SupplierInvoice = {
+  id: string;
+  supplierId: string;
+  supplierName: string;
+  label: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  dueDate: string | null;
+  amountCents: number;
+  expenseAccountId: string;
+  expenseAccountCode: string;
+  expenseAccountName: string;
+  status: "a_payer" | "payee";
+  paidDate: string | null;
+  paymentAccountId: string | null;
+  notes: string;
+};
+
+export type SupplierInvoiceInput = {
+  supplierId: string;
+  label: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  dueDate: string | null;
+  amountCents: number;
+  expenseAccountId: string;
+  notes: string;
+};
+
+export type CashflowResponse = {
+  accounts: { accountId: string; code: string; name: string; balanceCents: number }[];
+  totalCents: number;
+  monthly: { month: string; inCents: number; outCents: number }[];
+  upcomingIn: {
+    reference: string;
+    customerName: string | null;
+    dueDate: string;
+    amountCents: number;
+  }[];
+  upcomingOut: {
+    id: string;
+    supplierName: string;
+    label: string;
+    dueDate: string | null;
+    amountCents: number;
+  }[];
+  upcomingInTotalCents: number;
+  upcomingOutTotalCents: number;
+};
+
+export type GlobalSettings = {
+  transactionalEmailsEnabled: boolean;
+  onlineBookingEnabled: boolean;
+  payCardEnabled: boolean;
+  payChequeEnabled: boolean;
+  payVirementEnabled: boolean;
+  instructionsCheque: string;
+  instructionsVirement: string;
+};
+
+export type CampaignFilters = {
+  audience?: "all" | "clients" | "prospects";
+  upcoming?: boolean | null;
+  minStays?: number | null;
+  lastActivityAfter?: string | null;
+  lastActivityBefore?: string | null;
+  city?: string | null;
+  /** Sélection manuelle (page Contacts) : remplace tous les autres critères. */
+  customerIds?: string[] | null;
+};
+
+export type Campaign = {
+  id: string;
+  subject: string;
+  status: "draft" | "sent";
+  recipientCount: number;
+  sentCount: number;
+  createdAt: string;
+  sentAt: string | null;
+};
+
+export type CampaignDetail = {
+  id: string;
+  subject: string;
+  body: string;
+  filters: CampaignFilters;
+  status: "draft" | "sent";
+  recipientCount: number;
+  createdAt: string;
+  sentAt: string | null;
+  recipients: {
+    email: string;
+    firstName: string;
+    lastName: string;
+    status: "pending" | "sent";
+    sentAt: string | null;
+  }[];
+};
+
+export type CampaignPreview = {
+  count: number;
+  sample: { customerId: string; email: string; firstName: string; lastName: string }[];
+};
+
+export type ReportLine = { code: string; name: string; cents: number };
+
+export type ReportMeta = {
+  years: number[];
+  seasons: { id: string; name: string; startDate: string; endDate: string }[];
+};
+
+export type YearReport = {
+  label: string;
+  from: string;
+  to: string;
+  produits: ReportLine[];
+  charges: ReportLine[];
+  totalProduitsCents: number;
+  totalChargesCents: number;
+  resultatCents: number;
+  actif: ReportLine[];
+  passif: ReportLine[];
+  totalActifCents: number;
+  totalPassifCents: number;
+  inCents: number;
+  outCents: number;
+};
+
+export type SeasonReport = {
+  label: string;
+  from: string;
+  to: string;
+  produits: ReportLine[];
+  charges: ReportLine[];
+  totalProduitsCents: number;
+  totalChargesCents: number;
+  resultatCents: number;
+  collectedCents: number;
+  taxCents: number;
+  weeksTotal: number;
+  weeksBooked: number;
+  revenueBookedCents: number;
 };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
@@ -612,6 +859,111 @@ export const adminApi = {
   updateMedia: (id: string, data: { alt: string; position: number }) =>
     req<AdminMedia>(`/media/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteMedia: (id: string) => req<void>(`/media/${id}`, { method: "DELETE" }),
+
+  // --- Comptabilité ---------------------------------------------------------
+  listAccounts: () => req<LedgerAccount[]>("/accounting/accounts"),
+  createAccount: (data: { code: string; name: string }) =>
+    req<{ id: string }>("/accounting/accounts", { method: "POST", body: JSON.stringify(data) }),
+  updateAccount: (id: string, data: { name?: string; isActive?: boolean }) =>
+    req<void>(`/accounting/accounts/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteAccount: (id: string) =>
+    req<void>(`/accounting/accounts/${id}`, { method: "DELETE" }),
+
+  listEntries: (params?: {
+    journal?: string;
+    from?: string;
+    to?: string;
+    accountId?: string;
+  }) => {
+    const q = new URLSearchParams();
+    if (params?.journal) q.set("journal", params.journal);
+    if (params?.from) q.set("from", params.from);
+    if (params?.to) q.set("to", params.to);
+    if (params?.accountId) q.set("accountId", params.accountId);
+    const s = q.toString();
+    return req<LedgerEntry[]>(`/accounting/entries${s ? `?${s}` : ""}`);
+  },
+  createEntry: (data: NewLedgerEntry) =>
+    req<{ id: string }>("/accounting/entries", { method: "POST", body: JSON.stringify(data) }),
+  reverseEntry: (id: string) =>
+    req<{ id: string }>(`/accounting/entries/${id}/reverse`, { method: "POST" }),
+  deleteEntry: (id: string) =>
+    req<void>(`/accounting/entries/${id}`, { method: "DELETE" }),
+
+  accountLedger: (accountId: string, params?: { from?: string; to?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.from) q.set("from", params.from);
+    if (params?.to) q.set("to", params.to);
+    const s = q.toString();
+    return req<LedgerResponse>(`/accounting/ledger/${accountId}${s ? `?${s}` : ""}`);
+  },
+  trialBalance: (params?: { from?: string; to?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.from) q.set("from", params.from);
+    if (params?.to) q.set("to", params.to);
+    const s = q.toString();
+    return req<BalanceRow[]>(`/accounting/balance${s ? `?${s}` : ""}`);
+  },
+
+  listSuppliers: () => req<Supplier[]>("/accounting/suppliers"),
+  createSupplier: (data: SupplierInput) =>
+    req<{ id: string }>("/accounting/suppliers", { method: "POST", body: JSON.stringify(data) }),
+  updateSupplier: (id: string, data: SupplierInput) =>
+    req<void>(`/accounting/suppliers/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteSupplier: (id: string) =>
+    req<void>(`/accounting/suppliers/${id}`, { method: "DELETE" }),
+
+  listSupplierInvoices: () => req<SupplierInvoice[]>("/accounting/supplier-invoices"),
+  createSupplierInvoice: (data: SupplierInvoiceInput) =>
+    req<{ id: string }>("/accounting/supplier-invoices", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateSupplierInvoice: (id: string, data: SupplierInvoiceInput) =>
+    req<void>(`/accounting/supplier-invoices/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteSupplierInvoice: (id: string) =>
+    req<void>(`/accounting/supplier-invoices/${id}`, { method: "DELETE" }),
+  paySupplierInvoice: (id: string, data: { paidDate: string; paymentAccountId: string }) =>
+    req<void>(`/accounting/supplier-invoices/${id}/pay`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  unpaySupplierInvoice: (id: string) =>
+    req<void>(`/accounting/supplier-invoices/${id}/unpay`, { method: "POST" }),
+
+  syncAccounting: () => req<{ created: number }>("/accounting/sync", { method: "POST" }),
+  cashflow: () => req<CashflowResponse>("/accounting/cashflow"),
+  getSettings: () => req<GlobalSettings>("/settings"),
+  updateSettings: (data: Partial<GlobalSettings>) =>
+    req<GlobalSettings>("/settings", { method: "PUT", body: JSON.stringify(data) }),
+  setEmailsMuted: (reference: string, muted: boolean) =>
+    req<void>(`/bookings/${reference}/emails-muted`, {
+      method: "POST",
+      body: JSON.stringify({ muted }),
+    }),
+
+  listCampaigns: () => req<Campaign[]>("/campaigns"),
+  campaignDetail: (id: string) => req<CampaignDetail>(`/campaigns/${id}`),
+  previewCampaign: (filters: CampaignFilters) =>
+    req<CampaignPreview>("/campaigns/preview", {
+      method: "POST",
+      body: JSON.stringify({ filters }),
+    }),
+  createCampaign: (data: { subject: string; body: string; filters: CampaignFilters }) =>
+    req<{ id: string }>("/campaigns", { method: "POST", body: JSON.stringify(data) }),
+  updateCampaign: (id: string, data: { subject: string; body: string; filters: CampaignFilters }) =>
+    req<void>(`/campaigns/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteCampaign: (id: string) => req<void>(`/campaigns/${id}`, { method: "DELETE" }),
+  sendCampaign: (id: string) =>
+    req<{ sent: number }>(`/campaigns/${id}/send`, { method: "POST" }),
+
+  reportMeta: () => req<ReportMeta>("/accounting/report/meta"),
+  yearReport: (year: number) => req<YearReport>(`/accounting/report/year?year=${year}`),
+  seasonReport: (seasonId: string) =>
+    req<SeasonReport>(`/accounting/report/season?seasonId=${seasonId}`),
 };
 
 /** Format cents as euros, French style: 119000 -> "1 190 €". */

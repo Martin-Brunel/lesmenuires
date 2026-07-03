@@ -1,4 +1,6 @@
+mod accounting;
 mod admin;
+mod campaigns;
 mod email;
 mod error;
 mod payments;
@@ -120,6 +122,10 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/api/bookings/:reference/pay-deposit", post(pay_deposit))
         .route(
+            "/api/bookings/:reference/reserve-offline",
+            post(reserve_offline),
+        )
+        .route(
             "/api/bookings/:reference/confirm-deposit",
             post(confirm_deposit),
         )
@@ -220,6 +226,12 @@ struct PropertyDto {
     tourist_tax_included: bool,
     owner_name: String,
     owner_address: String,
+    online_booking_enabled: bool,
+    pay_card_enabled: bool,
+    pay_cheque_enabled: bool,
+    pay_virement_enabled: bool,
+    instructions_cheque: String,
+    instructions_virement: String,
 }
 
 #[derive(FromRow, Serialize)]
@@ -298,7 +310,9 @@ async fn booking_context(
     let property = sqlx::query_as::<_, PropertyDto>(
         "select slug, name, location_label, description, surface_label, capacity, bedrooms, \
                 specs_label, highlight_label, hero_seed, deposit_pct, caution_cents, \
-                tourist_tax_cents, tourist_tax_included, owner_name, owner_address \
+                tourist_tax_cents, tourist_tax_included, owner_name, owner_address, \
+                online_booking_enabled, pay_card_enabled, pay_cheque_enabled, \
+                pay_virement_enabled, instructions_cheque, instructions_virement \
          from property where slug = $1",
     )
     .bind(&slug)
@@ -493,6 +507,18 @@ async fn create_booking(
     if week.status != "available" {
         return Err(AppError::BadRequest(
             "Cette semaine n'est plus disponible.".into(),
+        ));
+    }
+
+    // Interrupteur global : réservation en ligne fermée par l'admin.
+    let online_enabled: bool =
+        sqlx::query_scalar("select online_booking_enabled from property where id = $1")
+            .bind(prop.id)
+            .fetch_one(&st.pool)
+            .await?;
+    if !online_enabled {
+        return Err(AppError::BadRequest(
+            "La réservation en ligne est momentanément fermée. Contactez-nous directement.".into(),
         ));
     }
 
@@ -1004,6 +1030,18 @@ async fn pay_deposit(
     if b.status != "cart" {
         return Err(AppError::BadRequest("Réservation déjà réglée.".into()));
     }
+    let online_enabled: bool = sqlx::query_scalar(
+        "select p.online_booking_enabled from property p \
+         join booking b on b.property_id = p.id where b.reference = $1",
+    )
+    .bind(&reference)
+    .fetch_one(&st.pool)
+    .await?;
+    if !online_enabled {
+        return Err(AppError::BadRequest(
+            "La réservation en ligne est momentanément fermée. Contactez-nous directement.".into(),
+        ));
+    }
     if b.week_status != "available" {
         return Err(AppError::BadRequest(
             "Cette semaine n'est plus disponible.".into(),
@@ -1052,6 +1090,153 @@ async fn pay_deposit(
         publishable_key: st.payments.publishable_key(),
         deposit_cents: b.deposit_cents,
     }))
+}
+
+#[derive(Deserialize)]
+struct ReserveOfflineInput {
+    method: String, // "cheque" | "virement"
+}
+
+#[derive(FromRow)]
+struct OfflineRow {
+    id: Uuid,
+    status: String,
+    payment_method: Option<String>,
+    deposit_cents: i64,
+    contract_accepted_at: Option<DateTime<Utc>>,
+    emails_muted: bool,
+    online_booking_enabled: bool,
+    pay_cheque_enabled: bool,
+    pay_virement_enabled: bool,
+    instructions_cheque: String,
+    instructions_virement: String,
+    customer_email: Option<String>,
+    customer_first_name: Option<String>,
+}
+
+/// Réservation en ligne réglée hors carte (chèque ou virement) : la semaine est
+/// tenue (statut `pending_payment`) et le client reçoit les instructions de
+/// règlement. La réservation ne devient définitive que lorsque l'admin pointe
+/// l'acompte comme encaissé (mark-paid) ; sinon il annule et la semaine se
+/// libère.
+async fn reserve_offline(
+    State(st): State<AppState>,
+    Path(reference): Path<String>,
+    Json(input): Json<ReserveOfflineInput>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if !["cheque", "virement"].contains(&input.method.as_str()) {
+        return Err(AppError::BadRequest("Moyen de règlement invalide.".into()));
+    }
+    let b = sqlx::query_as::<_, OfflineRow>(
+        "select b.id, b.status, b.payment_method, b.deposit_cents, b.contract_accepted_at, \
+                b.emails_muted, \
+                p.online_booking_enabled, p.pay_cheque_enabled, p.pay_virement_enabled, \
+                p.instructions_cheque, p.instructions_virement, \
+                c.email as customer_email, c.first_name as customer_first_name \
+         from booking b \
+         join property p on p.id = b.property_id \
+         left join customer c on c.id = b.customer_id \
+         where b.reference = $1",
+    )
+    .bind(&reference)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("réservation".into()))?;
+
+    // Idempotent : re-soumission du même choix → même réponse, pas de double e-mail.
+    if b.status == "pending_payment" && b.payment_method.as_deref() == Some(&input.method) {
+        return Ok(Json(
+            serde_json::json!({ "status": "pending_payment", "reference": reference }),
+        ));
+    }
+    if b.status != "cart" {
+        return Err(AppError::BadRequest("Réservation déjà réglée.".into()));
+    }
+    if !b.online_booking_enabled {
+        return Err(AppError::BadRequest(
+            "La réservation en ligne est momentanément fermée. Contactez-nous directement.".into(),
+        ));
+    }
+    let method_enabled = match input.method.as_str() {
+        "cheque" => b.pay_cheque_enabled,
+        _ => b.pay_virement_enabled,
+    };
+    if !method_enabled {
+        return Err(AppError::BadRequest(
+            "Ce moyen de règlement n'est pas proposé.".into(),
+        ));
+    }
+    // Même garde légale que le paiement CB : contrat signé d'abord.
+    if b.contract_accepted_at.is_none() {
+        return Err(AppError::BadRequest(
+            "Le contrat doit être signé avant de finaliser.".into(),
+        ));
+    }
+
+    let mut tx = st.pool.begin().await?;
+    if !try_claim_week(&mut tx, b.id).await? {
+        return Err(AppError::BadRequest(
+            "Cette semaine vient d'être réservée par quelqu'un d'autre.".into(),
+        ));
+    }
+    // La caution suit le même canal : pas de carte → chèque de caution physique.
+    sqlx::query(
+        "update booking set status = 'pending_payment', payment_method = $2, \
+            caution_method = 'cheque', updated_at = now() where id = $1",
+    )
+    .bind(b.id)
+    .bind(&input.method)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    // Instructions de règlement (e-mail système personnalisable), sauf coupure.
+    if scheduler::transactional_emails_enabled(&st.pool).await && !b.emails_muted {
+        if let Some(to) = b.customer_email.clone().filter(|e| !e.trim().is_empty()) {
+            let instructions = match input.method.as_str() {
+                "cheque" => b.instructions_cheque.clone(),
+                _ => b.instructions_virement.clone(),
+            };
+            let instructions = if instructions.trim().is_empty() {
+                "Contactez-nous pour les modalités de règlement.".to_string()
+            } else {
+                instructions
+            };
+            let methode = if input.method == "cheque" {
+                "chèque".to_string()
+            } else {
+                "virement bancaire".to_string()
+            };
+            let vars = vec![
+                ("bonjour", email::bonjour(b.customer_first_name.as_deref())),
+                (
+                    "prenom",
+                    b.customer_first_name.clone().unwrap_or_default(),
+                ),
+                ("reference", reference.clone()),
+                ("montant", scheduler::eur(b.deposit_cents)),
+                ("methode", methode),
+                ("instructions", instructions),
+            ];
+            let pool = st.pool.clone();
+            let bid = b.id;
+            tokio::spawn(async move {
+                let _ = email::send_system(
+                    pool,
+                    Some(bid),
+                    "offline_pending",
+                    to,
+                    &vars,
+                    &format!("{}/espace", email::front_url()),
+                )
+                .await;
+            });
+        }
+    }
+
+    Ok(Json(
+        serde_json::json!({ "status": "pending_payment", "reference": reference }),
+    ))
 }
 
 #[derive(FromRow)]
@@ -1315,7 +1500,19 @@ async fn create_magic_token(pool: &PgPool, cid: Uuid) -> Result<String, AppError
 
 /// Welcome e-mail after a confirmed booking, with a magic link to the espace.
 /// Best-effort: failures are logged, never bubbled to the payment response.
-async fn send_welcome_email(pool: &PgPool, booking_id: Uuid, cid: Uuid, reference: &str) {
+pub(crate) async fn send_welcome_email(pool: &PgPool, booking_id: Uuid, cid: Uuid, reference: &str) {
+    // E-mails automatiques coupés (globalement ou pour ce dossier) → silence.
+    if !scheduler::transactional_emails_enabled(pool).await {
+        return;
+    }
+    let muted: bool = sqlx::query_scalar("select emails_muted from booking where id = $1")
+        .bind(booking_id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(false);
+    if muted {
+        return;
+    }
     let cust: Option<(String, String)> =
         sqlx::query_as("select email, first_name from customer where id = $1")
             .bind(cid)

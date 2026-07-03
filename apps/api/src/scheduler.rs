@@ -19,7 +19,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 /// Format cents as a French euro amount, e.g. 123456 → "1234,56 €".
-fn eur(cents: i64) -> String {
+pub(crate) fn eur(cents: i64) -> String {
     format!("{},{:02} €", cents / 100, (cents % 100).abs())
 }
 
@@ -54,28 +54,54 @@ impl TickReport {
     }
 }
 
+/// Réglage global : e-mails transactionnels automatiques actifs ?
+/// (Coupe les jobs de notification, jamais les prélèvements ni les envois
+/// manuels de l'admin.)
+pub async fn transactional_emails_enabled(pool: &PgPool) -> bool {
+    sqlx::query_scalar::<_, bool>(
+        "select coalesce(bool_and(transactional_emails_enabled), true) from property",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(true)
+}
+
 pub async fn run_tick(pool: &PgPool, payments: &Arc<dyn PaymentProvider>) -> TickReport {
     let mut r = TickReport::default();
-    if let Err(e) = prenotify_balances(pool, &mut r).await {
-        tracing::error!("job pré-notif solde: {e:?}");
+    let emails_on = transactional_emails_enabled(pool).await;
+    if emails_on {
+        if let Err(e) = prenotify_balances(pool, &mut r).await {
+            tracing::error!("job pré-notif solde: {e:?}");
+        }
+        if let Err(e) = run_email_automations(pool, &mut r).await {
+            tracing::error!("job transactionnels: {e:?}");
+        }
     }
-    if let Err(e) = run_email_automations(pool, &mut r).await {
-        tracing::error!("job transactionnels: {e:?}");
-    }
-    if let Err(e) = charge_due_balances(pool, payments, &mut r).await {
+    if let Err(e) = charge_due_balances(pool, payments, emails_on, &mut r).await {
         tracing::error!("job solde: {e:?}");
     }
-    if let Err(e) = remind_abandoned_carts(pool, &mut r).await {
-        tracing::error!("job relance: {e:?}");
+    if emails_on {
+        if let Err(e) = remind_abandoned_carts(pool, &mut r).await {
+            tracing::error!("job relance: {e:?}");
+        }
     }
     if let Err(e) = expire_stale_carts(pool, payments, &mut r).await {
         tracing::error!("job expiration panier: {e:?}");
     }
-    if let Err(e) = request_reviews(pool, &mut r).await {
-        tracing::error!("job demande d'avis: {e:?}");
+    if emails_on {
+        if let Err(e) = request_reviews(pool, &mut r).await {
+            tracing::error!("job demande d'avis: {e:?}");
+        }
     }
     if let Err(e) = purge_expired_tokens(pool, &mut r).await {
         tracing::error!("job purge jetons: {e:?}");
+    }
+    // Comptabilité : matérialise en écritures les flux arrivés depuis le
+    // dernier tick (idempotent — les sources déjà comptabilisées sont ignorées).
+    match crate::accounting::sync_ledger(pool).await {
+        Ok(n) if n > 0 => tracing::info!("compta: {n} écriture(s) générée(s)"),
+        Ok(_) => {}
+        Err(e) => tracing::error!("job compta: {e:?}"),
     }
     r
 }
@@ -103,6 +129,7 @@ struct BalanceDue {
     provider_customer_id: String,
     provider_payment_method_id: String,
     attempts: i32,
+    emails_muted: bool,
     email: Option<String>,
     first_name: Option<String>,
     notified: bool,
@@ -111,6 +138,7 @@ struct BalanceDue {
 async fn charge_due_balances(
     pool: &PgPool,
     payments: &Arc<dyn PaymentProvider>,
+    emails_on: bool,
     r: &mut TickReport,
 ) -> Result<(), sqlx::Error> {
     // `balance_attempts` counts only *definitive* declines (see record_failure), so
@@ -127,7 +155,7 @@ async fn charge_due_balances(
     // session one (two intents → two debits). The window is a heuristic, not a lock.
     let due = sqlx::query_as::<_, BalanceDue>(
         "select b.id, b.reference, b.balance_cents, b.provider_customer_id, \
-                b.provider_payment_method_id, b.balance_attempts as attempts, \
+                b.provider_payment_method_id, b.balance_attempts as attempts, b.emails_muted, \
                 c.email, c.first_name, (b.balance_failed_notified_at is not null) as notified \
          from booking b join availability_week aw on aw.id = b.week_id \
          left join customer c on c.id = b.customer_id \
@@ -178,7 +206,11 @@ async fn charge_due_balances(
                 tx.commit().await?;
                 r.balances_charged += 1;
                 tracing::info!("solde prélevé: {} ({} c)", d.reference, d.balance_cents);
-                if let Some(to) = d.email.clone().filter(|e| !e.is_empty()) {
+                if let Some(to) = d
+                    .email
+                    .clone()
+                    .filter(|e| !e.is_empty() && emails_on && !d.emails_muted)
+                {
                     let vars = vec![
                         ("bonjour", email::bonjour(d.first_name.as_deref())),
                         ("prenom", d.first_name.clone().unwrap_or_default()),
@@ -200,7 +232,7 @@ async fn charge_due_balances(
                 r.balance_failures += 1;
                 let definitive = e.is_definitive();
                 record_failure(pool, d.id, "balance", definitive, &format!("{e:?}")).await?;
-                if definitive && !d.notified {
+                if definitive && !d.notified && emails_on && !d.emails_muted {
                     notify_payment_issue(
                         pool,
                         d.id,
@@ -309,6 +341,7 @@ async fn run_email_automations(pool: &PgPool, r: &mut TickReport) -> Result<(), 
                 when 'departure' then aw.end_date \
                 else b.cancelled_at::date end as event_date) ev \
          where a.active \
+           and not b.emails_muted \
            and ev.event_date is not null \
            and ev.event_date + a.offset_days <= current_date \
            and current_date <= ev.event_date + a.offset_days + 3 \
@@ -401,6 +434,7 @@ async fn prenotify_balances(pool: &PgPool, r: &mut TickReport) -> Result<(), sql
          where b.status = 'confirmed' and b.balance_paid_at is null and b.balance_cents > 0 \
            and b.payment_flag is null and b.balance_prenotified_at is null \
            and b.channel = 'online' \
+           and not b.emails_muted \
            and aw.start_date - 17 <= current_date and current_date < aw.start_date - 14",
     )
     .fetch_all(pool)
@@ -526,6 +560,7 @@ async fn remind_abandoned_carts(pool: &PgPool, r: &mut TickReport) -> Result<(),
         "with updated as ( \
             update booking set cart_reminder_sent_at = now(), updated_at = now() \
             where status = 'cart' and cart_reminder_sent_at is null \
+              and not emails_muted \
               and created_at < now() - interval '1 hour' \
             returning id, customer_id ) \
          select u.id, c.email, c.first_name \
@@ -615,6 +650,7 @@ async fn request_reviews(pool: &PgPool, r: &mut TickReport) -> Result<(), sqlx::
          where b.status in ('confirmed','balance_paid') and b.payment_flag is null \
            and b.review_requested_at is null \
            and coalesce(c.email, '') <> '' \
+           and not b.emails_muted \
            and aw.end_date <= current_date and current_date <= aw.end_date + 7",
     )
     .fetch_all(pool)

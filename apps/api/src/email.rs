@@ -233,6 +233,15 @@ pub(crate) const SYSTEM_TEMPLATES: &[SystemTemplate] = &[
         vars: &["bonjour", "prenom", "reference"],
     },
     SystemTemplate {
+        kind: "offline_pending",
+        label: "Instructions de règlement (chèque/virement)",
+        trigger: "Envoyé quand une réservation en ligne choisit le règlement par chèque ou virement.",
+        subject: "Votre réservation est en attente de règlement — L'Adret",
+        body: "{{bonjour}}\n\nVotre demande de réservation {{reference}} est bien enregistrée : la semaine est retenue pour vous.\n\nPour la confirmer définitivement, réglez l'acompte de {{montant}} par {{methode}} :\n\n{{instructions}}\n\nPensez à indiquer la référence {{reference}} avec votre règlement. Dès réception, nous validerons votre réservation et vous recevrez une confirmation.",
+        cta_label: "Suivre ma réservation",
+        vars: &["bonjour", "prenom", "reference", "montant", "methode", "instructions"],
+    },
+    SystemTemplate {
         kind: "balance_prenotify",
         label: "Prélèvement du solde à venir",
         trigger: "Envoyé ~16 jours avant l'arrivée, avant le prélèvement automatique (J-14).",

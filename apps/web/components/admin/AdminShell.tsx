@@ -12,6 +12,8 @@ import {
   LogOut,
   Mail,
   Package,
+  Send,
+  Settings,
   Snowflake,
   Star,
   UserCog,
@@ -38,8 +40,10 @@ const NAV = [
   { href: "/admin/saisons", label: "Saisons", icon: Snowflake },
   { href: "/admin/prestations", label: "Prestations", icon: Package },
   { href: "/admin/emails", label: "E-mails auto", icon: Mail },
+  { href: "/admin/campagnes", label: "Campagnes", icon: Send },
   { href: "/admin/editorial", label: "Contenu éditorial", icon: FileText },
   { href: "/admin/equipe", label: "Équipe", icon: UserCog },
+  { href: "/admin/reglages", label: "Réglages", icon: Settings },
 ];
 
 export function AdminShell({ children }: { children: React.ReactNode }) {

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { adminApi, fmtEur, type Contact } from "@/lib/admin-api";
 import { csvDate, csvEur, downloadCsv } from "@/lib/csv";
 import { Badge } from "@/components/ui/badge";
@@ -32,10 +33,13 @@ const FILTER_LABEL: Record<Filter, string> = {
 };
 
 export default function ContactsPage() {
+  const router = useRouter();
   const [contacts, setContacts] = useState<Contact[] | null>(null);
   const [error, setError] = useState(false);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  // Sélection manuelle (ids) pour créer une campagne ciblée.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     adminApi.listContacts().then(setContacts).catch(() => setError(true));
@@ -67,6 +71,27 @@ export default function ContactsPage() {
 
   const clients = contacts.filter((c) => c.confirmedCount > 0).length;
   const prospects = contacts.length - clients;
+
+  // Lignes sélectionnables parmi celles affichées (les contacts sans e-mail sont exclus).
+  const selectableRows = rows.filter((c) => c.email);
+  const allDisplayedSelected =
+    selectableRows.length > 0 && selectableRows.every((c) => selected.has(c.id));
+
+  const toggleOne = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const toggleAllDisplayed = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allDisplayedSelected) selectableRows.forEach((c) => next.delete(c.id));
+      else selectableRows.forEach((c) => next.add(c.id));
+      return next;
+    });
 
   return (
     <div className="space-y-6">
@@ -129,6 +154,16 @@ export default function ContactsPage() {
       <Table>
         <TableHeader>
           <TableRow>
+            <TableHead className="w-[36px]">
+              <input
+                type="checkbox"
+                aria-label="Tout sélectionner"
+                title="Sélectionner tous les contacts affichés"
+                checked={allDisplayedSelected}
+                disabled={selectableRows.length === 0}
+                onChange={toggleAllDisplayed}
+              />
+            </TableHead>
             <TableHead>Contact</TableHead>
             <TableHead>Coordonnées</TableHead>
             <TableHead className="text-right">Réservations</TableHead>
@@ -140,13 +175,24 @@ export default function ContactsPage() {
         <TableBody>
           {rows.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={6} className="text-sm text-muted-foreground">
+              <TableCell colSpan={7} className="text-sm text-muted-foreground">
                 Aucun contact.
               </TableCell>
             </TableRow>
           ) : (
             rows.map((c) => (
               <TableRow key={c.id}>
+                <TableCell onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    aria-label={`Sélectionner ${c.name ?? c.email}`}
+                    checked={selected.has(c.id)}
+                    disabled={!c.email}
+                    title={c.email ? undefined : "Pas d'e-mail"}
+                    onChange={() => toggleOne(c.id)}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </TableCell>
                 <TableCell>
                   <Link href={`/admin/contacts/${c.id}`} className="font-medium text-primary underline underline-offset-2 hover:text-foreground">
                     {c.name ?? c.email}
@@ -191,6 +237,27 @@ export default function ContactsPage() {
         </TableBody>
       </Table>
       </Card>
+
+      {selected.size > 0 && (
+        <div className="sticky bottom-4 z-10 flex items-center gap-3 flex-wrap rounded-lg border bg-background p-3 shadow-lg">
+          <p className="text-sm font-medium">
+            {selected.size} contact{selected.size > 1 ? "s" : ""} sélectionné
+            {selected.size > 1 ? "s" : ""}
+          </p>
+          <div className="ml-auto flex items-center gap-2">
+            <Button variant="secondary" onClick={() => setSelected(new Set())}>
+              Tout désélectionner
+            </Button>
+            <Button
+              onClick={() =>
+                router.push(`/admin/campagnes?contacts=${Array.from(selected).join(",")}`)
+              }
+            >
+              Créer une campagne
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -7,7 +7,14 @@
 
 import { useRef, useState } from "react";
 import type { BookingContext } from "@/lib/api";
-import { ApiError, confirmDeposit, createBooking, payDeposit, saveContract } from "@/lib/api";
+import {
+  ApiError,
+  confirmDeposit,
+  createBooking,
+  payDeposit,
+  reserveOffline as reserveOfflineApi,
+  saveContract,
+} from "@/lib/api";
 import { CONTRACT_VERSION } from "@/lib/site";
 import { contractText } from "@/lib/contract";
 import {
@@ -19,6 +26,8 @@ import {
   type ExtrasState,
 } from "./data";
 import { type SignaturePadHandle } from "./SignaturePad";
+
+export type PayMethod = "card" | "cheque" | "virement";
 
 export type ContactInfo = {
   firstName: string;
@@ -71,6 +80,14 @@ export function useBookingFlow(ctx: BookingContext) {
   });
   const [weekIdx, setWeekIdx] = useState(() => pickDefaultWeek(weeks));
   const [extras, setExtras] = useState<ExtrasState>(() => defaultExtras(products));
+  // Moyen de règlement : CB par défaut si active, sinon le premier moyen actif
+  // (dans l'ordre d'affichage : carte, virement, chèque).
+  const [payMethod, setPayMethod] = useState<PayMethod>(() => {
+    if (property.payCardEnabled) return "card";
+    if (property.payVirementEnabled) return "virement";
+    if (property.payChequeEnabled) return "cheque";
+    return "card";
+  });
   const [accepted, setAccepted] = useState(false);
   const [sigEmpty, setSigEmpty] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -216,6 +233,25 @@ export function useBookingFlow(ctx: BookingContext) {
     }
   };
 
+  /** Finalise sans paiement en ligne (chèque/virement) : la réservation passe en
+   *  `pending_payment` (semaine retenue) et le client règle hors ligne. */
+  const reserveOffline = async (onDone: () => void): Promise<void> => {
+    if (busyRef.current || payMethod === "card") return;
+    busyRef.current = true;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const ref = await ensureBooking();
+      await reserveOfflineApi(ref, payMethod);
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Une erreur est survenue.");
+    } finally {
+      busyRef.current = false;
+      setSubmitting(false);
+    }
+  };
+
   /** Called by StripeCheckout once the card is confirmed. Must never throw: the
    *  card is already charged, so a failing confirm-deposit call must not trap the
    *  buyer on a dead spinner. The Stripe webhook confirms the booking server-side,
@@ -261,7 +297,8 @@ export function useBookingFlow(ctx: BookingContext) {
     accepted, setAccepted, sigEmpty, setSigEmpty, sigRef,
     reference, submitting, error, setError,
     stripeSession, setStripeSession,
+    payMethod, setPayMethod,
     week, months, totals, infoComplete,
-    ensureBooking, ensureCart, saveSignedContract, pay, finishStripe, resetFlow,
+    ensureBooking, ensureCart, saveSignedContract, pay, reserveOffline, finishStripe, resetFlow,
   };
 }

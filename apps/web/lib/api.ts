@@ -29,6 +29,12 @@ export type ApiProperty = {
   touristTaxIncluded: boolean;
   ownerName: string;
   ownerAddress: string;
+  onlineBookingEnabled: boolean;
+  payCardEnabled: boolean;
+  payChequeEnabled: boolean;
+  payVirementEnabled: boolean;
+  instructionsCheque: string;
+  instructionsVirement: string;
 };
 
 export type ApiWeek = {
@@ -179,6 +185,26 @@ export async function payDeposit(reference: string): Promise<PayDepositResult> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error ?? `pay-deposit: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export type OfflineMethod = "cheque" | "virement";
+
+/** Finalise sans paiement en ligne (chèque/virement) : la semaine est retenue,
+ *  la réservation passe en `pending_payment` jusqu'au pointage de l'acompte. */
+export async function reserveOffline(
+  reference: string,
+  method: OfflineMethod,
+): Promise<{ status: string; reference: string }> {
+  const res = await fetch(`${API_URL}/api/bookings/${reference}/reserve-offline`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ method }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? `reserve-offline: HTTP ${res.status}`);
   }
   return res.json();
 }

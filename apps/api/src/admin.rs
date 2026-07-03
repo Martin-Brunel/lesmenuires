@@ -66,6 +66,8 @@ pub fn routes(state: AppState) -> Router {
         .route("/bookings/:reference/detail", get(booking_detail))
         .route("/bookings/:reference/clear-flag", post(clear_payment_flag))
         .route("/bookings/:reference/note", post(add_note))
+        .route("/bookings/:reference/emails-muted", post(set_emails_muted))
+        .route("/settings", get(get_settings).put(update_settings))
         .route(
             "/bookings/:reference/send-contract",
             post(send_contract_link),
@@ -88,6 +90,8 @@ pub fn routes(state: AppState) -> Router {
         .route("/reviews/:id", put(update_review))
         .route("/property/:slug/ical", get(get_ical_url))
         .route("/scheduler/run", post(run_scheduler))
+        .merge(crate::accounting::routes())
+        .merge(crate::campaigns::routes())
         .layer(DefaultBodyLimit::max(12 * 1024 * 1024))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_admin));
 
@@ -884,6 +888,7 @@ struct BookingDetailRow {
     reference: String,
     status: String,
     channel: String,
+    emails_muted: bool,
     week_range: String,
     arrival: String,
     start_date: NaiveDate,
@@ -985,7 +990,7 @@ async fn booking_detail(
     Path(reference): Path<String>,
 ) -> Result<Json<BookingDetail>, AppError> {
     let booking = sqlx::query_as::<_, BookingDetailRow>(
-        "select b.reference, b.status, b.channel, aw.range_label as week_range, \
+        "select b.reference, b.status, b.channel, b.emails_muted, aw.range_label as week_range, \
                 aw.arrival_label as arrival, aw.start_date, b.adults, b.children, \
                 b.total_cents, b.deposit_cents, b.balance_cents, b.caution_cents, \
                 b.tourist_tax_cents, b.deposit_pct, b.payment_method, b.caution_method, \
@@ -2298,9 +2303,9 @@ async fn create_manual_booking(
             (reference, property_id, customer_id, week_id, status, channel, adults, children, \
              week_price_cents, extras_total_cents, total_cents, deposit_pct, deposit_cents, \
              balance_cents, caution_cents, tourist_tax_cents, payment_method, caution_method, \
-             admin_notes, deposit_paid_at, balance_paid_at) \
+             admin_notes, deposit_paid_at, balance_paid_at, emails_muted) \
          values ($1,$2,$3,$4,'confirmed','manual',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, \
-             case when $18 then now() end, case when $19 then now() end) returning id",
+             case when $18 then now() end, case when $19 then now() end, true) returning id",
     )
     .bind(&reference)
     .bind(prop.id)
@@ -2415,19 +2420,28 @@ async fn mark_paid(
     } else {
         "balance_cents"
     };
-    // Only an active manual booking can be pointed — never re-activate a cancelled
-    // or expired file (that would revive a released week → double-booking).
-    let row = sqlx::query_as::<_, (Uuid, i64, bool)>(&format!(
-        "select id, {amount_col}, ({paid_col} is not null) from booking \
-         where reference = $1 and channel = 'manual' \
-           and status in ('confirmed', 'balance_paid')"
+    // Pointable : réservation manuelle active, OU réservation en ligne réglée
+    // hors carte (chèque/virement — y compris l'option 'pending_payment' qui
+    // attend son acompte). Jamais un dossier annulé/expiré (cela réactiverait
+    // une semaine libérée → double réservation).
+    let row = sqlx::query_as::<_, (Uuid, i64, bool, String, Option<Uuid>)>(&format!(
+        "select id, {amount_col}, ({paid_col} is not null), status, customer_id from booking \
+         where reference = $1 \
+           and (channel = 'manual' or payment_method in ('cheque', 'virement')) \
+           and status in ('pending_payment', 'confirmed', 'balance_paid')"
     ))
     .bind(&reference)
     .fetch_optional(&st.pool)
     .await?
-    .ok_or_else(|| AppError::NotFound("réservation manuelle active".into()))?;
+    .ok_or_else(|| AppError::NotFound("réservation pointable (manuelle ou chèque/virement)".into()))?;
     if row.2 {
         return Err(AppError::BadRequest("Échéance déjà pointée.".into()));
+    }
+    let was_pending = row.3 == "pending_payment";
+    if was_pending && body.kind == "balance" {
+        return Err(AppError::BadRequest(
+            "Pointez d'abord l'acompte : c'est lui qui confirme la réservation.".into(),
+        ));
     }
 
     let mut tx = st.pool.begin().await?;
@@ -2449,6 +2463,13 @@ async fn mark_paid(
     .await?;
     insert_manual_payment(&mut tx, row.0, &body.kind, row.1, &body.method).await?;
     tx.commit().await?;
+    // L'encaissement de l'acompte rend l'option définitive → confirmation client
+    // (l'e-mail respecte la coupure globale et le mute du dossier).
+    if was_pending && body.kind == "deposit" {
+        if let Some(cid) = row.4 {
+            crate::send_welcome_email(&st.pool, row.0, cid, &reference).await;
+        }
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -2538,6 +2559,115 @@ async fn finances(State(st): State<AppState>) -> Result<Json<FinancesResponse>, 
         seasons,
         tax_declaration,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Réglages globaux + coupure d'e-mails par réservation
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct GlobalSettings {
+    transactional_emails_enabled: bool,
+    online_booking_enabled: bool,
+    pay_card_enabled: bool,
+    pay_cheque_enabled: bool,
+    pay_virement_enabled: bool,
+    instructions_cheque: String,
+    instructions_virement: String,
+}
+
+const SETTINGS_COLS: &str = "transactional_emails_enabled, online_booking_enabled, \
+    pay_card_enabled, pay_cheque_enabled, pay_virement_enabled, \
+    instructions_cheque, instructions_virement";
+
+/// Réglages globaux (plateforme mono-propriété : portés par la propriété).
+async fn get_settings(State(st): State<AppState>) -> Result<Json<GlobalSettings>, AppError> {
+    let s = sqlx::query_as::<_, GlobalSettings>(&format!(
+        "select {SETTINGS_COLS} from property limit 1"
+    ))
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("propriété".into()))?;
+    Ok(Json(s))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsUpdate {
+    transactional_emails_enabled: Option<bool>,
+    online_booking_enabled: Option<bool>,
+    pay_card_enabled: Option<bool>,
+    pay_cheque_enabled: Option<bool>,
+    pay_virement_enabled: Option<bool>,
+    instructions_cheque: Option<String>,
+    instructions_virement: Option<String>,
+}
+
+async fn update_settings(
+    State(st): State<AppState>,
+    Json(body): Json<SettingsUpdate>,
+) -> Result<Json<GlobalSettings>, AppError> {
+    // Garde-fou : la réservation en ligne a besoin d'au moins un moyen de
+    // règlement actif (sinon le tunnel serait une impasse).
+    let current = sqlx::query_as::<_, (bool, bool, bool)>(
+        "select pay_card_enabled, pay_cheque_enabled, pay_virement_enabled from property limit 1",
+    )
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("propriété".into()))?;
+    let card = body.pay_card_enabled.unwrap_or(current.0);
+    let cheque = body.pay_cheque_enabled.unwrap_or(current.1);
+    let virement = body.pay_virement_enabled.unwrap_or(current.2);
+    if !card && !cheque && !virement {
+        return Err(AppError::BadRequest(
+            "Activez au moins un moyen de règlement (ou fermez la réservation en ligne).".into(),
+        ));
+    }
+    let s = sqlx::query_as::<_, GlobalSettings>(&format!(
+        "update property set \
+            transactional_emails_enabled = coalesce($1, transactional_emails_enabled), \
+            online_booking_enabled = coalesce($2, online_booking_enabled), \
+            pay_card_enabled = coalesce($3, pay_card_enabled), \
+            pay_cheque_enabled = coalesce($4, pay_cheque_enabled), \
+            pay_virement_enabled = coalesce($5, pay_virement_enabled), \
+            instructions_cheque = coalesce($6, instructions_cheque), \
+            instructions_virement = coalesce($7, instructions_virement) \
+         returning {SETTINGS_COLS}"
+    ))
+    .bind(body.transactional_emails_enabled)
+    .bind(body.online_booking_enabled)
+    .bind(body.pay_card_enabled)
+    .bind(body.pay_cheque_enabled)
+    .bind(body.pay_virement_enabled)
+    .bind(body.instructions_cheque)
+    .bind(body.instructions_virement)
+    .fetch_one(&st.pool)
+    .await?;
+    Ok(Json(s))
+}
+
+#[derive(Deserialize)]
+struct MutedInput {
+    muted: bool,
+}
+
+/// Coupe (ou réactive) les e-mails automatiques pour un dossier précis.
+async fn set_emails_muted(
+    State(st): State<AppState>,
+    Path(reference): Path<String>,
+    Json(body): Json<MutedInput>,
+) -> Result<StatusCode, AppError> {
+    let n = sqlx::query("update booking set emails_muted = $2, updated_at = now() where reference = $1")
+        .bind(&reference)
+        .bind(body.muted)
+        .execute(&st.pool)
+        .await?
+        .rows_affected();
+    if n == 0 {
+        return Err(AppError::NotFound("réservation".into()));
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ---------------------------------------------------------------------------

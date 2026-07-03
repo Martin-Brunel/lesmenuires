@@ -27,6 +27,7 @@ import { toast } from "@/components/ui/toast";
 
 const STATUS_LABEL: Record<string, string> = {
   cart: "Panier",
+  pending_payment: "En attente de règlement",
   confirmed: "Confirmée",
   balance_paid: "Soldée",
   cancelled: "Annulée",
@@ -38,6 +39,7 @@ const STATUS_VARIANT: Record<
   "default" | "secondary" | "success" | "warning" | "muted" | "destructive"
 > = {
   cart: "warning",
+  pending_payment: "warning",
   confirmed: "success",
   balance_paid: "success",
   cancelled: "destructive",
@@ -221,9 +223,20 @@ export default function ReservationsPage() {
     const refundable =
       Math.max(0, (b.depositPaidAt ? b.depositCents : 0) - b.depositRefundedCents) +
       Math.max(0, (b.balancePaidAt ? b.balanceCents : 0) - b.balanceRefundedCents);
-    if (b.channel === "manual" && !b.depositPaidAt && active)
-      acts.push({ label: "Pointer l'acompte", onClick: () => markPaid(b, "deposit"), disabled: busy });
-    if (b.channel === "manual" && b.depositPaidAt && !b.balancePaidAt && active)
+    // Pointage manuel : réservations manuelles, mais aussi dossiers en ligne
+    // réglés par chèque/virement (dont les pending_payment en attente d'encaissement).
+    const offlinePayment =
+      b.channel === "manual" || b.paymentMethod === "cheque" || b.paymentMethod === "virement";
+    if (offlinePayment && !b.depositPaidAt && active)
+      acts.push({
+        label:
+          b.status === "pending_payment"
+            ? "Pointer l'acompte reçu (confirme la réservation)"
+            : "Pointer l'acompte",
+        onClick: () => markPaid(b, "deposit"),
+        disabled: busy,
+      });
+    if (offlinePayment && b.depositPaidAt && !b.balancePaidAt && active)
       acts.push({ label: "Pointer le solde", onClick: () => markPaid(b, "balance"), disabled: busy });
     if (
       (b.status === "confirmed" || b.status === "balance_paid") &&

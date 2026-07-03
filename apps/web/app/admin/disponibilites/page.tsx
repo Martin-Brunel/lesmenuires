@@ -7,6 +7,7 @@ import {
   adminApi,
   type AdminSeason,
   type AdminWeek,
+  type GlobalSettings,
   type RateTier,
 } from "@/lib/admin-api";
 import { frLong, frShort } from "@/lib/dates";
@@ -61,6 +62,8 @@ export default function DisponibilitesPage() {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [saveErr, setSaveErr] = useState(false);
+  const [settings, setSettings] = useState<GlobalSettings | null>(null);
+  const [settingsBusy, setSettingsBusy] = useState(false);
 
   const load = (sid: string) => {
     if (!sid) {
@@ -93,7 +96,36 @@ export default function DisponibilitesPage() {
         );
       })
       .catch(() => {});
+    adminApi
+      .getSettings()
+      .then(setSettings)
+      .catch(() => {});
   }, []);
+
+  const toggleOnlineBooking = async () => {
+    if (!settings || settingsBusy) return;
+    const next = !settings.onlineBookingEnabled;
+    if (
+      !next &&
+      !(await confirm({
+        title: "Fermer la réservation en ligne ?",
+        description:
+          "Le site affichera un message d'indisponibilité et refusera les nouvelles réservations. Vous pourrez rouvrir à tout moment.",
+        danger: true,
+        confirmLabel: "Fermer",
+      }))
+    )
+      return;
+    setSettingsBusy(true);
+    try {
+      setSettings(await adminApi.updateSettings({ onlineBookingEnabled: next }));
+      toast.success(next ? "Réservation en ligne ouverte." : "Réservation en ligne fermée.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      setSettingsBusy(false);
+    }
+  };
 
   useEffect(() => {
     load(seasonId);
@@ -155,13 +187,44 @@ export default function DisponibilitesPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Dispos &amp; tarifs</h1>
-        <p className="text-sm text-muted-foreground">
-          Prix et disponibilité par semaine, pour la saison sélectionnée. Modifiez librement puis
-          enregistrez d&apos;un coup.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Dispos &amp; tarifs</h1>
+          <p className="text-sm text-muted-foreground">
+            Prix et disponibilité par semaine, pour la saison sélectionnée. Modifiez librement puis
+            enregistrez d&apos;un coup.
+          </p>
+        </div>
+        {settings && (
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Réservation en ligne</span>
+              <Switch
+                checked={settings.onlineBookingEnabled}
+                disabled={settingsBusy}
+                onChange={toggleOnlineBooking}
+                label="Réservation en ligne"
+              />
+            </div>
+            <Link
+              href="/admin/reglages"
+              className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            >
+              Tous les réglages →
+            </Link>
+          </div>
+        )}
       </div>
+
+      {settings &&
+        (settings.onlineBookingEnabled ? (
+          <p className="text-xs text-muted-foreground">Le site accepte les réservations.</p>
+        ) : (
+          <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+            Réservation en ligne fermée — le site affiche un message d&apos;indisponibilité et
+            refuse les nouvelles réservations
+          </p>
+        ))}
 
       <Card>
         <div className="flex items-center justify-between gap-3 flex-wrap p-4 border-b">
@@ -251,6 +314,40 @@ export default function DisponibilitesPage() {
 
       <IcalSync />
     </div>
+  );
+}
+
+function Switch({
+  checked,
+  onChange,
+  disabled,
+  label,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  disabled?: boolean;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onChange}
+      className={cn(
+        "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50",
+        checked ? "bg-emerald-500" : "bg-muted-foreground/30",
+      )}
+    >
+      <span
+        className={cn(
+          "inline-block size-5 rounded-full bg-white shadow transition-transform",
+          checked ? "translate-x-[22px]" : "translate-x-0.5",
+        )}
+      />
+    </button>
   );
 }
 

@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   adminApi,
   type EmailAutomation,
   type EmailAutomationInput,
+  type GlobalSettings,
   type SystemEmail,
 } from "@/lib/admin-api";
 import { Badge } from "@/components/ui/badge";
@@ -47,6 +49,8 @@ const KIND_LABEL: Record<string, string> = {
   manual: "E-mails manuels",
   admin_invite: "Invitation admin",
   admin_reset: "Réinitialisation mot de passe",
+  campaign: "Campagne",
+  review_request: "Demande d'avis",
 };
 
 const VARIABLES =
@@ -79,6 +83,8 @@ export default function EmailsPage() {
   const [rows, setRows] = useState<EmailAutomation[] | null>(null);
   const [system, setSystem] = useState<SystemEmail[]>([]);
   const [stats, setStats] = useState<EmailStat[]>([]);
+  const [settings, setSettings] = useState<GlobalSettings | null>(null);
+  const [settingsBusy, setSettingsBusy] = useState(false);
   const [error, setError] = useState(false);
   // null = fermé ; "new" = création ; sinon l'automatisation en édition.
   const [editing, setEditing] = useState<EmailAutomation | "new" | null>(null);
@@ -89,11 +95,13 @@ export default function EmailsPage() {
       adminApi.listEmailAutomations(),
       adminApi.listSystemEmails(),
       adminApi.emailStats(),
+      adminApi.getSettings(),
     ])
-      .then(([a, s, st]) => {
+      .then(([a, s, st, gs]) => {
         setRows(a);
         setSystem(s);
         setStats(st);
+        setSettings(gs);
       })
       .catch(() => setError(true));
   useEffect(() => {
@@ -115,6 +123,33 @@ export default function EmailsPage() {
       reload();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erreur");
+    }
+  };
+
+  const toggleTransactional = async () => {
+    if (!settings || settingsBusy) return;
+    const next = !settings.transactionalEmailsEnabled;
+    if (
+      !next &&
+      !(await confirm({
+        title: "Couper tous les e-mails automatiques ?",
+        description:
+          "Plus aucun e-mail automatique ne partira (confirmation, pré-notification et reçu de solde, relances panier, e-mails planifiés, demandes d'avis). Les prélèvements continuent normalement.",
+        danger: true,
+        confirmLabel: "Couper les e-mails",
+      }))
+    )
+      return;
+    setSettingsBusy(true);
+    try {
+      setSettings(await adminApi.updateSettings({ transactionalEmailsEnabled: next }));
+      toast.success(
+        next ? "E-mails automatiques réactivés." : "E-mails automatiques coupés.",
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      setSettingsBusy(false);
     }
   };
 
@@ -153,6 +188,41 @@ export default function EmailsPage() {
 
   return (
     <div className="space-y-6">
+      <Card>
+        <CardContent className="space-y-3 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-medium">Réglages</h2>
+              <p className="text-sm text-muted-foreground">
+                E-mails transactionnels automatiques —{" "}
+                <Link href="/admin/reglages" className="underline underline-offset-2 hover:text-foreground">
+                  Tous les réglages →
+                </Link>
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">
+                {settings?.transactionalEmailsEnabled ? "Actifs" : "Coupés"}
+              </span>
+              <Switch
+                checked={settings?.transactionalEmailsEnabled ?? true}
+                disabled={settings === null || settingsBusy}
+                onChange={toggleTransactional}
+                label="E-mails transactionnels automatiques"
+              />
+            </div>
+          </div>
+          {settings && !settings.transactionalEmailsEnabled && (
+            <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+              Tous les e-mails automatiques sont coupés (confirmation, pré-notification et
+              reçu de solde, relances panier, e-mails planifiés, demandes d&apos;avis). Les
+              prélèvements continuent normalement. Les envois manuels et liens de connexion
+              restent actifs.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">E-mails automatiques</h1>
@@ -324,6 +394,40 @@ export default function EmailsPage() {
         />
       )}
     </div>
+  );
+}
+
+function Switch({
+  checked,
+  onChange,
+  disabled,
+  label,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  disabled?: boolean;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onChange}
+      className={cn(
+        "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50",
+        checked ? "bg-emerald-500" : "bg-muted-foreground/30",
+      )}
+    >
+      <span
+        className={cn(
+          "inline-block size-5 rounded-full bg-white shadow transition-transform",
+          checked ? "translate-x-[22px]" : "translate-x-0.5",
+        )}
+      />
+    </button>
   );
 }
 

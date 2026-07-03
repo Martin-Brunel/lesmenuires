@@ -18,9 +18,11 @@ import { Modal } from "@/components/ui/modal";
 import { CancelDialog } from "@/components/admin/CancelDialog";
 import { useConfirm, usePrompt } from "@/components/admin/dialogs";
 import { toast } from "@/components/ui/toast";
+import { cn } from "@/lib/utils";
 
 const STATUS_LABEL: Record<string, string> = {
   cart: "Panier",
+  pending_payment: "En attente de règlement",
   confirmed: "Confirmée",
   balance_paid: "Soldée",
   cancelled: "Annulée",
@@ -28,6 +30,7 @@ const STATUS_LABEL: Record<string, string> = {
 };
 const STATUS_VARIANT: Record<string, "success" | "warning" | "muted" | "destructive"> = {
   cart: "warning",
+  pending_payment: "warning",
   confirmed: "success",
   balance_paid: "success",
   cancelled: "destructive",
@@ -166,6 +169,17 @@ export default function ReservationDetailPage() {
       setSig({ signaturePng: null, contractVersion: null, signedAt: null });
     }
   };
+  const toggleEmailsMuted = async () => {
+    const muting = !b.emailsMuted;
+    run(async () => {
+      await adminApi.setEmailsMuted(reference, muting);
+      toast.success(
+        muting
+          ? "E-mails automatiques coupés pour ce dossier."
+          : "E-mails automatiques réactivés pour ce dossier.",
+      );
+    });
+  };
   const addNote = async () => {
     const body = note.trim();
     if (!body) return;
@@ -176,11 +190,22 @@ export default function ReservationDetailPage() {
     });
   };
 
+  // Pointage manuel : réservations manuelles, mais aussi dossiers en ligne
+  // réglés par chèque/virement (dont les pending_payment en attente d'encaissement).
+  const offlinePayment =
+    b.channel === "manual" || b.paymentMethod === "cheque" || b.paymentMethod === "virement";
+
   // Visible actions bar (also usable when the row is manual / caution active…).
   const actionBtns: { label: string; onClick: () => void; danger?: boolean }[] = [];
-  if (b.channel === "manual" && !b.depositPaidAt && active)
-    actionBtns.push({ label: "Pointer l'acompte", onClick: () => setMarkKind("deposit") });
-  if (b.channel === "manual" && b.depositPaidAt && !b.balancePaidAt && active)
+  if (offlinePayment && !b.depositPaidAt && active)
+    actionBtns.push({
+      label:
+        b.status === "pending_payment"
+          ? "Pointer l'acompte reçu (confirme la réservation)"
+          : "Pointer l'acompte",
+      onClick: () => setMarkKind("deposit"),
+    });
+  if (offlinePayment && b.depositPaidAt && !b.balancePaidAt && active)
     actionBtns.push({ label: "Pointer le solde", onClick: () => setMarkKind("balance") });
   if (
     (b.status === "confirmed" || b.status === "balance_paid") &&
@@ -280,6 +305,12 @@ export default function ReservationDetailPage() {
             {b.paymentFlag && <Badge variant="destructive">{PAYMENT_FLAG_LABEL[b.paymentFlag] ?? b.paymentFlag}</Badge>}
           </div>
         </div>
+        {b.status === "pending_payment" && (
+          <p className="mt-2 text-sm text-amber-600 dark:text-amber-500">
+            Semaine retenue. La réservation deviendra définitive quand vous pointerez
+            l&apos;acompte comme encaissé ({b.paymentMethod === "virement" ? "virement" : "chèque"}).
+          </p>
+        )}
       </div>
 
       {/* Actions du dossier (visibles) */}
@@ -408,14 +439,14 @@ export default function ReservationDetailPage() {
               amount={b.depositCents}
               paidAt={b.depositPaidAt}
               cancelled={!active}
-              onPoint={b.channel === "manual" && !b.depositPaidAt && active ? () => setMarkKind("deposit") : undefined}
+              onPoint={offlinePayment && !b.depositPaidAt && active ? () => setMarkKind("deposit") : undefined}
             />
             <Milestone
               label="Solde"
               amount={b.balanceCents}
               paidAt={b.balancePaidAt}
               cancelled={!active}
-              onPoint={b.channel === "manual" && b.depositPaidAt && !b.balancePaidAt && active ? () => setMarkKind("balance") : undefined}
+              onPoint={offlinePayment && b.depositPaidAt && !b.balancePaidAt && active ? () => setMarkKind("balance") : undefined}
             />
             <div className="flex items-center justify-between border-t pt-2">
               <span className="text-muted-foreground">Caution</span>
@@ -434,6 +465,36 @@ export default function ReservationDetailPage() {
                 {b.cautionAttempts > 0 ? ` caution ×${b.cautionAttempts}` : ""}
               </p>
             )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center justify-between gap-3">
+              E-mails automatiques
+              <Switch
+                checked={!b.emailsMuted}
+                disabled={pending}
+                onChange={toggleEmailsMuted}
+                label="E-mails automatiques du dossier"
+              />
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={b.emailsMuted ? "warning" : "success"}>
+                {b.emailsMuted ? "Coupés" : "Actifs"}
+              </Badge>
+              {b.channel === "manual" && (
+                <span className="text-xs text-muted-foreground">
+                  désactivés par défaut pour les réservations manuelles
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Coupés : ce dossier ne reçoit plus aucun e-mail automatique (confirmation,
+              relances, solde, avis). Les envois manuels restent possibles.
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -519,6 +580,40 @@ export default function ReservationDetailPage() {
         </Modal>
       )}
     </div>
+  );
+}
+
+function Switch({
+  checked,
+  onChange,
+  disabled,
+  label,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  disabled?: boolean;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onChange}
+      className={cn(
+        "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50",
+        checked ? "bg-emerald-500" : "bg-muted-foreground/30",
+      )}
+    >
+      <span
+        className={cn(
+          "inline-block size-5 rounded-full bg-white shadow transition-transform",
+          checked ? "translate-x-[22px]" : "translate-x-0.5",
+        )}
+      />
+    </button>
   );
 }
 

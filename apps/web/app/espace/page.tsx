@@ -18,6 +18,7 @@ import { StripeCheckout } from "@/components/booking/StripeCheckout";
 
 const STATUS: Record<string, { label: string; color: string }> = {
   cart: { label: "Paiement en attente", color: "#B8860B" },
+  pending_payment: { label: "En attente de règlement", color: "#B8860B" },
   confirmed: { label: "Confirmée", color: ACCENT },
   balance_paid: { label: "Soldée", color: "#2E7D5B" },
   cancelled: { label: "Annulée", color: "#9A9C97" },
@@ -300,6 +301,12 @@ function BookingCard({
           {st.label}
         </div>
       </div>
+
+      {b.status === "pending_payment" && (
+        <div style={css("margin-top:12px;padding:11px 13px;border-radius:11px;background:#B8860B14;font:400 12.5px/1.55 'Hanken Grotesk';color:#8A6A10")}>
+          Votre semaine est retenue — la réservation sera confirmée à réception de votre règlement.
+        </div>
+      )}
 
       <div style={css("margin-top:18px;padding-top:16px;border-top:1px solid rgba(0,0,0,.08);display:flex;flex-direction:column;gap:12px")}>
         <Milestone

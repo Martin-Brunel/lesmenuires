@@ -47,6 +47,9 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
     : [{ url: "https://picsum.photos/seed/adret-chalet-a/1200/1600", alt: "" }];
 
   const [screen, setScreen] = useState<Screen>("home");
+  // L'écran « done » sert aux deux issues : acompte payé en ligne (paid) ou
+  // réservation retenue en attente d'un règlement hors ligne (offline).
+  const [doneKind, setDoneKind] = useState<"paid" | "offline">("paid");
   const router = useRouter();
   const [lightbox, setLightbox] = useState<number | null>(null);
 
@@ -58,7 +61,7 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
     monthIdx, setMonthIdx, weekIdx, selectWeek, extras, toggleExtra, selectedExtras,
     accepted, setAccepted, sigEmpty, setSigEmpty, sigRef,
     reference, submitting, error, setError, stripeSession, setStripeSession,
-    week, months, totals, infoComplete,
+    payMethod, week, months, totals, infoComplete,
   } = flow;
 
   const pct = property.depositPct;
@@ -69,13 +72,18 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
     `${adults} adulte${adults > 1 ? "s" : ""}` +
     (children > 0 ? ` · ${children} enfant${children > 1 ? "s" : ""}` : "");
 
-  if (!week) {
+  if (!week || !property.onlineBookingEnabled) {
+    const closed = !property.onlineBookingEnabled;
     return (
       <div style={css("height:100dvh;max-width:480px;margin:0 auto;background:#F5F4F1;color:#1A1B1A;font-family:'Hanken Grotesk',system-ui,sans-serif;display:flex;align-items:center;justify-content:center;padding:32px")}>
         <div style={css("text-align:center")}>
           <div style={css("font:400 30px 'Marcellus'")}>{name}</div>
-          <div style={css(`margin-top:12px;font:500 10.5px 'Hanken Grotesk';letter-spacing:.2em;text-transform:uppercase;color:${ACCENT}`)}>{season ? season.name : "Hors saison"}</div>
-          <p style={css("margin:14px 0 0;font:400 14px/1.65 'Hanken Grotesk';color:#6B6E6B")}>Le calendrier de réservation ouvrira prochainement. Revenez bientôt.</p>
+          <div style={css(`margin-top:12px;font:500 10.5px 'Hanken Grotesk';letter-spacing:.2em;text-transform:uppercase;color:${ACCENT}`)}>{closed ? "Réservation en ligne fermée" : season ? season.name : "Hors saison"}</div>
+          <p style={css("margin:14px 0 0;font:400 14px/1.65 'Hanken Grotesk';color:#6B6E6B")}>
+            {closed
+              ? "La réservation en ligne est momentanément fermée. Contactez-nous directement pour organiser votre séjour."
+              : "Le calendrier de réservation ouvrira prochainement. Revenez bientôt."}
+          </p>
         </div>
       </div>
     );
@@ -94,10 +102,29 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
     if (await flow.ensureCart()) setScreen("contract");
   };
   const payNow = () => flow.pay(() => router.push("/espace"));
+  const confirmOffline = () => {
+    if (submitting) return;
+    flow.reserveOffline(() => {
+      setDoneKind("offline");
+      setScreen("done");
+    });
+  };
   const reset = () => {
     setScreen("home");
+    setDoneKind("paid");
     flow.resetFlow();
   };
+
+  // Moyens de règlement actifs, dans l'ordre d'affichage. Garde-fou : si aucun
+  // n'est activé côté admin, on retombe sur la carte (flux historique).
+  const payMethodOptions: { key: "card" | "virement" | "cheque"; title: string; sub: string }[] = [];
+  if (property.payCardEnabled) payMethodOptions.push({ key: "card", title: "Carte bancaire", sub: "Confirmation immédiate" });
+  if (property.payVirementEnabled) payMethodOptions.push({ key: "virement", title: "Virement bancaire", sub: "La semaine est retenue, confirmée à réception" });
+  if (property.payChequeEnabled) payMethodOptions.push({ key: "cheque", title: "Chèque", sub: "La semaine est retenue, confirmée à réception" });
+  if (payMethodOptions.length === 0) payMethodOptions.push({ key: "card", title: "Carte bancaire", sub: "Confirmation immédiate" });
+  const methodLabel = payMethod === "cheque" ? "chèque" : "virement";
+  const offlineInstructions =
+    (payMethod === "cheque" ? property.instructionsCheque : property.instructionsVirement)?.trim() ?? "";
 
   const cur = STEP_MAP[screen] || 0;
   const Stepper = () => (
@@ -123,6 +150,12 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
     { title: "Solde du séjour", when: "Prélevé le " + (balanceDueLabel(week.startDate) || "—"), amount: eur(balance), accent: false },
     { title: "Remise des clés", when: "Arrivée " + (week.arrival || "—") + " · 16h", amount: "", accent: false },
     { title: "Caution libérée", when: "Après état des lieux de sortie", amount: eur(caution), accent: false },
+  ];
+  const offlineTimeline = [
+    { title: "Acompte à régler", when: "Dès maintenant · par " + methodLabel, amount: eur(deposit), accent: true },
+    { title: "Confirmation", when: "À réception de votre règlement", amount: "", accent: false },
+    { title: "Solde du séjour", when: "Le " + (balanceDueLabel(week.startDate) || "—"), amount: eur(balance), accent: false },
+    { title: "Remise des clés", when: "Arrivée " + (week.arrival || "—") + " · 16h", amount: "", accent: false },
   ];
 
   return (
@@ -429,28 +462,67 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
             </div>
             <Stepper />
             <div style={css("padding:14px 22px 16px")}>
+              {payMethodOptions.length > 1 && (
+                <div style={css("display:flex;flex-direction:column;gap:8px")}>
+                  {payMethodOptions.map((m) => {
+                    const sel = payMethod === m.key;
+                    return (
+                      <div key={m.key} onClick={() => flow.setPayMethod(m.key)} style={css(`display:flex;align-items:center;gap:12px;padding:12px 14px;background:#FFF;border:${sel ? `1.5px solid ${ACCENT}` : "1px solid rgba(0,0,0,.08)"};border-radius:13px;cursor:pointer;transition:border-color .15s`)}>
+                        <div style={css(`flex:none;width:19px;height:19px;border-radius:50%;background:#FFF;${sel ? `border:6px solid ${ACCENT};` : "border:1.5px solid rgba(0,0,0,.2);"}`)} />
+                        <div>
+                          <div style={css("font:500 14px 'Hanken Grotesk';color:#1A1B1A")}>{m.title}</div>
+                          <div style={css(`margin-top:1px;font:400 11px 'Hanken Grotesk';color:${sel ? ACCENT : "#9A9C97"}`)}>{m.sub}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               <div style={css("text-align:center;padding:14px 0 22px")}>
-                <div style={css("font:400 12px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>À régler aujourd&apos;hui · acompte {pct}%</div>
+                <div style={css("font:400 12px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>{payMethod === "card" ? <>À régler aujourd&apos;hui · acompte {pct}%</> : <>Acompte {pct}% · à régler par {methodLabel}</>}</div>
                 <div style={css("margin-top:6px;font:400 46px 'Marcellus';color:#1A1B1A")}>{eur(deposit)}</div>
               </div>
-              <div style={css("background:#EFEEEB;border-radius:12px;padding:14px")}>
-                <div style={css("display:flex;justify-content:space-between;font:400 12.5px 'Hanken Grotesk';color:#6B6E6B;margin-bottom:8px")}>
-                  <span>Empreinte de caution</span>
-                  <span>{eur(caution)} · non débitée</span>
-                </div>
-                <div style={css("display:flex;justify-content:space-between;font:400 12.5px 'Hanken Grotesk';color:#6B6E6B")}>
-                  <span>Solde le {balanceDueLabel(week.startDate)}</span>
-                  <span>{eur(balance)}</span>
-                </div>
-              </div>
-              <div style={css("margin-top:14px;display:flex;align-items:center;gap:8px;justify-content:center;font:400 11.5px 'Hanken Grotesk';color:#9A9C97")}>
-                <span style={css("font-size:13px")}>🔒</span> Paiement sécurisé · Stripe
-              </div>
+              {payMethod === "card" ? (
+                <>
+                  <div style={css("background:#EFEEEB;border-radius:12px;padding:14px")}>
+                    <div style={css("display:flex;justify-content:space-between;font:400 12.5px 'Hanken Grotesk';color:#6B6E6B;margin-bottom:8px")}>
+                      <span>Empreinte de caution</span>
+                      <span>{eur(caution)} · non débitée</span>
+                    </div>
+                    <div style={css("display:flex;justify-content:space-between;font:400 12.5px 'Hanken Grotesk';color:#6B6E6B")}>
+                      <span>Solde le {balanceDueLabel(week.startDate)}</span>
+                      <span>{eur(balance)}</span>
+                    </div>
+                  </div>
+                  <div style={css("margin-top:14px;display:flex;align-items:center;gap:8px;justify-content:center;font:400 11.5px 'Hanken Grotesk';color:#9A9C97")}>
+                    <span style={css("font-size:13px")}>🔒</span> Paiement sécurisé · Stripe
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p style={css("margin:0;font:400 13.5px/1.6 'Hanken Grotesk';color:#5A5C58")}>
+                    Vous réglez l&apos;acompte de <b>{eur(deposit)}</b> par {methodLabel}. Votre semaine est retenue dès maintenant ; la réservation devient définitive à réception de votre règlement.
+                  </p>
+                  <div style={css("margin-top:12px;background:#FFF;border:1px solid rgba(0,0,0,.08);border-radius:13px;padding:14px 16px")}>
+                    <div style={css("font:500 10px 'Hanken Grotesk';letter-spacing:.08em;color:#9A9C97")}>RÈGLEMENT PAR {methodLabel.toUpperCase()}</div>
+                    <div style={css("margin-top:7px;white-space:pre-line;font:400 12.5px/1.6 'Hanken Grotesk';color:#5A5C58")}>
+                      {offlineInstructions || "Les instructions vous seront envoyées par e-mail."}
+                    </div>
+                    <div style={css(`margin-top:10px;padding:9px 11px;border-radius:9px;background:${ACCENT}14;font:500 11.5px 'Hanken Grotesk';color:#3f4b45`)}>
+                      Indiquez la référence de votre réservation avec votre règlement.
+                    </div>
+                  </div>
+                </>
+              )}
               {error && <div style={css("margin-top:12px;text-align:center;font:400 12px 'Hanken Grotesk';color:#B23B3B")}>{error}</div>}
             </div>
           </div>
           <div style={css("padding:13px 22px 30px;background:#FFF;border-top:1px solid rgba(0,0,0,.08)")}>
-            <div onClick={payNow} style={css(`padding:16px;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';${submitting ? "background:#D8D7D2;color:#fff;cursor:default;opacity:.75;" : "background:#1A1B1A;color:#fff;cursor:pointer;"}`)}>{submitting ? "Paiement en cours…" : "Payer " + eur(deposit)}</div>
+            {payMethod === "card" ? (
+              <div onClick={payNow} style={css(`padding:16px;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';${submitting ? "background:#D8D7D2;color:#fff;cursor:default;opacity:.75;" : "background:#1A1B1A;color:#fff;cursor:pointer;"}`)}>{submitting ? "Paiement en cours…" : "Payer " + eur(deposit)}</div>
+            ) : (
+              <div onClick={confirmOffline} style={css(`padding:16px;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';${submitting ? "background:#D8D7D2;color:#fff;cursor:default;opacity:.75;" : "background:#1A1B1A;color:#fff;cursor:pointer;"}`)}>{submitting ? "Enregistrement…" : "Confirmer la réservation"}</div>
+            )}
           </div>
         </div>
       )}
@@ -461,12 +533,31 @@ export function MobileFunnel({ ctx }: { ctx: BookingContext }) {
           <div style={css("flex:1;overflow:auto")}>
             <div style={css("padding:54px 26px 0;text-align:center")}>
               <div style={css(`width:74px;height:74px;border-radius:50%;margin:0 auto;display:flex;align-items:center;justify-content:center;font-size:36px;color:#fff;background:${ACCENT};box-shadow:0 12px 30px ${ACCENT}40`)}>✓</div>
-              <div style={css("margin-top:22px;font:400 30px 'Marcellus'")}>Réservation confirmée</div>
-              <p style={css("margin:12px auto 0;max-width:280px;font:400 13.5px/1.6 'Hanken Grotesk';color:#6B6E6B")}>Un e-mail d&apos;accueil avec les codes d&apos;accès, l&apos;itinéraire et vos contacts sur place vient de vous être envoyé.</p>
+              <div style={css("margin-top:22px;font:400 30px 'Marcellus'")}>{doneKind === "offline" ? "Réservation enregistrée" : "Réservation confirmée"}</div>
+              {doneKind === "offline" ? (
+                <p style={css("margin:12px auto 0;max-width:300px;font:400 13.5px/1.6 'Hanken Grotesk';color:#6B6E6B")}>Votre semaine est retenue. Réglez l&apos;acompte de <b>{eur(deposit)}</b> par {methodLabel} pour la confirmer définitivement — les instructions viennent de vous être envoyées par e-mail.</p>
+              ) : (
+                <p style={css("margin:12px auto 0;max-width:280px;font:400 13.5px/1.6 'Hanken Grotesk';color:#6B6E6B")}>Un e-mail d&apos;accueil avec les codes d&apos;accès, l&apos;itinéraire et vos contacts sur place vient de vous être envoyé.</p>
+              )}
             </div>
             <div style={css("padding:26px 22px 16px")}>
+              {doneKind === "offline" && (
+                <div style={css("margin-bottom:14px;background:#FFF;border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:16px")}>
+                  <div style={css("display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:12px;border-bottom:1px solid rgba(0,0,0,.08)")}>
+                    <div style={css("font:500 10px 'Hanken Grotesk';letter-spacing:.08em;color:#9A9C97")}>RÉFÉRENCE</div>
+                    <div style={css("font:400 19px 'Marcellus';color:#1A1B1A")}>{reference ?? "—"}</div>
+                  </div>
+                  <div style={css("margin-top:12px;font:500 10px 'Hanken Grotesk';letter-spacing:.08em;color:#9A9C97")}>RÈGLEMENT PAR {methodLabel.toUpperCase()}</div>
+                  <div style={css("margin-top:7px;white-space:pre-line;font:400 12.5px/1.6 'Hanken Grotesk';color:#5A5C58")}>
+                    {offlineInstructions || "Les instructions vous seront envoyées par e-mail."}
+                  </div>
+                  <div style={css(`margin-top:10px;padding:9px 11px;border-radius:9px;background:${ACCENT}14;font:500 11.5px 'Hanken Grotesk';color:#3f4b45`)}>
+                    Indiquez la référence de votre réservation avec votre règlement.
+                  </div>
+                </div>
+              )}
               <div style={css("background:#FFF;border:1px solid rgba(0,0,0,.07);border-radius:14px;padding:6px 16px")}>
-                {timeline.map((tl, i) => (
+                {(doneKind === "offline" ? offlineTimeline : timeline).map((tl, i) => (
                   <div key={i} style={css("display:flex;gap:13px;padding:13px 0;border-bottom:1px solid rgba(0,0,0,.07)")}>
                     <div style={css(`flex:none;width:9px;height:9px;border-radius:50%;margin-top:5px;background:${tl.accent ? ACCENT : "#CFCEC9"}`)} />
                     <div style={css("flex:1")}>
