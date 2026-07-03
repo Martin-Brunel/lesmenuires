@@ -8,6 +8,7 @@ import {
   CalendarRange,
   ClipboardList,
   FileText,
+  History,
   LayoutDashboard,
   LogOut,
   Mail,
@@ -27,23 +28,48 @@ import { DialogProvider } from "@/components/admin/dialogs";
 import { Toaster } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 
-// Ordonné par usage : le quotidien (exploitation) d'abord, la configuration
-// de l'offre ensuite.
-const NAV = [
-  { href: "/admin", label: "Tableau de bord", icon: LayoutDashboard, exact: true },
-  { href: "/admin/planning", label: "Planning", icon: CalendarDays },
-  { href: "/admin/reservations", label: "Réservations", icon: ClipboardList },
-  { href: "/admin/contacts", label: "Contacts", icon: Users },
-  { href: "/admin/finances", label: "Finances", icon: Wallet },
-  { href: "/admin/avis", label: "Avis", icon: Star },
-  { href: "/admin/disponibilites", label: "Dispos & tarifs", icon: CalendarRange },
-  { href: "/admin/saisons", label: "Saisons", icon: Snowflake },
-  { href: "/admin/prestations", label: "Prestations", icon: Package },
-  { href: "/admin/emails", label: "E-mails auto", icon: Mail },
-  { href: "/admin/campagnes", label: "Campagnes", icon: Send },
-  { href: "/admin/editorial", label: "Contenu éditorial", icon: FileText },
-  { href: "/admin/equipe", label: "Équipe", icon: UserCog },
-  { href: "/admin/reglages", label: "Réglages", icon: Settings },
+// Menu par catégories, ordonné par usage : le quotidien (activité) d'abord,
+// puis ce qui définit l'offre, la gestion, et enfin l'administration.
+type NavItem = { href: string; label: string; icon: typeof LayoutDashboard; exact?: boolean };
+const NAV_GROUPS: { title: string | null; items: NavItem[] }[] = [
+  {
+    title: null,
+    items: [{ href: "/admin", label: "Tableau de bord", icon: LayoutDashboard, exact: true }],
+  },
+  {
+    title: "Activité",
+    items: [
+      { href: "/admin/planning", label: "Planning", icon: CalendarDays },
+      { href: "/admin/reservations", label: "Réservations", icon: ClipboardList },
+      { href: "/admin/contacts", label: "Contacts", icon: Users },
+      { href: "/admin/avis", label: "Avis", icon: Star },
+    ],
+  },
+  {
+    title: "Offre & site",
+    items: [
+      { href: "/admin/disponibilites", label: "Dispos & tarifs", icon: CalendarRange },
+      { href: "/admin/saisons", label: "Saisons", icon: Snowflake },
+      { href: "/admin/prestations", label: "Prestations", icon: Package },
+      { href: "/admin/editorial", label: "Contenu éditorial", icon: FileText },
+    ],
+  },
+  {
+    title: "Gestion",
+    items: [
+      { href: "/admin/finances", label: "Finances", icon: Wallet },
+      { href: "/admin/emails", label: "E-mails auto", icon: Mail },
+      { href: "/admin/campagnes", label: "Campagnes", icon: Send },
+    ],
+  },
+  {
+    title: "Administration",
+    items: [
+      { href: "/admin/equipe", label: "Équipe", icon: UserCog },
+      { href: "/admin/journal", label: "Journal d'activité", icon: History },
+      { href: "/admin/reglages", label: "Réglages", icon: Settings },
+    ],
+  },
 ];
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
@@ -100,26 +126,37 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           </span>
           <span className="ml-2 text-xs text-muted-foreground">admin</span>
         </div>
-        <nav className="flex-1 overflow-y-auto p-3 space-y-1">
-          {NAV.map((n) => {
-            const active = n.exact ? pathname === n.href : pathname.startsWith(n.href);
-            const Icon = n.icon;
-            return (
-              <Link
-                key={n.href}
-                href={n.href}
-                className={cn(
-                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
-                  active
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-                )}
-              >
-                <Icon className="size-4" />
-                {n.label}
-              </Link>
-            );
-          })}
+        <nav className="flex-1 overflow-y-auto p-3 space-y-3">
+          {NAV_GROUPS.map((g) => (
+            <div key={g.title ?? "top"}>
+              {g.title && (
+                <div className="px-3 pb-1 pt-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">
+                  {g.title}
+                </div>
+              )}
+              <div className="space-y-0.5">
+                {g.items.map((n) => {
+                  const active = n.exact ? pathname === n.href : pathname.startsWith(n.href);
+                  const Icon = n.icon;
+                  return (
+                    <Link
+                      key={n.href}
+                      href={n.href}
+                      className={cn(
+                        "flex items-center gap-3 rounded-md px-3 py-1.5 text-sm transition-colors",
+                        active
+                          ? "bg-primary text-primary-foreground"
+                          : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                      )}
+                    >
+                      <Icon className="size-4" />
+                      {n.label}
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
         <div className="p-3 border-t">
           <Link

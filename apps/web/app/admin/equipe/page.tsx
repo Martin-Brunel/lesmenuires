@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import {
   adminApi,
   type AdminAccount,
-  type AuditEntry,
   type Me,
 } from "@/lib/admin-api";
 import { Avatar } from "@/components/admin/Avatar";
@@ -19,77 +18,17 @@ import { useConfirm } from "@/components/admin/dialogs";
 const dt = (iso: string) =>
   new Date(iso).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
 
-/** Traduit une entrée du journal (méthode + chemin) en action lisible. */
-function humanize(e: AuditEntry): string {
-  const p = e.path.replace(/^\/api\/admin/, "");
-  const ref = p.match(/\/bookings\/([A-Z0-9-]+)\//)?.[1];
-  const rules: [RegExp, string][] = [
-    [/^\/login$/, "Connexion"],
-    [/\/mark-paid$/, `Échéance pointée${ref ? ` · ${ref}` : ""}`],
-    [/\/refund$/, `Remboursement · ${ref}`],
-    [/\/cancel$/, `Annulation · ${ref}`],
-    [/\/caution\/capture$/, `Caution débitée · ${ref}`],
-    [/\/caution\/release$/, `Caution clôturée · ${ref}`],
-    [/\/clear-flag$/, `Incident levé · ${ref}`],
-    [/^\/bookings\/manual$/, "Réservation manuelle créée"],
-    [/^\/bookings\/[^/]+\/note$/, `Note ajoutée · ${ref ?? "dossier"}`],
-    [/^\/bookings\/[^/]+\/email$/, `E-mail envoyé · ${ref ?? "dossier"}`],
-    [/^\/contacts\/[^/]+\/email$/, "E-mail envoyé à un contact"],
-    [/^\/contacts\/[^/]+\/note$/, "Note ajoutée sur un contact"],
-    [/^\/contacts\/[^/]+$/, "Fiche contact modifiée"],
-    [/^\/property\//, e.method === "POST" ? "Photo ajoutée" : "Contenu éditorial modifié"],
-    [/^\/media\//, e.method === "DELETE" ? "Photo supprimée" : "Photo modifiée"],
-    [/^\/seasons$/, "Saison créée"],
-    [/^\/seasons\//, e.method === "DELETE" ? "Saison supprimée" : "Saison modifiée"],
-    [/^\/weeks\/generate$/, "Semaines générées"],
-    [/^\/weeks\//, e.method === "DELETE" ? "Semaine supprimée" : "Semaine modifiée"],
-    [/^\/products$/, "Prestation créée"],
-    [/^\/products\//, e.method === "DELETE" ? "Prestation supprimée" : "Prestation modifiée"],
-    [/^\/email-automations$/, "Transactionnel créé"],
-    [
-      /^\/email-automations\//,
-      e.method === "DELETE" ? "Transactionnel supprimé" : "Transactionnel modifié",
-    ],
-    [/^\/users$/, "Compte admin créé"],
-    [/^\/users\//, "Compte admin supprimé"],
-    [/^\/me\/password$/, "Mot de passe modifié"],
-    [/^\/me$/, "Compte modifié"],
-    [/^\/settings$/, "Réglages modifiés"],
-    [/\/emails-muted$/, `E-mails automatiques basculés${ref ? ` · ${ref}` : ""}`],
-    [/^\/campaigns\/preview$/, "Aperçu de campagne"],
-    [/^\/campaigns$/, "Campagne créée"],
-    [/\/campaigns\/[^/]+\/send$/, "Campagne envoyée"],
-    [/^\/campaigns\//, e.method === "DELETE" ? "Campagne supprimée" : "Campagne modifiée"],
-    [/^\/accounting\/sync$/, "Synchronisation comptable"],
-    [/^\/accounting\/entries\/[^/]+\/reverse$/, "Écriture extournée"],
-    [/^\/accounting\/entries/, e.method === "DELETE" ? "Écriture supprimée" : "Écriture saisie"],
-    [/^\/accounting\/accounts/, "Plan comptable modifié"],
-    [/^\/accounting\/supplier-invoices\/[^/]+\/(un)?pay$/, "Règlement fournisseur pointé"],
-    [
-      /^\/accounting\/supplier-invoices/,
-      e.method === "DELETE" ? "Facture fournisseur supprimée" : "Facture fournisseur saisie",
-    ],
-    [/^\/accounting\/suppliers/, "Fournisseur modifié"],
-    [/^\/scheduler\/run$/, "Planificateur lancé manuellement"],
-    [/^\/logout$/, "Déconnexion"],
-  ];
-  for (const [re, label] of rules) if (re.test(p) || re.test(e.path)) return label;
-  return `${e.method} ${p}`;
-}
-
 export default function EquipePage() {
   const confirm = useConfirm();
   const [me, setMe] = useState<Me | null>(null);
   const [accounts, setAccounts] = useState<AdminAccount[] | null>(null);
-  const [audit, setAudit] = useState<AuditEntry[] | null>(null);
   const [error, setError] = useState(false);
 
   const reload = () =>
-    Promise.all([adminApi.me(), adminApi.listAdminUsers(), adminApi.listAudit()])
-      .then(([m, a, j]) => {
+    Promise.all([adminApi.me(), adminApi.listAdminUsers()])
+      .then(([m, a]) => {
         setMe(m);
         setAccounts(a);
-        setAudit(j);
       })
       .catch(() => setError(true));
   useEffect(() => {
@@ -132,7 +71,7 @@ export default function EquipePage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Équipe</h1>
         <p className="text-sm text-muted-foreground">
-          Comptes du back-office et journal des actions, signées par leur auteur.
+          Comptes du back-office.
           {me.isSuper
             ? " Vous êtes le compte principal : vous seul pouvez inviter ou supprimer des comptes."
             : " Seul le compte principal peut inviter ou supprimer des comptes."}{" "}
@@ -184,31 +123,6 @@ export default function EquipePage() {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">Journal d&apos;activité</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {!audit || audit.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Aucune action enregistrée.</p>
-          ) : (
-            <ul className="divide-y">
-              {audit.map((e, i) => (
-                <li key={i} className="flex items-center gap-3 py-2 text-sm">
-                  <Avatar name={e.adminName} size={26} />
-                  <span className="font-medium">{e.adminName}</span>
-                  <span className="text-muted-foreground min-w-0 flex-1 truncate">
-                    {humanize(e)}
-                  </span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {dt(e.createdAt)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 }
