@@ -2,6 +2,8 @@
 
 // Frontière d'erreur globale (App Router). Attrape les erreurs de rendu des
 // routes et propose de réessayer sans recharger toute l'application.
+import { useI18n } from "@/components/I18nProvider";
+
 export default function Error({
   error,
   reset,
@@ -9,6 +11,7 @@ export default function Error({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <main
       style={{
@@ -25,16 +28,16 @@ export default function Error({
       }}
     >
       <p style={{ fontSize: "0.8rem", letterSpacing: "0.2em", color: "#4E6E8C" }}>
-        UNE ERREUR EST SURVENUE
+        {t.errorPage.kicker}
       </p>
       <h1 style={{ fontFamily: "Marcellus, serif", fontSize: "2rem", margin: 0 }}>
-        Quelque chose s’est mal passé
+        {t.errorPage.title}
       </h1>
       <p style={{ maxWidth: "28rem", color: "#5b6670", lineHeight: 1.6 }}>
-        Merci de réessayer. Si le problème persiste, contactez-nous.
+        {t.errorPage.body}
         {error.digest ? (
           <span style={{ display: "block", marginTop: "0.5rem", fontSize: "0.75rem", color: "#9aa4ad" }}>
-            Référence : {error.digest}
+            {t.errorPage.reference} {error.digest}
           </span>
         ) : null}
       </p>
@@ -51,7 +54,7 @@ export default function Error({
           fontWeight: 600,
         }}
       >
-        Réessayer
+        {t.errorPage.retry}
       </button>
     </main>
   );

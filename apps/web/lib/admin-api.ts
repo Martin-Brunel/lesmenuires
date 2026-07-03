@@ -79,7 +79,7 @@ export type IcalSyncOutcome = {
   error: string | null;
 };
 
-export type RateTier = { key: string; label: string; priceCents: number };
+export type RateTier = { key: string; label: string; priceCents: number; labelEn?: string };
 
 export type AdminSeason = {
   id: string;
@@ -99,6 +99,25 @@ export type AdminProduct = {
   priceCents: number;
   active: boolean;
   position: number;
+  /** Traductions anglaises (vides = repli sur le français). */
+  labelEn: string;
+  descriptionEn: string;
+};
+
+/** Contenus traduits d'une propriété ({ en: { description, ... } }). */
+export type PropertyTranslations = {
+  en?: Partial<{
+    description: string;
+    surfaceLabel: string;
+    specsLabel: string;
+    highlightLabel: string;
+    locationLabel: string;
+    arrivalInstructions: string;
+    houseRules: string;
+    contractTemplate: string;
+    instructionsCheque: string;
+    instructionsVirement: string;
+  }>;
 };
 
 export type AdminMedia = {
@@ -668,6 +687,13 @@ export const adminApi = {
   getProperty: (slug: string) => req<AdminProperty>(`/property/${slug}`),
   updateProperty: (slug: string, data: Omit<AdminProperty, "slug">) =>
     req<AdminProperty>(`/property/${slug}`, { method: "PUT", body: JSON.stringify(data) }),
+  getPropertyTranslations: (slug: string) =>
+    req<PropertyTranslations>(`/property/${slug}/translations`),
+  updatePropertyTranslations: (slug: string, data: PropertyTranslations) =>
+    req<PropertyTranslations>(`/property/${slug}/translations`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
 
   listSeasons: (slug: string) => req<AdminSeason[]>(`/seasons?slug=${slug}`),
   createSeason: (data: {
@@ -816,14 +842,15 @@ export const adminApi = {
     req<{ kind: string; sent: number; delivered: number; opened: number; failed: number }[]>(
       "/email-stats",
     ),
-  listSystemEmails: () => req<SystemEmail[]>("/email-overrides"),
-  saveSystemEmail: (kind: string, subject: string, body: string) =>
-    req<void>(`/email-overrides/${kind}`, {
+  listSystemEmails: (locale = "fr") =>
+    req<SystemEmail[]>(`/email-overrides?locale=${locale}`),
+  saveSystemEmail: (kind: string, subject: string, body: string, locale = "fr") =>
+    req<void>(`/email-overrides/${kind}?locale=${locale}`, {
       method: "PUT",
       body: JSON.stringify({ subject, body }),
     }),
-  resetSystemEmail: (kind: string) =>
-    req<void>(`/email-overrides/${kind}`, { method: "DELETE" }),
+  resetSystemEmail: (kind: string, locale = "fr") =>
+    req<void>(`/email-overrides/${kind}?locale=${locale}`, { method: "DELETE" }),
   previewEmailAutomation: (subject: string, body: string) =>
     req<{ subject: string; html: string }>("/email-automations/preview", {
       method: "POST",

@@ -40,7 +40,8 @@ export default function PrestationsPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Prestations</h1>
         <p className="text-sm text-muted-foreground">
-          Produits complémentaires proposés au moment de la réservation.
+          Produits complémentaires proposés au moment de la réservation. Le second
+          champ (English) alimente le site anglais — vide, le français s&apos;affiche.
         </p>
       </div>
 
@@ -100,6 +101,8 @@ function ProductRow({
 }) {
   const [label, setLabel] = useState(product.label);
   const [description, setDescription] = useState(product.description);
+  const [labelEn, setLabelEn] = useState(product.labelEn);
+  const [descriptionEn, setDescriptionEn] = useState(product.descriptionEn);
   const [euros, setEuros] = useState((product.priceCents / 100).toString());
   const [active, setActive] = useState(product.active);
   const confirm = useConfirm();
@@ -109,6 +112,8 @@ function ProductRow({
   const dirty =
     label !== product.label ||
     description !== product.description ||
+    labelEn !== product.labelEn ||
+    descriptionEn !== product.descriptionEn ||
     Math.round(parseFloat(euros || "0") * 100) !== product.priceCents ||
     active !== product.active;
 
@@ -120,6 +125,8 @@ function ProductRow({
         key: product.key,
         label,
         description,
+        labelEn,
+        descriptionEn,
         priceCents: Math.round(parseFloat(euros || "0") * 100),
         active,
         position: product.position,
@@ -158,14 +165,30 @@ function ProductRow({
     <TableRow>
       <TableCell className="font-mono text-xs text-muted-foreground">{product.key}</TableCell>
       <TableCell>
-        <Input value={label} onChange={(e) => setLabel(e.target.value)} className="h-8" />
+        <div className="space-y-1">
+          <Input value={label} onChange={(e) => setLabel(e.target.value)} className="h-8" />
+          <Input
+            value={labelEn}
+            onChange={(e) => setLabelEn(e.target.value)}
+            className="h-8"
+            placeholder="English (facultatif)"
+          />
+        </div>
       </TableCell>
       <TableCell>
-        <Input
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          className="h-8"
-        />
+        <div className="space-y-1">
+          <Input
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className="h-8"
+          />
+          <Input
+            value={descriptionEn}
+            onChange={(e) => setDescriptionEn(e.target.value)}
+            className="h-8"
+            placeholder="English (facultatif)"
+          />
+        </div>
       </TableCell>
       <TableCell>
         <div className="flex items-center gap-1">
@@ -223,6 +246,8 @@ function CreateProduct({
         key: key.trim(),
         label,
         description,
+        labelEn: "",
+        descriptionEn: "",
         priceCents: Math.round(parseFloat(euros || "0") * 100),
         active: true,
         position: nextPosition,

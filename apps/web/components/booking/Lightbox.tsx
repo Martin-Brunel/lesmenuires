@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect } from "react";
+import { useI18n } from "@/components/I18nProvider";
 
 // `thumb` : variante réduite pour la bande de vignettes (défaut : l'image
 // plein format, pour les appelants sans variantes).
@@ -18,6 +19,7 @@ export function Lightbox({
   onChange: (i: number) => void;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const prev = useCallback(
     () => onChange((index - 1 + images.length) % images.length),
     [index, images.length, onChange],
@@ -83,7 +85,7 @@ export function Lightbox({
           e.stopPropagation();
           onClose();
         }}
-        aria-label="Fermer"
+        aria-label={t.lightbox.close}
         style={{
           position: "absolute",
           top: 18,
@@ -107,7 +109,7 @@ export function Lightbox({
             e.stopPropagation();
             prev();
           }}
-          aria-label="Photo précédente"
+          aria-label={t.lightbox.prev}
           style={{ ...arrow, left: 20 }}
         >
           ‹
@@ -119,7 +121,7 @@ export function Lightbox({
             e.stopPropagation();
             next();
           }}
-          aria-label="Photo suivante"
+          aria-label={t.lightbox.next}
           style={{ ...arrow, right: 20 }}
         >
           ›
@@ -153,7 +155,7 @@ export function Lightbox({
             <button
               key={i}
               onClick={() => onChange(i)}
-              aria-label={`Photo ${i + 1}`}
+              aria-label={t.lightbox.photoN(i + 1)}
               style={{
                 flex: "none",
                 width: 60,

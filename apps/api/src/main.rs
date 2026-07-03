@@ -3,6 +3,7 @@ mod admin;
 mod campaigns;
 mod email;
 mod error;
+mod i18n;
 mod ical;
 mod media;
 mod payments;
@@ -254,6 +255,12 @@ struct WeekDto {
     arr_short: String,
     dep_short: String,
     balance_due: String,
+    /// Colonnes techniques pour recalculer les libellés dans une autre langue
+    /// (les libellés stockés sont français) — jamais sérialisées.
+    #[serde(skip)]
+    end_date: NaiveDate,
+    #[serde(skip)]
+    tier_key: Option<String>,
 }
 
 #[derive(FromRow, Serialize)]
@@ -289,6 +296,7 @@ struct ActiveSeasonRow {
     name: String,
     start_date: NaiveDate,
     end_date: NaiveDate,
+    rate_tiers: serde_json::Value,
 }
 
 #[derive(Serialize)]
@@ -312,11 +320,19 @@ struct PublicReviewDto {
     submitted_at: DateTime<Utc>,
 }
 
+#[derive(Deserialize)]
+struct LocaleQuery {
+    #[serde(default)]
+    locale: Option<String>,
+}
+
 async fn booking_context(
     State(st): State<AppState>,
     Path(slug): Path<String>,
+    Query(q): Query<LocaleQuery>,
 ) -> Result<Json<BookingContext>, AppError> {
-    let property = sqlx::query_as::<_, PropertyDto>(
+    let lang = i18n::Lang::from_param(q.locale.as_deref());
+    let mut property = sqlx::query_as::<_, PropertyDto>(
         "select slug, name, location_label, description, surface_label, capacity, bedrooms, \
                 specs_label, highlight_label, hero_seed, deposit_pct, caution_cents, \
                 tourist_tax_cents, tourist_tax_included, owner_name, owner_address, \
@@ -330,9 +346,31 @@ async fn booking_context(
     .await?
     .ok_or_else(|| AppError::NotFound("propriété".into()))?;
 
+    // Contenus éditoriaux traduits (jsonb) : overlay sur les champs français.
+    if lang != i18n::Lang::Fr {
+        let tr: serde_json::Value =
+            sqlx::query_scalar("select translations from property where slug = $1")
+                .bind(&slug)
+                .fetch_one(&st.pool)
+                .await?;
+        property.description = i18n::tr_field(&tr, lang, "description", &property.description);
+        property.surface_label = i18n::tr_field(&tr, lang, "surfaceLabel", &property.surface_label);
+        property.specs_label = i18n::tr_field(&tr, lang, "specsLabel", &property.specs_label);
+        property.highlight_label =
+            i18n::tr_field(&tr, lang, "highlightLabel", &property.highlight_label);
+        property.location_label =
+            i18n::tr_field(&tr, lang, "locationLabel", &property.location_label);
+        property.instructions_cheque =
+            i18n::tr_field(&tr, lang, "instructionsCheque", &property.instructions_cheque);
+        property.instructions_virement =
+            i18n::tr_field(&tr, lang, "instructionsVirement", &property.instructions_virement);
+        property.contract_template =
+            i18n::tr_field(&tr, lang, "contractTemplate", &property.contract_template);
+    }
+
     // Public site shows only the active season's weeks.
     let active = sqlx::query_as::<_, ActiveSeasonRow>(
-        "select s.id, s.name, s.start_date, s.end_date \
+        "select s.id, s.name, s.start_date, s.end_date, s.rate_tiers \
          from season s join property p on p.id = s.property_id \
          where p.slug = $1 and s.is_active order by s.start_date limit 1",
     )
@@ -340,13 +378,14 @@ async fn booking_context(
     .fetch_optional(&st.pool)
     .await?;
 
-    let weeks =
+    let mut weeks =
         match &active {
             Some(a) => sqlx::query_as::<_, WeekDto>(
                 "select aw.id, aw.start_date, aw.range_label as \"range\", aw.sub_label as sub, \
                         aw.price_cents, aw.status, (aw.status = 'booked') as booked, \
                         aw.arrival_label as arrival, aw.arrival_short as arr_short, \
-                        aw.depart_short as dep_short, aw.balance_due_label as balance_due \
+                        aw.depart_short as dep_short, aw.balance_due_label as balance_due, \
+                        aw.end_date, aw.tier_key \
                  from availability_week aw \
                  where aw.season_id = $1 and aw.status <> 'blocked' \
                  order by aw.start_date, aw.position",
@@ -357,17 +396,47 @@ async fn booking_context(
             None => Vec::new(),
         };
 
+    // Libellés stockés = français canonique ; autre langue = recalcul à la
+    // volée depuis les dates (+ labelEn des paliers pour la mention).
+    if lang != i18n::Lang::Fr {
+        let tiers = active
+            .as_ref()
+            .map(|a| a.rate_tiers.clone())
+            .unwrap_or(serde_json::Value::Null);
+        for w in &mut weeks {
+            w.range = i18n::range_label(w.start_date, w.end_date, lang);
+            w.arrival = i18n::arrival_full(w.start_date, lang);
+            w.arr_short = i18n::short_label(w.start_date, lang);
+            w.dep_short = i18n::short_label(w.end_date, lang);
+            w.balance_due = i18n::balance_due_label(w.start_date, lang);
+            w.sub = i18n::tier_label(&tiers, w.tier_key.as_deref(), lang, &w.sub);
+        }
+    }
+
     let season = active.map(|a| PublicSeason {
         name: a.name,
         start_date: a.start_date,
         end_date: a.end_date,
     });
 
-    let products = sqlx::query_as::<_, ProductDto>(
+    let mut products = sqlx::query_as::<_, ProductDto>(
         "select key, label, description, price_cents from product where active order by position",
     )
     .fetch_all(&st.pool)
     .await?;
+
+    if lang != i18n::Lang::Fr {
+        let product_tr: Vec<(String, serde_json::Value)> =
+            sqlx::query_as("select key, translations from product where active")
+                .fetch_all(&st.pool)
+                .await?;
+        for p in &mut products {
+            if let Some((_, tr)) = product_tr.iter().find(|(k, _)| k == &p.key) {
+                p.label = i18n::tr_field(tr, lang, "label", &p.label);
+                p.description = i18n::tr_field(tr, lang, "description", &p.description);
+            }
+        }
+    }
 
     let media = sqlx::query_as::<_, PublicMediaDto>(
         "select '/media/' || pm.filename as url, pm.alt, \
@@ -440,6 +509,9 @@ struct CustomerInput {
     city: String,
     #[serde(default)]
     country: String,
+    /// Langue du parcours (fr/en) — pilote la langue des e-mails du client.
+    #[serde(default)]
+    locale: String,
 }
 
 #[derive(FromRow)]
@@ -595,14 +667,14 @@ async fn create_booking(
             // all their bookings instead of a fragment per attempt.
             let row = sqlx::query_as::<_, (Uuid,)>(
                 "insert into customer \
-                    (email, first_name, last_name, phone, address_line, postal_code, city, country) \
-                 values ($1, $2, $3, $4, $5, $6, $7, $8) \
+                    (email, first_name, last_name, phone, address_line, postal_code, city, country, locale) \
+                 values ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
                  on conflict (lower(email)) where coalesce(email, '') <> '' \
                  do update set \
                     first_name = excluded.first_name, last_name = excluded.last_name, \
                     phone = excluded.phone, address_line = excluded.address_line, \
                     postal_code = excluded.postal_code, city = excluded.city, \
-                    country = excluded.country \
+                    country = excluded.country, locale = excluded.locale \
                  returning id",
             )
             .bind(&c.email)
@@ -613,6 +685,7 @@ async fn create_booking(
             .bind(&c.postal_code)
             .bind(&c.city)
             .bind(&c.country)
+            .bind(i18n::Lang::from_param(Some(&c.locale)).as_str())
             .fetch_one(&mut *tx)
             .await?;
             Some(row.0)
@@ -814,20 +887,29 @@ struct ContractLinkView {
     signed_at: Option<DateTime<Utc>>,
     contract_text: Option<String>,
     signature_png: Option<String>,
+    #[serde(skip)]
+    start_date: NaiveDate,
+    #[serde(skip)]
+    end_date: NaiveDate,
+    #[serde(skip)]
+    translations: serde_json::Value,
 }
 
 async fn contract_link_view(
     State(st): State<AppState>,
     Path(token): Path<String>,
+    Query(q): Query<LocaleQuery>,
 ) -> Result<Json<ContractLinkView>, AppError> {
-    let row = sqlx::query_as::<_, ContractLinkView>(
+    let lang = i18n::Lang::from_param(q.locale.as_deref());
+    let mut row = sqlx::query_as::<_, ContractLinkView>(
         "select b.reference, aw.range_label as week_range, aw.arrival_label as arrival, \
                 nullif(trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')), '') as customer_name, \
                 p.name as property_name, p.location_label, p.capacity, b.caution_cents, \
                 p.owner_name, p.owner_address, p.contract_template, \
                 (b.contract_accepted_at is not null) as signed, \
                 b.contract_accepted_at as signed_at, b.contract_text, \
-                case when b.contract_accepted_at is not null then b.signature_png end as signature_png \
+                case when b.contract_accepted_at is not null then b.signature_png end as signature_png, \
+                aw.start_date, aw.end_date, p.translations \
          from booking b \
          join availability_week aw on aw.id = b.week_id \
          join property p on p.id = b.property_id \
@@ -838,6 +920,16 @@ async fn contract_link_view(
     .fetch_optional(&st.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("contrat".into()))?;
+    // Le texte déjà signé reste tel qu'archivé ; pour un contrat à signer, le
+    // gabarit et les libellés suivent la langue demandée.
+    if lang != i18n::Lang::Fr {
+        row.week_range = i18n::range_label(row.start_date, row.end_date, lang);
+        row.arrival = i18n::arrival_full(row.start_date, lang);
+        row.contract_template =
+            i18n::tr_field(&row.translations, lang, "contractTemplate", &row.contract_template);
+        row.location_label =
+            i18n::tr_field(&row.translations, lang, "locationLabel", &row.location_label);
+    }
     Ok(Json(row))
 }
 
@@ -1198,6 +1290,8 @@ struct OfflineRow {
     instructions_virement: String,
     customer_email: Option<String>,
     customer_first_name: Option<String>,
+    customer_locale: Option<String>,
+    translations: serde_json::Value,
 }
 
 /// Réservation en ligne réglée hors carte (chèque ou virement) : la semaine est
@@ -1217,8 +1311,9 @@ async fn reserve_offline(
         "select b.id, b.status, b.payment_method, b.deposit_cents, b.contract_accepted_at, \
                 b.emails_muted, \
                 p.online_booking_enabled, p.pay_cheque_enabled, p.pay_virement_enabled, \
-                p.instructions_cheque, p.instructions_virement, \
-                c.email as customer_email, c.first_name as customer_first_name \
+                p.instructions_cheque, p.instructions_virement, p.translations, \
+                c.email as customer_email, c.first_name as customer_first_name, \
+                c.locale as customer_locale \
          from booking b \
          join property p on p.id = b.property_id \
          left join customer c on c.id = b.customer_id \
@@ -1279,25 +1374,30 @@ async fn reserve_offline(
     // Instructions de règlement (e-mail système personnalisable), sauf coupure.
     if scheduler::transactional_emails_enabled(&st.pool).await && !b.emails_muted {
         if let Some(to) = b.customer_email.clone().filter(|e| !e.trim().is_empty()) {
+            let lang = i18n::Lang::from_param(b.customer_locale.as_deref());
             let instructions = match input.method.as_str() {
-                "cheque" => b.instructions_cheque.clone(),
-                _ => b.instructions_virement.clone(),
+                "cheque" => i18n::tr_field(&b.translations, lang, "instructionsCheque", &b.instructions_cheque),
+                _ => i18n::tr_field(&b.translations, lang, "instructionsVirement", &b.instructions_virement),
             };
             let instructions = if instructions.trim().is_empty() {
-                "Contactez-nous pour les modalités de règlement.".to_string()
+                match lang {
+                    i18n::Lang::Fr => "Contactez-nous pour les modalités de règlement.".to_string(),
+                    i18n::Lang::En => "Contact us for the payment details.".to_string(),
+                }
             } else {
                 instructions
             };
-            let methode = if input.method == "cheque" {
-                "chèque".to_string()
-            } else {
-                "virement bancaire".to_string()
+            let methode = match (input.method.as_str(), lang) {
+                ("cheque", i18n::Lang::Fr) => "chèque".to_string(),
+                ("cheque", i18n::Lang::En) => "cheque".to_string(),
+                (_, i18n::Lang::Fr) => "virement bancaire".to_string(),
+                (_, i18n::Lang::En) => "bank transfer".to_string(),
             };
             let vars = vec![
-                ("bonjour", email::bonjour(b.customer_first_name.as_deref())),
+                ("bonjour", email::bonjour_lang(b.customer_first_name.as_deref(), lang)),
                 ("prenom", b.customer_first_name.clone().unwrap_or_default()),
                 ("reference", reference.clone()),
-                ("montant", scheduler::eur(b.deposit_cents)),
+                ("montant", i18n::eur(b.deposit_cents, lang)),
                 ("methode", methode),
                 ("instructions", instructions),
             ];
@@ -1310,7 +1410,8 @@ async fn reserve_offline(
                     "offline_pending",
                     to,
                     &vars,
-                    &format!("{}/espace", email::front_url()),
+                    &format!("{}/espace", email::front_url_lang(lang)),
+                    lang,
                 )
                 .await;
             });
@@ -1601,25 +1702,26 @@ pub(crate) async fn send_welcome_email(
     if muted {
         return;
     }
-    let cust: Option<(String, String)> =
-        sqlx::query_as("select email, first_name from customer where id = $1")
+    let cust: Option<(String, String, String)> =
+        sqlx::query_as("select email, first_name, locale from customer where id = $1")
             .bind(cid)
             .fetch_optional(pool)
             .await
             .ok()
             .flatten();
-    let Some((mail, first_name)) = cust else {
+    let Some((mail, first_name, locale)) = cust else {
         return;
     };
     if mail.trim().is_empty() {
         return;
     }
+    let lang = i18n::Lang::from_param(Some(&locale));
     let link = match create_magic_token(pool, cid).await {
         Ok(t) => format!("{}/api/espace/login?token={}", email::api_url(), t),
-        Err(_) => format!("{}/espace", email::front_url()),
+        Err(_) => format!("{}/espace", email::front_url_lang(lang)),
     };
     let vars = vec![
-        ("bonjour", email::bonjour(Some(&first_name))),
+        ("bonjour", email::bonjour_lang(Some(&first_name), lang)),
         ("prenom", first_name.clone()),
         ("reference", reference.to_string()),
     ];
@@ -1630,6 +1732,7 @@ pub(crate) async fn send_welcome_email(
         mail,
         &vars,
         &link,
+        lang,
     )
     .await;
 }
@@ -1655,30 +1758,38 @@ async fn request_link(
 
     let email_in = body.email.trim().to_string();
     if !email_in.is_empty() {
-        let cid: Option<Uuid> = sqlx::query_scalar(
-            "select id from customer where lower(email) = lower($1) order by created_at desc limit 1",
+        let row: Option<(Uuid, String)> = sqlx::query_as(
+            "select id, locale from customer where lower(email) = lower($1) order by created_at desc limit 1",
         )
         .bind(&email_in)
         .fetch_optional(&st.pool)
         .await?;
-        if let Some(cid) = cid {
+        if let Some((cid, locale)) = row {
+            let lang = i18n::Lang::from_param(Some(&locale));
             let token = create_magic_token(&st.pool, cid).await?;
             let link = format!("{}/api/espace/login?token={}", email::api_url(), token);
             let (site, location) = email::brand(&st.pool).await;
-            let html = email::template(
-                &site,
-                &location,
-                "Connexion à votre espace",
-                "Cliquez ci-dessous pour accéder à votre espace séjour. Ce lien est valable 30 minutes.",
-                "Ouvrir mon espace",
-                &link,
-            );
+            let (heading, body, cta, subject) = match lang {
+                i18n::Lang::Fr => (
+                    "Connexion à votre espace",
+                    "Cliquez ci-dessous pour accéder à votre espace séjour. Ce lien est valable 30 minutes.",
+                    "Ouvrir mon espace",
+                    format!("Connexion à votre espace — {site}"),
+                ),
+                i18n::Lang::En => (
+                    "Sign in to your account",
+                    "Click below to access your stay account. This link is valid for 30 minutes.",
+                    "Open my account",
+                    format!("Sign in to your account — {site}"),
+                ),
+            };
+            let html = email::template_lang(&site, &location, heading, body, cta, &link, lang);
             email::spawn(
                 st.pool.clone(),
                 None,
                 "magic_link",
                 email_in,
-                format!("Connexion à votre espace — {site}"),
+                subject,
                 html,
             );
         }
@@ -1717,8 +1828,15 @@ async fn espace_login(
     let Some(cid) = cid else {
         return redirect(format!("{front}/espace?error=lien"));
     };
+    // Le client anglophone atterrit sur la version anglaise de son espace.
+    let locale: String = sqlx::query_scalar("select locale from customer where id = $1")
+        .bind(cid)
+        .fetch_optional(&st.pool)
+        .await?
+        .unwrap_or_else(|| "fr".into());
+    let prefix = if locale == "en" { "/en" } else { "" };
     let token = create_customer_session(&st.pool, cid).await?;
-    let mut resp = redirect(format!("{front}/espace"))?;
+    let mut resp = redirect(format!("{front}{prefix}/espace"))?;
     resp.headers_mut().insert(
         header::SET_COOKIE,
         HeaderValue::from_str(&session_cookie(&token))
@@ -1795,6 +1913,9 @@ struct MyBookingDto {
     /// Jeton du contrat signé — le front construit /contrat/{token} (copie).
     contract_token: Option<String>,
     created_at: DateTime<Utc>,
+    /// Pour recalculer les libellés dans une autre langue — jamais sérialisé.
+    #[serde(skip)]
+    end_date: NaiveDate,
 }
 
 #[derive(Serialize, FromRow)]
@@ -1804,6 +1925,8 @@ struct MePropertyDto {
     location_label: String,
     arrival_instructions: String,
     house_rules: String,
+    #[serde(skip)]
+    translations: serde_json::Value,
 }
 
 #[derive(Serialize)]
@@ -1823,7 +1946,9 @@ fn parse_csession(cookie_header: &str) -> Option<String> {
 async fn customer_me(
     State(st): State<AppState>,
     headers: HeaderMap,
+    Query(q): Query<LocaleQuery>,
 ) -> Result<Json<MeResponse>, AppError> {
+    let lang = i18n::Lang::from_param(q.locale.as_deref());
     let token = headers
         .get(header::COOKIE)
         .and_then(|v| v.to_str().ok())
@@ -1865,7 +1990,7 @@ async fn customer_me(
             .await?;
     }
 
-    let bookings = sqlx::query_as::<_, MyBookingDto>(
+    let mut bookings = sqlx::query_as::<_, MyBookingDto>(
         "select b.reference, b.status, aw.range_label as week_range, aw.arrival_label as arrival, \
                 aw.start_date, b.total_cents, b.deposit_cents, b.balance_cents, b.caution_cents, \
                 b.deposit_paid_at, b.balance_paid_at, b.caution_authorized_at, b.cancelled_at, \
@@ -1876,7 +2001,7 @@ async fn customer_me(
                 case when b.contract_accepted_at is not null \
                       and b.status in ('confirmed','balance_paid') \
                      then b.contract_sign_token end as contract_token, \
-                b.created_at \
+                b.created_at, aw.end_date \
          from booking b join availability_week aw on aw.id = b.week_id \
          where b.customer_id = $1 order by aw.start_date desc",
     )
@@ -1884,8 +2009,16 @@ async fn customer_me(
     .fetch_all(&st.pool)
     .await?;
 
-    let property = sqlx::query_as::<_, MePropertyDto>(
-        "select distinct p.name, p.location_label, p.arrival_instructions, p.house_rules \
+    if lang != i18n::Lang::Fr {
+        for b in &mut bookings {
+            b.week_range = i18n::range_label(b.start_date, b.end_date, lang);
+            b.arrival = i18n::arrival_full(b.start_date, lang);
+        }
+    }
+
+    let mut property = sqlx::query_as::<_, MePropertyDto>(
+        "select distinct p.name, p.location_label, p.arrival_instructions, p.house_rules, \
+                p.translations \
          from property p \
          join availability_week aw on aw.property_id = p.id \
          join booking b on b.week_id = aw.id \
@@ -1894,6 +2027,17 @@ async fn customer_me(
     .bind(cid)
     .fetch_optional(&st.pool)
     .await?;
+
+    // Consignes d'arrivée / règlement intérieur traduits si disponibles.
+    if lang != i18n::Lang::Fr {
+        if let Some(p) = property.as_mut() {
+            p.arrival_instructions =
+                i18n::tr_field(&p.translations, lang, "arrivalInstructions", &p.arrival_instructions);
+            p.house_rules = i18n::tr_field(&p.translations, lang, "houseRules", &p.house_rules);
+            p.location_label =
+                i18n::tr_field(&p.translations, lang, "locationLabel", &p.location_label);
+        }
+    }
 
     Ok(Json(MeResponse {
         customer,

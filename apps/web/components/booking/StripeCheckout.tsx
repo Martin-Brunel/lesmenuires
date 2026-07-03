@@ -8,6 +8,7 @@ import {
   useElements,
   useStripe,
 } from "@stripe/react-stripe-js";
+import { useI18n } from "@/components/I18nProvider";
 
 /** Modal that mounts Stripe's Payment Element to pay the deposit. */
 export function StripeCheckout({
@@ -23,6 +24,7 @@ export function StripeCheckout({
   onPaid: () => Promise<void> | void;
   onClose: () => void;
 }) {
+  const { locale, t } = useI18n();
   const stripePromise = useMemo(() => loadStripe(publishableKey), [publishableKey]);
 
   return (
@@ -51,16 +53,16 @@ export function StripeCheckout({
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <div style={{ font: "400 20px 'Marcellus', serif" }}>Paiement de l’acompte</div>
+          <div style={{ font: "400 20px 'Marcellus', serif" }}>{t.checkout.stripeModalTitle}</div>
           <button
             onClick={onClose}
-            aria-label="Fermer"
+            aria-label={t.checkout.stripeClose}
             style={{ border: "none", background: "none", fontSize: 18, cursor: "pointer", color: "#9A9C97" }}
           >
             ✕
           </button>
         </div>
-        <Elements stripe={stripePromise} options={{ clientSecret, locale: "fr" }}>
+        <Elements stripe={stripePromise} options={{ clientSecret, locale }}>
           <PayForm amountLabel={amountLabel} onPaid={onPaid} />
         </Elements>
       </div>
@@ -75,6 +77,7 @@ function PayForm({
   amountLabel: string;
   onPaid: () => Promise<void> | void;
 }) {
+  const { t } = useI18n();
   const stripe = useStripe();
   const elements = useElements();
   const [busy, setBusy] = useState(false);
@@ -89,7 +92,7 @@ function PayForm({
       redirect: "if_required",
     });
     if (err) {
-      setError(err.message ?? "Le paiement a échoué.");
+      setError(err.message ?? t.checkout.stripePayFailed);
       setBusy(false);
       return;
     }
@@ -99,12 +102,12 @@ function PayForm({
       try {
         await onPaid();
       } catch {
-        setError("Paiement accepté. Finalisation en cours…");
+        setError(t.checkout.stripeAcceptedFinalizing);
         setBusy(false);
       }
       return;
     }
-    setError("Paiement non finalisé. Réessayez.");
+    setError(t.checkout.stripeNotFinalized);
     setBusy(false);
   };
 
@@ -130,10 +133,10 @@ function PayForm({
           opacity: busy ? 0.7 : 1,
         }}
       >
-        {busy ? "Paiement en cours…" : `Payer ${amountLabel}`}
+        {busy ? t.checkout.paying : t.checkout.pay(amountLabel)}
       </button>
       <div style={{ marginTop: 10, textAlign: "center", font: "400 11px 'Hanken Grotesk'", color: "#9A9C97" }}>
-        🔒 Paiement sécurisé · Stripe
+        🔒 {t.checkout.securePaymentShort}
       </div>
     </div>
   );

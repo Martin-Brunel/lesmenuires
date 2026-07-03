@@ -1,28 +1,20 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { BookingContext } from "@/lib/api";
 import { mediaVariant } from "@/lib/api";
 import { contractText } from "@/lib/contract";
+import { balanceDueDate, money, monthYear } from "@/lib/i18n";
+import { useI18n } from "@/components/I18nProvider";
+import { LangSwitcher } from "@/components/LangSwitcher";
 import { useBookingFlow } from "./useBookingFlow";
-import {
-  ACCENT,
-  balanceDueLabel,
-  computeTotals,
-  defaultExtras,
-  eur,
-  frMonthYear,
-  monthKey,
-  monthsOf,
-  pickDefaultWeek,
-  type ExtrasState,
-} from "./data";
+import { ACCENT, monthKey } from "./data";
 import { css } from "./css";
 import { Lightbox } from "./Lightbox";
 import { ReadMore } from "./ReadMore";
 import { RatingBadge, ReviewsSection } from "./Reviews";
-import { SignaturePad, type SignaturePadHandle } from "./SignaturePad";
+import { SignaturePad } from "./SignaturePad";
 import { StripeCheckout } from "./StripeCheckout";
 import { GuestPicker } from "./GuestPicker";
 
@@ -35,7 +27,6 @@ const STEP_MAP: Record<string, number> = {
   contract: 4,
   payment: 5,
 };
-const STEP_LABELS = ["Semaine", "Options", "Infos", "Contrat", "Paiement"];
 
 export function MobileFunnel({
   ctx,
@@ -45,6 +36,10 @@ export function MobileFunnel({
   resumeRef?: string | null;
 }) {
   const { property, season, weeks, products, media, reviews } = ctx;
+  const { locale, t, href } = useI18n();
+  const eur = (cents: number) => money(cents, locale);
+  const dueDate = (startDate: string) => balanceDueDate(startDate, locale);
+  const stepLabels = [t.steps.week, t.steps.options, t.steps.infosShort, t.steps.contract, t.steps.payment];
   // Variantes redimensionnées : héro ≈ largeur écran (960 couvre les mobiles
   // haute densité), plein écran 1600, vignettes 480.
   const heroImg = media[0]
@@ -75,6 +70,7 @@ export function MobileFunnel({
     reference, submitting, error, setError, stripeSession, setStripeSession,
     payMethod, week, months, totals, infoComplete,
   } = flow;
+  void setError;
 
   const pct = property.depositPct;
   const name = property.name;
@@ -86,9 +82,7 @@ export function MobileFunnel({
   useEffect(() => {
     if (flow.resumed === "restored") setScreen("infos");
   }, [flow.resumed]);
-  const partyLabel =
-    `${adults} adulte${adults > 1 ? "s" : ""}` +
-    (children > 0 ? ` · ${children} enfant${children > 1 ? "s" : ""}` : "");
+  const partyLabel = t.guests.partyLabel(adults, children);
 
   if (!week || !property.onlineBookingEnabled) {
     const closed = !property.onlineBookingEnabled;
@@ -96,11 +90,9 @@ export function MobileFunnel({
       <div style={css("height:100dvh;max-width:480px;margin:0 auto;background:#F5F4F1;color:#1A1B1A;font-family:'Hanken Grotesk',system-ui,sans-serif;display:flex;align-items:center;justify-content:center;padding:32px")}>
         <div style={css("text-align:center")}>
           <div style={css("font:400 30px 'Marcellus'")}>{name}</div>
-          <div style={css(`margin-top:12px;font:500 10.5px 'Hanken Grotesk';letter-spacing:.2em;text-transform:uppercase;color:${ACCENT}`)}>{closed ? "Réservation en ligne fermée" : season ? season.name : "Hors saison"}</div>
+          <div style={css(`margin-top:12px;font:500 10.5px 'Hanken Grotesk';letter-spacing:.2em;text-transform:uppercase;color:${ACCENT}`)}>{closed ? t.closed.onlineClosed : season ? season.name : t.closed.offSeason}</div>
           <p style={css("margin:14px 0 0;font:400 14px/1.65 'Hanken Grotesk';color:#6B6E6B")}>
-            {closed
-              ? "La réservation en ligne est momentanément fermée. Contactez-nous directement pour organiser votre séjour."
-              : "Le calendrier de réservation ouvrira prochainement. Revenez bientôt."}
+            {closed ? t.closed.closedBodyShort : t.closed.openingSoonBodyShort}
           </p>
         </div>
       </div>
@@ -119,7 +111,7 @@ export function MobileFunnel({
   const goToContract = async () => {
     if (await flow.ensureCart()) setScreen("contract");
   };
-  const payNow = () => flow.pay(() => router.push("/espace"));
+  const payNow = () => flow.pay(() => router.push(href("/espace")));
   const confirmOffline = () => {
     if (submitting) return;
     flow.reserveOffline(() => {
@@ -136,18 +128,18 @@ export function MobileFunnel({
   // Moyens de règlement actifs, dans l'ordre d'affichage. Garde-fou : si aucun
   // n'est activé côté admin, on retombe sur la carte (flux historique).
   const payMethodOptions: { key: "card" | "virement" | "cheque"; title: string; sub: string }[] = [];
-  if (property.payCardEnabled) payMethodOptions.push({ key: "card", title: "Carte bancaire", sub: "Confirmation immédiate" });
-  if (property.payVirementEnabled) payMethodOptions.push({ key: "virement", title: "Virement bancaire", sub: "La semaine est retenue, confirmée à réception" });
-  if (property.payChequeEnabled) payMethodOptions.push({ key: "cheque", title: "Chèque", sub: "La semaine est retenue, confirmée à réception" });
-  if (payMethodOptions.length === 0) payMethodOptions.push({ key: "card", title: "Carte bancaire", sub: "Confirmation immédiate" });
-  const methodLabel = payMethod === "cheque" ? "chèque" : "virement";
+  if (property.payCardEnabled) payMethodOptions.push({ key: "card", title: t.checkout.payCard, sub: t.checkout.payCardSub });
+  if (property.payVirementEnabled) payMethodOptions.push({ key: "virement", title: t.checkout.payVirement, sub: t.checkout.payOfflineSub });
+  if (property.payChequeEnabled) payMethodOptions.push({ key: "cheque", title: t.checkout.payCheque, sub: t.checkout.payOfflineSub });
+  if (payMethodOptions.length === 0) payMethodOptions.push({ key: "card", title: t.checkout.payCard, sub: t.checkout.payCardSub });
+  const methodLabel = payMethod === "cheque" ? t.checkout.methodCheque : t.checkout.methodVirement;
   const offlineInstructions =
     (payMethod === "cheque" ? property.instructionsCheque : property.instructionsVirement)?.trim() ?? "";
 
   const cur = STEP_MAP[screen] || 0;
   const Stepper = () => (
     <div style={css("padding:18px 22px 4px;display:flex;gap:8px")}>
-      {STEP_LABELS.map((label, idx) => {
+      {stepLabels.map((label, idx) => {
         const active = idx + 1 <= cur;
         return (
           <div key={label} style={css("flex:1;display:flex;flex-direction:column;gap:6px")}>
@@ -164,16 +156,16 @@ export function MobileFunnel({
   const ctaSmall = "padding:14px 26px;background:#1A1B1A;color:#fff;border-radius:12px;font:600 14px 'Hanken Grotesk';cursor:pointer";
 
   const timeline = [
-    { title: "Acompte versé", when: "Aujourd'hui · payé", amount: eur(deposit), accent: true },
-    { title: "Solde du séjour", when: "Prélevé le " + (balanceDueLabel(week.startDate) || "—"), amount: eur(balance), accent: false },
-    { title: "Remise des clés", when: "Arrivée " + (week.arrival || "—") + " · 16h", amount: "", accent: false },
-    { title: "Caution libérée", when: "Après état des lieux de sortie", amount: eur(caution), accent: false },
+    { title: t.done.timelineDepositPaid, when: t.done.timelineToday, amount: eur(deposit), accent: true },
+    { title: t.done.timelineBalance, when: t.done.timelineBalanceOn(dueDate(week.startDate) || "—"), amount: eur(balance), accent: false },
+    { title: t.done.timelineKeys, when: t.done.timelineKeysWhen(week.arrival || "—"), amount: "", accent: false },
+    { title: t.done.timelineCaution, when: t.done.timelineCautionWhen, amount: eur(caution), accent: false },
   ];
   const offlineTimeline = [
-    { title: "Acompte à régler", when: "Dès maintenant · par " + methodLabel, amount: eur(deposit), accent: true },
-    { title: "Confirmation", when: "À réception de votre règlement", amount: "", accent: false },
-    { title: "Solde du séjour", when: "Le " + (balanceDueLabel(week.startDate) || "—"), amount: eur(balance), accent: false },
-    { title: "Remise des clés", when: "Arrivée " + (week.arrival || "—") + " · 16h", amount: "", accent: false },
+    { title: t.done.timelineDepositDue, when: t.done.timelineNow(methodLabel), amount: eur(deposit), accent: true },
+    { title: t.done.timelineConfirmation, when: t.done.timelineOnReceipt, amount: "", accent: false },
+    { title: t.done.timelineBalance, when: t.done.timelineOn(dueDate(week.startDate) || "—"), amount: eur(balance), accent: false },
+    { title: t.done.timelineKeys, when: t.done.timelineKeysWhen(week.arrival || "—"), amount: "", accent: false },
   ];
 
   return (
@@ -184,8 +176,7 @@ export function MobileFunnel({
           <div style={css("flex:1;overflow:auto")}>
             {flow.resumed === "unavailable" && (
               <div style={css("margin:12px 16px 0;padding:12px 14px;background:#FBF3E4;border:1px solid #E8D5AC;border-radius:12px;font:400 13px/1.5 'Hanken Grotesk';color:#7A5B18")}>
-                Votre panier n&apos;a pas pu être repris : la semaine choisie n&apos;est plus
-                disponible ou la réservation a expiré. Choisissez une nouvelle semaine.
+                {t.booking.resumeUnavailableShort}
               </div>
             )}
             <div onClick={() => setLightbox(0)} style={css(`position:relative;height:320px;background-color:#E5E4DF;background-image:url('${heroImg}');background-size:cover;background-position:center;cursor:pointer`)}>
@@ -194,10 +185,13 @@ export function MobileFunnel({
                 <div style={css("font:500 10.5px 'Hanken Grotesk';letter-spacing:.2em;text-transform:uppercase;color:#6B6E6B")}>{property.locationLabel}</div>
                 <div style={css("margin-top:7px;font:400 44px/.95 'Marcellus';color:#1A1B1A")}>{name}</div>
               </div>
-              <a href="/espace" onClick={(e) => e.stopPropagation()} style={css("position:absolute;right:16px;top:16px;padding:7px 12px;background:rgba(255,255,255,.92);border-radius:8px;font:600 11.5px 'Hanken Grotesk';color:#1A1B1A;text-decoration:none")}>Mon espace</a>
+              <div onClick={(e) => e.stopPropagation()} style={css("position:absolute;left:16px;top:16px;padding:4px;background:rgba(255,255,255,.92);border-radius:9px")}>
+                <LangSwitcher compact />
+              </div>
+              <a href={href("/espace")} onClick={(e) => e.stopPropagation()} style={css("position:absolute;right:16px;top:16px;padding:7px 12px;background:rgba(255,255,255,.92);border-radius:8px;font:600 11.5px 'Hanken Grotesk';color:#1A1B1A;text-decoration:none")}>{t.nav.mySpace}</a>
               {media.length > 0 && (
                 <div style={css("position:absolute;right:16px;bottom:18px;padding:7px 12px;background:rgba(255,255,255,.92);border-radius:8px;font:500 11.5px 'Hanken Grotesk'")}>
-                  {media.length} photos
+                  {t.booking.nPhotos(media.length)}
                 </div>
               )}
             </div>
@@ -215,24 +209,24 @@ export function MobileFunnel({
               <div style={css("margin-top:20px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-top:1px solid rgba(0,0,0,.09)")}>
                 <div style={css("padding:14px 4px;border-bottom:1px solid rgba(0,0,0,.09);border-right:1px solid rgba(0,0,0,.09)")}>
                   <div style={css("font:400 22px 'Marcellus'")}>{property.surfaceLabel}</div>
-                  <div style={css("margin-top:2px;font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>Surface</div>
+                  <div style={css("margin-top:2px;font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>{t.booking.surface}</div>
                 </div>
                 <div style={css("padding:14px 4px 14px 16px;border-bottom:1px solid rgba(0,0,0,.09)")}>
                   <div style={css("font:400 22px 'Marcellus'")}>{property.capacity}</div>
-                  <div style={css("margin-top:2px;font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>Voyageurs</div>
+                  <div style={css("margin-top:2px;font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>{t.booking.guests}</div>
                 </div>
                 <div style={css("padding:14px 4px;border-bottom:1px solid rgba(0,0,0,.09);border-right:1px solid rgba(0,0,0,.09)")}>
                   <div style={css("font:400 22px 'Marcellus'")}>{property.bedrooms}</div>
-                  <div style={css("margin-top:2px;font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>Chambres</div>
+                  <div style={css("margin-top:2px;font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>{t.booking.bedrooms}</div>
                 </div>
                 <div style={css("padding:14px 4px 14px 16px;border-bottom:1px solid rgba(0,0,0,.09)")}>
-                  <div style={css("font:400 22px 'Marcellus'")}>Sauna</div>
-                  <div style={css("margin-top:2px;font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>&amp; cheminée</div>
+                  <div style={css("font:400 22px 'Marcellus'")}>{property.highlightLabel || "—"}</div>
+                  <div style={css("margin-top:2px;font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>&nbsp;</div>
                 </div>
               </div>
               <div style={css("margin-top:20px;display:flex;align-items:baseline;gap:8px")}>
-                <span style={css("font:400 26px 'Marcellus'")}>dès {eur(fromPrice)}</span>
-                <span style={css("font:400 13px 'Hanken Grotesk';color:#9A9C97")}>/ semaine</span>
+                <span style={css("font:400 26px 'Marcellus'")}>{t.booking.from} {eur(fromPrice)}</span>
+                <span style={css("font:400 13px 'Hanken Grotesk';color:#9A9C97")}>{t.booking.perWeek}</span>
               </div>
               {reviews.length > 0 && (
                 <div style={css("margin-top:26px")}>
@@ -242,12 +236,12 @@ export function MobileFunnel({
             </div>
           </div>
           <div style={css("padding:14px 22px 30px;background:#FFF;border-top:1px solid rgba(0,0,0,.08)")}>
-            <div onClick={() => setScreen("week")} style={css("padding:16px;background:#1A1B1A;color:#fff;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';letter-spacing:.02em;cursor:pointer")}>Voir les disponibilités</div>
+            <div onClick={() => setScreen("week")} style={css("padding:16px;background:#1A1B1A;color:#fff;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';letter-spacing:.02em;cursor:pointer")}>{t.booking.seeAvailability}</div>
             <div style={css("margin-top:12px;text-align:center;display:flex;flex-wrap:wrap;gap:4px 12px;justify-content:center;font:400 11px 'Hanken Grotesk';color:#9A9C97")}>
-              <a href="/mentions-legales" style={css("color:#9A9C97")}>Mentions légales</a>
-              <a href="/cgv" style={css("color:#9A9C97")}>Conditions</a>
-              <a href="/confidentialite" style={css("color:#9A9C97")}>Confidentialité</a>
-              <a href="/cookies" style={css("color:#9A9C97")}>Cookies</a>
+              <a href={href("/mentions-legales")} style={css("color:#9A9C97")}>{t.footer.legalNotice}</a>
+              <a href={href("/cgv")} style={css("color:#9A9C97")}>{t.footer.termsShort}</a>
+              <a href={href("/confidentialite")} style={css("color:#9A9C97")}>{t.footer.privacy}</a>
+              <a href={href("/cookies")} style={css("color:#9A9C97")}>{t.footer.cookies}</a>
             </div>
           </div>
         </div>
@@ -258,14 +252,14 @@ export function MobileFunnel({
         <div style={css("height:100%;display:flex;flex-direction:column")}>
           <div style={css("flex:1;overflow:auto")}>
             <div style={css("padding:26px 22px 0")}>
-              <div onClick={() => setScreen("home")} style={css(back)}>‹ Retour</div>
-              <div style={css("margin-top:14px;font:400 28px 'Marcellus'")}>Choisir votre semaine</div>
+              <div onClick={() => setScreen("home")} style={css(back)}>‹ {t.nav.back}</div>
+              <div style={css("margin-top:14px;font:400 28px 'Marcellus'")}>{t.booking.chooseWeek}</div>
             </div>
             <Stepper />
             <div style={css("padding:14px 22px 16px")}>
               <div style={css("display:flex;align-items:center;justify-content:space-between;padding-bottom:13px;border-bottom:1px solid rgba(0,0,0,.09)")}>
                 <div onClick={() => setMonthIdx((m) => Math.max(0, m - 1))} style={css(`width:32px;height:32px;border-radius:50%;border:1px solid rgba(0,0,0,.14);display:flex;align-items:center;justify-content:center;font-size:15px;color:#1A1B1A;${monthIdx === 0 ? "opacity:.35;" : ""}`)}>‹</div>
-                <div style={css("font:400 17px 'Marcellus'")}>{frMonthYear(months[monthIdx])}</div>
+                <div style={css("font:400 17px 'Marcellus'")}>{monthYear(months[monthIdx], locale)}</div>
                 <div onClick={() => setMonthIdx((m) => Math.min(months.length - 1, m + 1))} style={css(`width:32px;height:32px;border-radius:50%;border:1px solid rgba(0,0,0,.14);display:flex;align-items:center;justify-content:center;font-size:15px;color:#1A1B1A;${monthIdx >= months.length - 1 ? "opacity:.35;" : ""}`)}>›</div>
               </div>
               <div style={css("margin-top:16px")}>
@@ -286,12 +280,12 @@ export function MobileFunnel({
                         {sel && <div style={css(`flex:none;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;background:${ACCENT}`)}>✓</div>}
                         <div>
                           <div style={css("font:500 16px 'Hanken Grotesk';color:#1A1B1A")}>{wk.range}</div>
-                          <div style={css(`margin-top:2px;font:400 11px 'Hanken Grotesk';color:${sel ? ACCENT : "#9A9C97"}`)}>{wk.booked ? "Complet" : wk.sub}</div>
+                          <div style={css(`margin-top:2px;font:400 11px 'Hanken Grotesk';color:${sel ? ACCENT : "#9A9C97"}`)}>{wk.booked ? t.booking.full : wk.sub}</div>
                         </div>
                       </div>
                       <div style={css("text-align:right")}>
-                        <div style={css("font:400 18px 'Marcellus';color:#1A1B1A")}>{wk.booked ? "Réservé" : eur(wk.priceCents)}</div>
-                        {!wk.booked && <div style={css("font:400 10.5px 'Hanken Grotesk';color:#9A9C97")}>/ semaine</div>}
+                        <div style={css("font:400 18px 'Marcellus';color:#1A1B1A")}>{wk.booked ? t.booking.booked : eur(wk.priceCents)}</div>
+                        {!wk.booked && <div style={css("font:400 10.5px 'Hanken Grotesk';color:#9A9C97")}>{t.booking.perWeek}</div>}
                       </div>
                     </div>
                   );
@@ -302,9 +296,9 @@ export function MobileFunnel({
           <div style={css(footer)}>
             <div>
               <div style={css("font:400 21px 'Marcellus'")}>{eur(week.priceCents)}</div>
-              <div style={css("font:400 11px 'Hanken Grotesk';color:#9A9C97")}>{week.range} · 7 nuits</div>
+              <div style={css("font:400 11px 'Hanken Grotesk';color:#9A9C97")}>{week.range} · {t.booking.nights7}</div>
             </div>
-            <div onClick={() => setScreen("extras")} style={css(ctaSmall)}>Continuer</div>
+            <div onClick={() => setScreen("extras")} style={css(ctaSmall)}>{t.booking.continue}</div>
           </div>
         </div>
       )}
@@ -314,12 +308,12 @@ export function MobileFunnel({
         <div style={css("height:100%;display:flex;flex-direction:column")}>
           <div style={css("flex:1;overflow:auto")}>
             <div style={css("padding:26px 22px 0")}>
-              <div onClick={() => setScreen("week")} style={css(back)}>‹ Retour</div>
-              <div style={css("margin-top:14px;font:400 28px 'Marcellus'")}>Prestations</div>
+              <div onClick={() => setScreen("week")} style={css(back)}>‹ {t.nav.back}</div>
+              <div style={css("margin-top:14px;font:400 28px 'Marcellus'")}>{t.checkout.extrasTitle}</div>
             </div>
             <Stepper />
             <div style={css("padding:10px 22px 16px")}>
-              <p style={css("margin:0 0 16px;font:400 13px/1.55 'Hanken Grotesk';color:#9A9C97")}>Ajoutez ce qu&apos;il faut pour arriver les mains dans les poches.</p>
+              <p style={css("margin:0 0 16px;font:400 13px/1.55 'Hanken Grotesk';color:#9A9C97")}>{t.checkout.extrasIntroShort}</p>
               {products.map((x) => {
                 const on = extras[x.key];
                 return (
@@ -328,7 +322,7 @@ export function MobileFunnel({
                       <div style={css("font:500 15px 'Hanken Grotesk';color:#1A1B1A")}>{x.label}</div>
                       <div style={css("margin-top:3px;font:400 11.5px/1.4 'Hanken Grotesk';color:#9A9C97")}>{x.description}</div>
                     </div>
-                    <div style={css("font:400 15px 'Marcellus';color:#1A1B1A;white-space:nowrap")}>{x.priceCents === 0 ? "Offert" : "+ " + eur(x.priceCents)}</div>
+                    <div style={css("font:400 15px 'Marcellus';color:#1A1B1A;white-space:nowrap")}>{x.priceCents === 0 ? t.booking.free : "+ " + eur(x.priceCents)}</div>
                     <div style={css(`flex:none;position:relative;width:46px;height:27px;border-radius:99px;transition:background .18s;background:${on ? ACCENT : "#D8D7D2"}`)}>
                       <div style={css(`position:absolute;top:3px;left:${on ? "22px" : "3px"};width:21px;height:21px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:left .18s`)} />
                     </div>
@@ -340,9 +334,9 @@ export function MobileFunnel({
           <div style={css(footer)}>
             <div>
               <div style={css("font:400 21px 'Marcellus'")}>{eur(total)}</div>
-              <div style={css("font:400 11px 'Hanken Grotesk';color:#9A9C97")}>Semaine + prestations</div>
+              <div style={css("font:400 11px 'Hanken Grotesk';color:#9A9C97")}>{t.booking.weekPlusExtras}</div>
             </div>
-            <div onClick={() => setScreen("infos")} style={css(ctaSmall)}>Continuer</div>
+            <div onClick={() => setScreen("infos")} style={css(ctaSmall)}>{t.booking.continue}</div>
           </div>
         </div>
       )}
@@ -352,20 +346,20 @@ export function MobileFunnel({
         <div style={css("height:100%;display:flex;flex-direction:column")}>
           <div style={css("flex:1;overflow:auto")}>
             <div style={css("padding:26px 22px 0")}>
-              <div onClick={() => setScreen("extras")} style={css(back)}>‹ Retour</div>
-              <div style={css("margin-top:14px;font:400 28px 'Marcellus'")}>Vos coordonnées</div>
+              <div onClick={() => setScreen("extras")} style={css(back)}>‹ {t.nav.back}</div>
+              <div style={css("margin-top:14px;font:400 28px 'Marcellus'")}>{t.checkout.infosTitle}</div>
             </div>
             <Stepper />
             <div style={css("padding:14px 22px 16px")}>
               <div style={css("display:flex;flex-direction:column;gap:12px")}>
-                <input placeholder="Prénom" value={info.firstName} onChange={setField("firstName")} style={css(inputCss)} />
-                <input placeholder="Nom" value={info.lastName} onChange={setField("lastName")} style={css(inputCss)} />
-                <input placeholder="E-mail" type="email" value={info.email} onChange={setField("email")} style={css(inputCss)} />
-                <input placeholder="Téléphone" type="tel" value={info.phone} onChange={setField("phone")} style={css(inputCss)} />
-                <input placeholder="Adresse" value={info.addressLine} onChange={setField("addressLine")} style={css(inputCss)} />
+                <input placeholder={t.checkout.firstName} value={info.firstName} onChange={setField("firstName")} style={css(inputCss)} />
+                <input placeholder={t.checkout.lastName} value={info.lastName} onChange={setField("lastName")} style={css(inputCss)} />
+                <input placeholder={t.checkout.email} type="email" value={info.email} onChange={setField("email")} style={css(inputCss)} />
+                <input placeholder={t.checkout.phone} type="tel" value={info.phone} onChange={setField("phone")} style={css(inputCss)} />
+                <input placeholder={t.checkout.address} value={info.addressLine} onChange={setField("addressLine")} style={css(inputCss)} />
                 <div style={css("display:flex;gap:12px")}>
-                  <input placeholder="Code postal" value={info.postalCode} onChange={setField("postalCode")} style={css(inputCss)} />
-                  <input placeholder="Ville" value={info.city} onChange={setField("city")} style={css(inputCss)} />
+                  <input placeholder={t.checkout.postalCode} value={info.postalCode} onChange={setField("postalCode")} style={css(inputCss)} />
+                  <input placeholder={t.checkout.city} value={info.city} onChange={setField("city")} style={css(inputCss)} />
                 </div>
                 <GuestPicker adults={adults} children={children} capacity={capacity} setAdults={setAdults} setChildren={setChildren} />
               </div>
@@ -377,7 +371,7 @@ export function MobileFunnel({
               onClick={goToContract}
               style={css(`padding:16px;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';${infoComplete && !submitting ? "background:#1A1B1A;color:#fff;cursor:pointer;" : "background:#D8D7D2;color:#fff;cursor:default;opacity:.7;"}`)}
             >
-              {submitting ? "…" : infoComplete ? "Continuer" : "Complétez vos informations"}
+              {submitting ? "…" : infoComplete ? t.booking.continue : t.checkout.completeInfos}
             </div>
           </div>
         </div>
@@ -388,8 +382,8 @@ export function MobileFunnel({
         <div style={css("height:100%;display:flex;flex-direction:column")}>
           <div style={css("flex:1;overflow:auto")}>
             <div style={css("padding:26px 22px 0")}>
-              <div onClick={() => setScreen("infos")} style={css(back)}>‹ Retour</div>
-              <div style={css("margin-top:14px;font:400 28px 'Marcellus'")}>Contrat &amp; signature</div>
+              <div onClick={() => setScreen("infos")} style={css(back)}>‹ {t.nav.back}</div>
+              <div style={css("margin-top:14px;font:400 28px 'Marcellus'")}>{t.checkout.contractTitle}</div>
             </div>
             <Stepper />
             <div style={css("padding:10px 22px 16px")}>
@@ -397,48 +391,48 @@ export function MobileFunnel({
               <div style={css("background:#FFF;border:1px solid rgba(0,0,0,.07);border-radius:14px;padding:16px 16px 6px")}>
                 <div style={css("display:flex;justify-content:space-between;padding-bottom:12px;border-bottom:1px solid rgba(0,0,0,.08)")}>
                   <div>
-                    <div style={css("font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>SÉJOUR</div>
+                    <div style={css("font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>{t.booking.stay}</div>
                     <div style={css("margin-top:3px;font:500 15px 'Hanken Grotesk'")}>{week.range} {week.startDate.slice(0, 4)}</div>
-                    <div style={css("margin-top:1px;font:400 11.5px 'Hanken Grotesk';color:#9A9C97")}>Arrivée {week.arrival}</div>
+                    <div style={css("margin-top:1px;font:400 11.5px 'Hanken Grotesk';color:#9A9C97")}>{t.booking.arrivalWord} {week.arrival}</div>
                   </div>
                   <div style={css("text-align:right")}>
-                    <div style={css("font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>VOYAGEURS</div>
+                    <div style={css("font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>{t.booking.guestsUpper}</div>
                     <div style={css("margin-top:3px;font:500 15px 'Hanken Grotesk'")}>{partyLabel}</div>
                   </div>
                 </div>
                 <div style={css("padding:12px 0 4px")}>
                   <div style={css("display:flex;justify-content:space-between;margin-bottom:9px;font:400 13.5px 'Hanken Grotesk';color:#5A5C58")}>
-                    <span>Location · 7 nuits</span>
+                    <span>{t.booking.rental7Nights}</span>
                     <span style={css("font-family:'Marcellus';color:#1A1B1A")}>{eur(week.priceCents)}</span>
                   </div>
                   {selectedExtras.map((se) => (
                     <div key={se.key} style={css("display:flex;justify-content:space-between;margin-bottom:9px;font:400 13.5px 'Hanken Grotesk';color:#5A5C58")}>
                       <span>{se.label}</span>
-                      <span style={css("font-family:'Marcellus';color:#1A1B1A")}>{se.priceCents === 0 ? "Offert" : eur(se.priceCents)}</span>
+                      <span style={css("font-family:'Marcellus';color:#1A1B1A")}>{se.priceCents === 0 ? t.booking.free : eur(se.priceCents)}</span>
                     </div>
                   ))}
                   <div style={css("display:flex;justify-content:space-between;margin:11px 0 0;padding-top:12px;border-top:1px solid rgba(0,0,0,.08);font:500 15px 'Hanken Grotesk'")}>
-                    <span>Total séjour</span>
+                    <span>{t.booking.totalStay}</span>
                     <span style={css("font-family:'Marcellus';font-size:18px")}>{eur(total)}</span>
                   </div>
                   {touristTax > 0 && (
                     <div style={css("display:flex;justify-content:space-between;margin:3px 0 12px;font:400 11.5px 'Hanken Grotesk';color:#9A9C97")}>
-                      <span>{property.touristTaxIncluded ? "dont taxe de séjour" : "+ taxe de séjour (ajoutée au solde)"}</span>
+                      <span>{property.touristTaxIncluded ? t.checkout.touristTaxIncluded : t.checkout.touristTaxAdded}</span>
                       <span>{eur(touristTax)}</span>
                     </div>
                   )}
                   {touristTax <= 0 && <div style={css("margin-bottom:12px")} />}
                   <div style={css(`margin-top:4px;padding:13px;border-radius:11px;background:${ACCENT}14`)}>
                     <div style={css("display:flex;justify-content:space-between;font:500 13.5px 'Hanken Grotesk';color:#1A1B1A")}>
-                      <span>Acompte {pct}% — aujourd&apos;hui</span>
+                      <span>{t.checkout.depositTodayShort(pct)}</span>
                       <span style={css("font-family:'Marcellus'")}>{eur(deposit)}</span>
                     </div>
                     <div style={css("display:flex;justify-content:space-between;margin-top:7px;font:400 12.5px 'Hanken Grotesk';color:#6B6E6B")}>
-                      <span>Solde — prélevé le {balanceDueLabel(week.startDate)}</span>
+                      <span>{t.checkout.balanceChargedOn(dueDate(week.startDate))}</span>
                       <span>{eur(balance)}</span>
                     </div>
                     <div style={css("display:flex;justify-content:space-between;margin-top:7px;font:400 12.5px 'Hanken Grotesk';color:#6B6E6B")}>
-                      <span>Caution (garantie, non débitée)</span>
+                      <span>{t.checkout.cautionGuarantee}</span>
                       <span>{eur(caution)}</span>
                     </div>
                   </div>
@@ -446,32 +440,32 @@ export function MobileFunnel({
               </div>
 
               {/* contract text */}
-              <div style={css("margin-top:16px;font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>CONTRAT DE LOCATION SAISONNIÈRE</div>
+              <div style={css("margin-top:16px;font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>{t.checkout.contractHeading}</div>
               <div style={css("margin-top:8px;max-height:120px;overflow:auto;white-space:pre-line;background:#FFF;border:1px solid rgba(0,0,0,.07);border-radius:12px;padding:14px;font:400 11.5px/1.6 'Hanken Grotesk';color:#6B6E6B")}>
-                {contractText({ propertyName: name, locationLabel: location, cautionCents: caution, capacity, ownerName: property.ownerName, ownerAddress: property.ownerAddress, template: property.contractTemplate })}
+                {contractText({ propertyName: name, locationLabel: location, cautionCents: caution, capacity, ownerName: property.ownerName, ownerAddress: property.ownerAddress, template: property.contractTemplate }, locale)}
               </div>
 
               {/* accept */}
               <div onClick={() => setAccepted((a) => !a)} style={css("margin-top:14px;display:flex;align-items:center;gap:11px;cursor:pointer")}>
                 <div style={css(`flex:none;width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;color:#fff;transition:background .15s;${accepted ? `background:${ACCENT};border:1.5px solid ${ACCENT};` : "background:#FFF;border:1.5px solid rgba(0,0,0,.2);"}`)}>{accepted ? "✓" : ""}</div>
-                <div style={css("font:400 12.5px/1.4 'Hanken Grotesk';color:#5A5C58")}>Je reconnais avoir lu et j&apos;accepte le contrat et les{" "}
-                  <a href="/cgv" target="_blank" rel="noopener" onClick={(e) => e.stopPropagation()} style={css(`color:${ACCENT}`)}>conditions générales</a>.
+                <div style={css("font:400 12.5px/1.4 'Hanken Grotesk';color:#5A5C58")}>{t.checkout.acceptContract}{" "}
+                  <a href={href("/cgv")} target="_blank" rel="noopener" onClick={(e) => e.stopPropagation()} style={css(`color:${ACCENT}`)}>{t.checkout.generalTerms}</a>.
                 </div>
               </div>
 
               {/* signature */}
               <div style={css("margin-top:16px;display:flex;align-items:center;justify-content:space-between")}>
-                <div style={css("font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>SIGNATURE</div>
-                <div onClick={() => sigRef.current?.clear()} style={css("font:500 12px 'Hanken Grotesk';color:#6B6E6B;cursor:pointer")}>Effacer</div>
+                <div style={css("font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>{t.checkout.signatureHeadingShort}</div>
+                <div onClick={() => sigRef.current?.clear()} style={css("font:500 12px 'Hanken Grotesk';color:#6B6E6B;cursor:pointer")}>{t.checkout.clear}</div>
               </div>
               <div style={css("margin-top:8px")}>
-                <SignaturePad ref={sigRef} width={338} height={120} fullWidth placeholder="Signez ici avec votre doigt" onEmptyChange={setSigEmpty} />
+                <SignaturePad ref={sigRef} width={338} height={120} fullWidth placeholder={t.checkout.signHereFinger} onEmptyChange={setSigEmpty} />
               </div>
             </div>
           </div>
           <div style={css("padding:13px 22px 30px;background:#FFF;border-top:1px solid rgba(0,0,0,.08)")}>
             {error && <div style={css("margin-bottom:10px;text-align:center;font:400 12px 'Hanken Grotesk';color:#B23B3B")}>{error}</div>}
-            <div onClick={goPayment} style={css(`padding:16px;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';transition:opacity .15s;${contractReady && !submitting ? "background:#1A1B1A;color:#fff;cursor:pointer;opacity:1;" : "background:#D8D7D2;color:#fff;cursor:default;opacity:.7;"}`)}>{submitting ? "…" : contractReady ? "Signer & payer l’acompte" : "Acceptez et signez pour continuer"}</div>
+            <div onClick={goPayment} style={css(`padding:16px;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';transition:opacity .15s;${contractReady && !submitting ? "background:#1A1B1A;color:#fff;cursor:pointer;opacity:1;" : "background:#D8D7D2;color:#fff;cursor:default;opacity:.7;"}`)}>{submitting ? "…" : contractReady ? t.checkout.signAndPay : t.checkout.acceptAndSignToContinue}</div>
           </div>
         </div>
       )}
@@ -481,8 +475,8 @@ export function MobileFunnel({
         <div style={css("height:100%;display:flex;flex-direction:column")}>
           <div style={css("flex:1;overflow:auto")}>
             <div style={css("padding:26px 22px 0")}>
-              <div onClick={() => setScreen("contract")} style={css(back)}>‹ Retour</div>
-              <div style={css("margin-top:14px;font:400 28px 'Marcellus'")}>Acompte</div>
+              <div onClick={() => setScreen("contract")} style={css(back)}>‹ {t.nav.back}</div>
+              <div style={css("margin-top:14px;font:400 28px 'Marcellus'")}>{t.checkout.paymentTitle}</div>
             </div>
             <Stepper />
             <div style={css("padding:14px 22px 16px")}>
@@ -503,37 +497,37 @@ export function MobileFunnel({
                 </div>
               )}
               <div style={css("text-align:center;padding:14px 0 22px")}>
-                <div style={css("font:400 12px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>{payMethod === "card" ? <>À régler aujourd&apos;hui · acompte {pct}%</> : <>Acompte {pct}% · à régler par {methodLabel}</>}</div>
+                <div style={css("font:400 12px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>{payMethod === "card" ? t.checkout.payTodayDeposit(pct) : t.checkout.depositByMethod(pct, methodLabel)}</div>
                 <div style={css("margin-top:6px;font:400 46px 'Marcellus';color:#1A1B1A")}>{eur(deposit)}</div>
               </div>
               {payMethod === "card" ? (
                 <>
                   <div style={css("background:#EFEEEB;border-radius:12px;padding:14px")}>
                     <div style={css("display:flex;justify-content:space-between;font:400 12.5px 'Hanken Grotesk';color:#6B6E6B;margin-bottom:8px")}>
-                      <span>Empreinte de caution</span>
-                      <span>{eur(caution)} · non débitée</span>
+                      <span>{t.checkout.cautionHold}</span>
+                      <span>{t.checkout.cautionNotCharged(eur(caution))}</span>
                     </div>
                     <div style={css("display:flex;justify-content:space-between;font:400 12.5px 'Hanken Grotesk';color:#6B6E6B")}>
-                      <span>Solde le {balanceDueLabel(week.startDate)}</span>
+                      <span>{t.checkout.balanceOn(dueDate(week.startDate))}</span>
                       <span>{eur(balance)}</span>
                     </div>
                   </div>
                   <div style={css("margin-top:14px;display:flex;align-items:center;gap:8px;justify-content:center;font:400 11.5px 'Hanken Grotesk';color:#9A9C97")}>
-                    <span style={css("font-size:13px")}>🔒</span> Paiement sécurisé · Stripe
+                    <span style={css("font-size:13px")}>🔒</span> {t.checkout.securePaymentShort}
                   </div>
                 </>
               ) : (
                 <>
                   <p style={css("margin:0;font:400 13.5px/1.6 'Hanken Grotesk';color:#5A5C58")}>
-                    Vous réglez l&apos;acompte de <b>{eur(deposit)}</b> par {methodLabel}. Votre semaine est retenue dès maintenant ; la réservation devient définitive à réception de votre règlement.
+                    {t.checkout.youPayDeposit}<b>{eur(deposit)}</b>{t.checkout.offlineExplain(methodLabel)}
                   </p>
                   <div style={css("margin-top:12px;background:#FFF;border:1px solid rgba(0,0,0,.08);border-radius:13px;padding:14px 16px")}>
-                    <div style={css("font:500 10px 'Hanken Grotesk';letter-spacing:.08em;color:#9A9C97")}>RÈGLEMENT PAR {methodLabel.toUpperCase()}</div>
+                    <div style={css("font:500 10px 'Hanken Grotesk';letter-spacing:.08em;color:#9A9C97")}>{t.checkout.paymentBy(methodLabel)}</div>
                     <div style={css("margin-top:7px;white-space:pre-line;font:400 12.5px/1.6 'Hanken Grotesk';color:#5A5C58")}>
-                      {offlineInstructions || "Les instructions vous seront envoyées par e-mail."}
+                      {offlineInstructions || t.checkout.offlineInstructionsFallback}
                     </div>
                     <div style={css(`margin-top:10px;padding:9px 11px;border-radius:9px;background:${ACCENT}14;font:500 11.5px 'Hanken Grotesk';color:#3f4b45`)}>
-                      Indiquez la référence de votre réservation avec votre règlement.
+                      {t.checkout.offlineReference}
                     </div>
                   </div>
                 </>
@@ -543,9 +537,9 @@ export function MobileFunnel({
           </div>
           <div style={css("padding:13px 22px 30px;background:#FFF;border-top:1px solid rgba(0,0,0,.08)")}>
             {payMethod === "card" ? (
-              <div onClick={payNow} style={css(`padding:16px;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';${submitting ? "background:#D8D7D2;color:#fff;cursor:default;opacity:.75;" : "background:#1A1B1A;color:#fff;cursor:pointer;"}`)}>{submitting ? "Paiement en cours…" : "Payer " + eur(deposit)}</div>
+              <div onClick={payNow} style={css(`padding:16px;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';${submitting ? "background:#D8D7D2;color:#fff;cursor:default;opacity:.75;" : "background:#1A1B1A;color:#fff;cursor:pointer;"}`)}>{submitting ? t.checkout.paying : t.checkout.pay(eur(deposit))}</div>
             ) : (
-              <div onClick={confirmOffline} style={css(`padding:16px;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';${submitting ? "background:#D8D7D2;color:#fff;cursor:default;opacity:.75;" : "background:#1A1B1A;color:#fff;cursor:pointer;"}`)}>{submitting ? "Enregistrement…" : "Confirmer la réservation"}</div>
+              <div onClick={confirmOffline} style={css(`padding:16px;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';${submitting ? "background:#D8D7D2;color:#fff;cursor:default;opacity:.75;" : "background:#1A1B1A;color:#fff;cursor:pointer;"}`)}>{submitting ? t.checkout.saving : t.checkout.confirmBooking}</div>
             )}
           </div>
         </div>
@@ -557,26 +551,26 @@ export function MobileFunnel({
           <div style={css("flex:1;overflow:auto")}>
             <div style={css("padding:54px 26px 0;text-align:center")}>
               <div style={css(`width:74px;height:74px;border-radius:50%;margin:0 auto;display:flex;align-items:center;justify-content:center;font-size:36px;color:#fff;background:${ACCENT};box-shadow:0 12px 30px ${ACCENT}40`)}>✓</div>
-              <div style={css("margin-top:22px;font:400 30px 'Marcellus'")}>{doneKind === "offline" ? "Réservation enregistrée" : "Réservation confirmée"}</div>
+              <div style={css("margin-top:22px;font:400 30px 'Marcellus'")}>{doneKind === "offline" ? t.done.recordedTitle : t.done.confirmedTitle}</div>
               {doneKind === "offline" ? (
-                <p style={css("margin:12px auto 0;max-width:300px;font:400 13.5px/1.6 'Hanken Grotesk';color:#6B6E6B")}>Votre semaine est retenue. Réglez l&apos;acompte de <b>{eur(deposit)}</b> par {methodLabel} pour la confirmer définitivement — les instructions viennent de vous être envoyées par e-mail.</p>
+                <p style={css("margin:12px auto 0;max-width:300px;font:400 13.5px/1.6 'Hanken Grotesk';color:#6B6E6B")}>{t.done.offlineBodyPrefix}<b>{eur(deposit)}</b>{t.done.offlineBodySuffix(methodLabel)}</p>
               ) : (
-                <p style={css("margin:12px auto 0;max-width:280px;font:400 13.5px/1.6 'Hanken Grotesk';color:#6B6E6B")}>Un e-mail d&apos;accueil avec les codes d&apos;accès, l&apos;itinéraire et vos contacts sur place vient de vous être envoyé.</p>
+                <p style={css("margin:12px auto 0;max-width:280px;font:400 13.5px/1.6 'Hanken Grotesk';color:#6B6E6B")}>{t.done.confirmedBodyShort}</p>
               )}
             </div>
             <div style={css("padding:26px 22px 16px")}>
               {doneKind === "offline" && (
                 <div style={css("margin-bottom:14px;background:#FFF;border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:16px")}>
                   <div style={css("display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:12px;border-bottom:1px solid rgba(0,0,0,.08)")}>
-                    <div style={css("font:500 10px 'Hanken Grotesk';letter-spacing:.08em;color:#9A9C97")}>RÉFÉRENCE</div>
+                    <div style={css("font:500 10px 'Hanken Grotesk';letter-spacing:.08em;color:#9A9C97")}>{t.done.reference}</div>
                     <div style={css("font:400 19px 'Marcellus';color:#1A1B1A")}>{reference ?? "—"}</div>
                   </div>
-                  <div style={css("margin-top:12px;font:500 10px 'Hanken Grotesk';letter-spacing:.08em;color:#9A9C97")}>RÈGLEMENT PAR {methodLabel.toUpperCase()}</div>
+                  <div style={css("margin-top:12px;font:500 10px 'Hanken Grotesk';letter-spacing:.08em;color:#9A9C97")}>{t.checkout.paymentBy(methodLabel)}</div>
                   <div style={css("margin-top:7px;white-space:pre-line;font:400 12.5px/1.6 'Hanken Grotesk';color:#5A5C58")}>
-                    {offlineInstructions || "Les instructions vous seront envoyées par e-mail."}
+                    {offlineInstructions || t.checkout.offlineInstructionsFallback}
                   </div>
                   <div style={css(`margin-top:10px;padding:9px 11px;border-radius:9px;background:${ACCENT}14;font:500 11.5px 'Hanken Grotesk';color:#3f4b45`)}>
-                    Indiquez la référence de votre réservation avec votre règlement.
+                    {t.checkout.offlineReference}
                   </div>
                 </div>
               )}
@@ -595,7 +589,7 @@ export function MobileFunnel({
             </div>
           </div>
           <div style={css("padding:13px 22px 30px;background:#FFF;border-top:1px solid rgba(0,0,0,.08)")}>
-            <div onClick={reset} style={css("padding:16px;background:#1A1B1A;color:#fff;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';cursor:pointer")}>Terminer</div>
+            <div onClick={reset} style={css("padding:16px;background:#1A1B1A;color:#fff;border-radius:13px;text-align:center;font:600 14.5px 'Hanken Grotesk';cursor:pointer")}>{t.done.finish}</div>
           </div>
         </div>
       )}
@@ -614,7 +608,7 @@ export function MobileFunnel({
           publishableKey={stripeSession.pk}
           clientSecret={stripeSession.clientSecret}
           amountLabel={eur(deposit)}
-          onPaid={() => flow.finishStripe(() => router.push("/espace"))}
+          onPaid={() => flow.finishStripe(() => router.push(href("/espace")))}
           onClose={() => setStripeSession(null)}
         />
       )}

@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { useParams } from "next/navigation";
 import { getReviewLink, submitReview, type ReviewLink } from "@/lib/api";
+import { useI18n } from "@/components/I18nProvider";
 
 const S: Record<string, CSSProperties> = {
   page: { maxWidth: 560, margin: "0 auto", padding: "48px 20px 64px" },
@@ -74,24 +75,18 @@ const S: Record<string, CSSProperties> = {
   thanksTitle: { font: "400 24px 'Marcellus', serif", color: "#1A1B1A" },
 };
 
-const RATING_LABEL: Record<number, string> = {
-  1: "Décevant",
-  2: "Moyen",
-  3: "Bien",
-  4: "Très bien",
-  5: "Excellent",
-};
-
 function Stars({
   value,
   hover,
   onPick,
   onHover,
+  starAria,
 }: {
   value: number;
   hover: number;
   onPick: (n: number) => void;
   onHover: (n: number) => void;
+  starAria: (n: number) => string;
 }) {
   const shown = hover || value;
   return (
@@ -101,7 +96,7 @@ function Stars({
           key={n}
           type="button"
           style={S.starBtn}
-          aria-label={`${n} étoile${n > 1 ? "s" : ""}`}
+          aria-label={starAria(n)}
           onMouseEnter={() => onHover(n)}
           onClick={() => onPick(n)}
         >
@@ -120,6 +115,7 @@ function Stars({
 }
 
 export default function AvisPage() {
+  const { t } = useI18n();
   const params = useParams<{ token: string }>();
   const token = params.token;
   const [data, setData] = useState<ReviewLink | null>(null);
@@ -136,7 +132,8 @@ export default function AvisPage() {
         setData(d);
         setAuthor((prev) => prev || d.firstName || "");
       })
-      .catch(() => setError("Lien d'avis introuvable ou expiré."));
+      .catch(() => setError(t.avis.linkNotFound));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
   useEffect(() => load(), [load]);
 
@@ -148,7 +145,7 @@ export default function AvisPage() {
       await submitReview(token, { rating, comment, authorName: author });
       load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erreur");
+      setError(e instanceof Error ? e.message : t.avis.errorShort);
     } finally {
       setBusy(false);
     }
@@ -164,7 +161,7 @@ export default function AvisPage() {
   if (!data) {
     return (
       <main style={S.center}>
-        <p style={{ color: "#8A8B86", fontSize: 14 }}>Chargement…</p>
+        <p style={{ color: "#8A8B86", fontSize: 14 }}>{t.espace.loading}</p>
       </main>
     );
   }
@@ -173,11 +170,9 @@ export default function AvisPage() {
     return (
       <main style={S.page}>
         <div style={S.card}>
-          <div style={S.thanksTitle}>Merci pour votre avis !</div>
+          <div style={S.thanksTitle}>{t.avis.thanksTitle}</div>
           <p style={S.subtitle}>
-            Votre retour sur votre séjour à {data.propertyName} ({data.weekRange}) a bien été
-            enregistré{data.rating ? ` — ${data.rating}/5` : ""}. Il sera publié après relecture
-            par votre hôte. À bientôt !
+            {t.avis.thanksBody(data.propertyName, data.weekRange, data.rating)}
           </p>
           {data.comment && (
             <p style={{ ...S.subtitle, fontStyle: "italic", marginTop: 14 }}>
@@ -194,30 +189,29 @@ export default function AvisPage() {
       <div style={S.card}>
         <div style={S.title}>{data.propertyName}</div>
         <p style={S.subtitle}>
-          {data.firstName ? `${data.firstName}, comment` : "Comment"} s&apos;est passé votre
-          séjour du {data.weekRange} ? Votre avis aide les prochains voyageurs et votre hôte.
+          {t.avis.howWasStay(data.firstName, data.weekRange)}
         </p>
 
-        <span style={S.label}>Votre note</span>
-        <Stars value={rating} hover={hover} onPick={setRating} onHover={setHover} />
+        <span style={S.label}>{t.avis.yourRating}</span>
+        <Stars value={rating} hover={hover} onPick={setRating} onHover={setHover} starAria={t.avis.starAria} />
         <p style={{ fontSize: 13, color: "#8A8B86", marginTop: 6, minHeight: 18 }}>
-          {(hover || rating) > 0 ? RATING_LABEL[hover || rating] : " "}
+          {(hover || rating) > 0 ? t.avis.ratingLabels[hover || rating] : " "}
         </p>
 
         <label style={S.label} htmlFor="avis-comment">
-          Votre commentaire (facultatif)
+          {t.avis.commentLabel}
         </label>
         <textarea
           id="avis-comment"
           style={S.textarea}
           maxLength={4000}
-          placeholder="L'appartement, l'emplacement, l'accueil…"
+          placeholder={t.avis.commentPlaceholder}
           value={comment}
           onChange={(e) => setComment(e.target.value)}
         />
 
         <label style={S.label} htmlFor="avis-author">
-          Votre prénom (affiché avec l&apos;avis)
+          {t.avis.authorLabel}
         </label>
         <input
           id="avis-author"
@@ -236,12 +230,11 @@ export default function AvisPage() {
           disabled={busy || rating === 0}
           onClick={send}
         >
-          {busy ? "Envoi…" : "Envoyer mon avis"}
+          {busy ? t.avis.sending : t.avis.send}
         </button>
         {error && <p style={S.error}>{error}</p>}
         <p style={S.muted}>
-          Votre avis est définitif une fois envoyé. Il sera publié sur la page de réservation
-          après relecture par votre hôte, signé de votre prénom uniquement.
+          {t.avis.disclaimer}
         </p>
       </div>
     </main>

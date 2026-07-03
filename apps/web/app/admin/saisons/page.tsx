@@ -76,8 +76,12 @@ function SeasonCard({ season, onChanged }: { season: AdminSeason; onChanged: () 
   const [startDate, setStart] = useState(season.startDate);
   const [endDate, setEnd] = useState(season.endDate);
   const [isActive, setActive] = useState(season.isActive);
-  const [tiers, setTiers] = useState<{ label: string; euros: string }[]>(
-    season.rateTiers.map((t) => ({ label: t.label, euros: (t.priceCents / 100).toString() })),
+  const [tiers, setTiers] = useState<{ label: string; labelEn: string; euros: string }[]>(
+    season.rateTiers.map((t) => ({
+      label: t.label,
+      labelEn: t.labelEn ?? "",
+      euros: (t.priceCents / 100).toString(),
+    })),
   );
   const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
@@ -87,9 +91,9 @@ function SeasonCard({ season, onChanged }: { season: AdminSeason; onChanged: () 
   const isPast = season.endDate < todayIso();
   const [expanded, setExpanded] = useState(!isPast);
 
-  const setTier = (i: number, patch: Partial<{ label: string; euros: string }>) =>
+  const setTier = (i: number, patch: Partial<{ label: string; labelEn: string; euros: string }>) =>
     setTiers((ts) => ts.map((t, idx) => (idx === i ? { ...t, ...patch } : t)));
-  const addTier = () => setTiers((ts) => [...ts, { label: "", euros: "" }]);
+  const addTier = () => setTiers((ts) => [...ts, { label: "", labelEn: "", euros: "" }]);
   const removeTier = (i: number) => setTiers((ts) => ts.filter((_, idx) => idx !== i));
 
   const save = async () => {
@@ -104,7 +108,13 @@ function SeasonCard({ season, onChanged }: { season: AdminSeason; onChanged: () 
           let key = slugify(t.label);
           while (seen.has(key)) key += "-2";
           seen.add(key);
-          return { key, label: t.label.trim(), priceCents: Math.round(parseFloat(t.euros || "0") * 100) };
+          return {
+            key,
+            label: t.label.trim(),
+            // Libellé anglais du palier (mention des semaines sur le site /en).
+            ...(t.labelEn.trim() ? { labelEn: t.labelEn.trim() } : {}),
+            priceCents: Math.round(parseFloat(t.euros || "0") * 100),
+          };
         });
       await adminApi.updateSeason(season.id, { name, startDate, endDate, isActive, rateTiers });
       setSaved(true);
@@ -207,6 +217,12 @@ function SeasonCard({ season, onChanged }: { season: AdminSeason; onChanged: () 
                   placeholder="Libellé (ex. Vacances scolaires)"
                   className="h-8"
                   onChange={(e) => setTier(i, { label: e.target.value })}
+                />
+                <Input
+                  value={t.labelEn}
+                  placeholder="English (facultatif)"
+                  className="h-8"
+                  onChange={(e) => setTier(i, { labelEn: e.target.value })}
                 />
                 <div className="flex items-center gap-1 w-32 shrink-0">
                   <Input

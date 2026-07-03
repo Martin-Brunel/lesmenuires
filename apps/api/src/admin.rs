@@ -27,6 +27,10 @@ pub fn routes(state: AppState) -> Router {
     let protected = Router::new()
         .route("/me", get(me).put(update_me))
         .route("/property/:slug", get(get_property).put(update_property))
+        .route(
+            "/property/:slug/translations",
+            get(get_property_translations).put(update_property_translations),
+        )
         .route("/property/:slug/media", get(list_media).post(upload_media))
         .route("/media/:id", put(update_media).delete(delete_media))
         .route("/seasons", get(list_seasons).post(create_season))
@@ -592,6 +596,86 @@ async fn update_property(
 }
 
 // ---------------------------------------------------------------------------
+// Traductions des contenus éditoriaux (multilangue public)
+// ---------------------------------------------------------------------------
+
+/// Champs traduisibles d'une propriété. Les clés reprennent le camelCase des
+/// DTO publics — l'overlay (i18n::tr_field) se fait clé à clé, vide = repli
+/// sur le français.
+const PROPERTY_TR_KEYS: &[&str] = &[
+    "description",
+    "surfaceLabel",
+    "specsLabel",
+    "highlightLabel",
+    "locationLabel",
+    "arrivalInstructions",
+    "houseRules",
+    "contractTemplate",
+    "instructionsCheque",
+    "instructionsVirement",
+];
+
+/// Champs riches (Tiptap) : sanitisés comme leurs équivalents français.
+const PROPERTY_TR_RICH: &[&str] = &["description", "arrivalInstructions", "houseRules"];
+
+async fn get_property_translations(
+    State(st): State<AppState>,
+    Path(slug): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let tr: serde_json::Value =
+        sqlx::query_scalar("select translations from property where slug = $1")
+            .bind(&slug)
+            .fetch_optional(&st.pool)
+            .await?
+            .ok_or_else(|| AppError::NotFound("propriété".into()))?;
+    Ok(Json(tr))
+}
+
+async fn update_property_translations(
+    State(st): State<AppState>,
+    Path(slug): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    // Forme attendue : { "en": { "description": "...", ... } }. Seules les
+    // langues et clés connues sont retenues ; les champs riches sont sanitisés.
+    let mut clean = serde_json::Map::new();
+    for lang in ["en"] {
+        let Some(fields) = body.get(lang).and_then(|v| v.as_object()) else {
+            continue;
+        };
+        let mut out = serde_json::Map::new();
+        for key in PROPERTY_TR_KEYS {
+            let Some(v) = fields.get(*key).and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let v = if PROPERTY_TR_RICH.contains(key) {
+                ammonia::clean(v)
+            } else {
+                v.trim().to_string()
+            };
+            if !v.is_empty() {
+                out.insert((*key).to_string(), serde_json::Value::String(v));
+            }
+        }
+        if !out.is_empty() {
+            clean.insert(lang.to_string(), serde_json::Value::Object(out));
+        }
+    }
+    let clean = serde_json::Value::Object(clean);
+    let updated: Option<serde_json::Value> = sqlx::query_scalar(
+        "update property set translations = $2, updated_at = now() \
+         where slug = $1 returning translations",
+    )
+    .bind(&slug)
+    .bind(&clean)
+    .fetch_optional(&st.pool)
+    .await?;
+    updated
+        .map(Json)
+        .ok_or_else(|| AppError::NotFound("propriété".into()))
+}
+
+// ---------------------------------------------------------------------------
 // Dispos & tarifs (semaines)
 // ---------------------------------------------------------------------------
 
@@ -724,11 +808,16 @@ struct AdminProductDto {
     price_cents: i64,
     active: bool,
     position: i32,
+    /// Traductions anglaises (product.translations->'en'), vides = repli fr.
+    label_en: String,
+    description_en: String,
 }
 
 async fn list_products(State(st): State<AppState>) -> Result<Json<Vec<AdminProductDto>>, AppError> {
     let products = sqlx::query_as::<_, AdminProductDto>(
-        "select id, key, label, description, price_cents, active, position \
+        "select id, key, label, description, price_cents, active, position, \
+                coalesce(translations->'en'->>'label', '') as label_en, \
+                coalesce(translations->'en'->>'description', '') as description_en \
          from product order by position, label",
     )
     .fetch_all(&st.pool)
@@ -745,6 +834,34 @@ struct ProductInput {
     price_cents: i64,
     active: bool,
     position: i32,
+    #[serde(default)]
+    label_en: String,
+    #[serde(default)]
+    description_en: String,
+}
+
+/// Colonnes renvoyées par les endpoints produits (avec les traductions EN).
+const SELECT: &str = "id, key, label, description, price_cents, active, position, \
+                coalesce(translations->'en'->>'label', '') as label_en, \
+                coalesce(translations->'en'->>'description', '') as description_en";
+
+/// jsonb translations d'un produit à partir des champs EN du formulaire.
+fn product_translations(p: &ProductInput) -> serde_json::Value {
+    let mut en = serde_json::Map::new();
+    if !p.label_en.trim().is_empty() {
+        en.insert("label".into(), serde_json::Value::String(p.label_en.trim().into()));
+    }
+    if !p.description_en.trim().is_empty() {
+        en.insert(
+            "description".into(),
+            serde_json::Value::String(p.description_en.trim().into()),
+        );
+    }
+    if en.is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::json!({ "en": en })
+    }
 }
 
 async fn create_product(
@@ -755,9 +872,11 @@ async fn create_product(
         return Err(AppError::BadRequest("Clé et libellé requis.".into()));
     }
     let dto = sqlx::query_as::<_, AdminProductDto>(
-        "insert into product (key, label, description, price_cents, active, position) \
-         values ($1,$2,$3,$4,$5,$6) \
-         returning id, key, label, description, price_cents, active, position",
+        &format!(
+            "insert into product (key, label, description, price_cents, active, position, translations) \
+         values ($1,$2,$3,$4,$5,$6,$7) \
+         returning {SELECT}"
+        ),
     )
     .bind(p.key.trim())
     .bind(&p.label)
@@ -765,6 +884,7 @@ async fn create_product(
     .bind(p.price_cents)
     .bind(p.active)
     .bind(p.position)
+    .bind(product_translations(&p))
     .fetch_one(&st.pool)
     .await
     .map_err(unique_key_error)?;
@@ -777,9 +897,12 @@ async fn update_product(
     Json(p): Json<ProductInput>,
 ) -> Result<Json<AdminProductDto>, AppError> {
     let dto = sqlx::query_as::<_, AdminProductDto>(
-        "update product set key=$2, label=$3, description=$4, price_cents=$5, active=$6, position=$7 \
+        &format!(
+            "update product set key=$2, label=$3, description=$4, price_cents=$5, active=$6, \
+                position=$7, translations=$8 \
          where id=$1 \
-         returning id, key, label, description, price_cents, active, position",
+         returning {SELECT}"
+        ),
     )
     .bind(id)
     .bind(p.key.trim())
@@ -788,6 +911,7 @@ async fn update_product(
     .bind(p.price_cents)
     .bind(p.active)
     .bind(p.position)
+    .bind(product_translations(&p))
     .fetch_optional(&st.pool)
     .await
     .map_err(unique_key_error)?
@@ -1385,13 +1509,25 @@ struct SystemEmailDto {
     customized: bool,
 }
 
+#[derive(Deserialize)]
+struct EmailLocaleQuery {
+    #[serde(default)]
+    locale: Option<String>,
+}
+
 async fn list_email_overrides(
     State(st): State<AppState>,
+    Query(q): Query<EmailLocaleQuery>,
 ) -> Result<Json<Vec<SystemEmailDto>>, AppError> {
-    let overrides: Vec<(String, String, String)> =
-        sqlx::query_as("select kind, subject, body from email_template_override")
-            .fetch_all(&st.pool)
-            .await?;
+    // Chaque langue a ses gabarits par défaut et ses overrides (kind, locale).
+    let lang = crate::i18n::Lang::from_param(q.locale.as_deref());
+    let overrides: Vec<(String, String, String)> = sqlx::query_as(
+        "select kind, subject, body from email_template_override where locale = $1",
+    )
+    .bind(lang.as_str())
+    .fetch_all(&st.pool)
+    .await?;
+    let en = lang == crate::i18n::Lang::En;
     let list = crate::email::SYSTEM_TEMPLATES
         .iter()
         .map(|t| {
@@ -1401,9 +1537,9 @@ async fn list_email_overrides(
                 label: t.label,
                 trigger: t.trigger,
                 vars: t.vars.to_vec(),
-                default_subject: t.subject,
-                default_body: t.body,
-                cta_label: t.cta_label,
+                default_subject: if en { t.subject_en } else { t.subject },
+                default_body: if en { t.body_en } else { t.body },
+                cta_label: if en { t.cta_label_en } else { t.cta_label },
                 subject: ovr.map(|(_, s, _)| s.clone()),
                 body: ovr.map(|(_, _, b)| b.clone()),
                 customized: ovr.is_some(),
@@ -1449,6 +1585,7 @@ struct OverrideInput {
 async fn upsert_email_override(
     State(st): State<AppState>,
     Path(kind): Path<String>,
+    Query(q): Query<EmailLocaleQuery>,
     Json(p): Json<OverrideInput>,
 ) -> Result<StatusCode, AppError> {
     if !crate::email::SYSTEM_TEMPLATES
@@ -1460,14 +1597,16 @@ async fn upsert_email_override(
     if p.subject.trim().is_empty() || p.body.trim().is_empty() {
         return Err(AppError::BadRequest("Sujet et message requis.".into()));
     }
+    let lang = crate::i18n::Lang::from_param(q.locale.as_deref());
     sqlx::query(
-        "insert into email_template_override (kind, subject, body) values ($1, $2, $3) \
-         on conflict (kind) do update set subject = excluded.subject, body = excluded.body, \
+        "insert into email_template_override (kind, subject, body, locale) values ($1, $2, $3, $4) \
+         on conflict (kind, locale) do update set subject = excluded.subject, body = excluded.body, \
              updated_at = now()",
     )
     .bind(&kind)
     .bind(p.subject.trim())
     .bind(&p.body)
+    .bind(lang.as_str())
     .execute(&st.pool)
     .await?;
     Ok(StatusCode::NO_CONTENT)
@@ -1477,9 +1616,12 @@ async fn upsert_email_override(
 async fn delete_email_override(
     State(st): State<AppState>,
     Path(kind): Path<String>,
+    Query(q): Query<EmailLocaleQuery>,
 ) -> Result<StatusCode, AppError> {
-    sqlx::query("delete from email_template_override where kind = $1")
+    let lang = crate::i18n::Lang::from_param(q.locale.as_deref());
+    sqlx::query("delete from email_template_override where kind = $1 and locale = $2")
         .bind(&kind)
+        .bind(lang.as_str())
         .execute(&st.pool)
         .await?;
     Ok(StatusCode::NO_CONTENT)
@@ -1947,8 +2089,11 @@ struct SendContractRow {
     token: Option<String>,
     signed: bool,
     week_range: String,
+    start_date: NaiveDate,
+    end_date: NaiveDate,
     email: Option<String>,
     first_name: Option<String>,
+    locale: Option<String>,
 }
 
 /// Envoie (ou renvoie) au client le lien de signature électronique du contrat
@@ -1960,7 +2105,8 @@ async fn send_contract_link(
     let row = sqlx::query_as::<_, SendContractRow>(
         "select b.id, b.contract_sign_token as token, \
                 (b.contract_accepted_at is not null) as signed, \
-                aw.range_label as week_range, c.email, c.first_name \
+                aw.range_label as week_range, aw.start_date, aw.end_date, \
+                c.email, c.first_name, c.locale \
          from booking b \
          join availability_week aw on aw.id = b.week_id \
          left join customer c on c.id = b.customer_id \
@@ -1988,11 +2134,17 @@ async fn send_contract_link(
             t
         }
     };
-    let url = format!("{}/contrat/{token}", crate::email::front_url());
+    let lang = crate::i18n::Lang::from_param(row.locale.as_deref());
+    let semaine = if lang == crate::i18n::Lang::Fr {
+        row.week_range.clone()
+    } else {
+        crate::i18n::range_label(row.start_date, row.end_date, lang)
+    };
+    let url = format!("{}/contrat/{token}", crate::email::front_url_lang(lang));
     let vars = vec![
-        ("bonjour", crate::email::bonjour(row.first_name.as_deref())),
+        ("bonjour", crate::email::bonjour_lang(row.first_name.as_deref(), lang)),
         ("prenom", row.first_name.clone().unwrap_or_default()),
-        ("semaine", row.week_range.clone()),
+        ("semaine", semaine),
     ];
     crate::email::send_system(
         st.pool.clone(),
@@ -2001,6 +2153,7 @@ async fn send_contract_link(
         to,
         &vars,
         &url,
+        lang,
     )
     .await?;
     Ok(StatusCode::NO_CONTENT)
@@ -2086,8 +2239,11 @@ struct RequestReviewRow {
     token: Option<String>,
     reviewed: bool,
     week_range: String,
+    start_date: NaiveDate,
+    end_date: NaiveDate,
     email: Option<String>,
     first_name: Option<String>,
+    locale: Option<String>,
 }
 
 /// (Ré)envoie la demande d'avis d'un dossier — utile si le client a égaré
@@ -2107,7 +2263,8 @@ async fn request_review(
     }
     let row = sqlx::query_as::<_, RequestReviewRow>(
         "select b.id, b.review_token as token, (r.id is not null) as reviewed, \
-                aw.range_label as week_range, c.email, c.first_name \
+                aw.range_label as week_range, aw.start_date, aw.end_date, \
+                c.email, c.first_name, c.locale \
          from booking b \
          join availability_week aw on aw.id = b.week_id \
          left join customer c on c.id = b.customer_id \
@@ -2140,11 +2297,17 @@ async fn request_review(
             t
         }
     };
-    let url = format!("{}/avis/{token}", crate::email::front_url());
+    let lang = crate::i18n::Lang::from_param(row.locale.as_deref());
+    let semaine = if lang == crate::i18n::Lang::Fr {
+        row.week_range.clone()
+    } else {
+        crate::i18n::range_label(row.start_date, row.end_date, lang)
+    };
+    let url = format!("{}/avis/{token}", crate::email::front_url_lang(lang));
     let vars = vec![
-        ("bonjour", crate::email::bonjour(row.first_name.as_deref())),
+        ("bonjour", crate::email::bonjour_lang(row.first_name.as_deref(), lang)),
         ("prenom", row.first_name.clone().unwrap_or_default()),
-        ("semaine", row.week_range.clone()),
+        ("semaine", semaine),
     ];
     crate::email::send_system(
         st.pool.clone(),
@@ -2153,6 +2316,7 @@ async fn request_review(
         to,
         &vars,
         &url,
+        lang,
     )
     .await?;
     Ok(StatusCode::NO_CONTENT)
@@ -3253,39 +3417,46 @@ async fn cancel_booking(
 
     // Confirm the cancellation to the customer, stating any refund made.
     let refunded: i64 = body.refund_deposit_cents + body.refund_balance_cents;
-    if let Some((email, first_name, week_range)) =
-        sqlx::query_as::<_, (Option<String>, Option<String>, String)>(
-            "select c.email, c.first_name, aw.range_label \
+    if let Some((email, first_name, week_range, locale, start_date, end_date)) =
+        sqlx::query_as::<_, (Option<String>, Option<String>, String, Option<String>, chrono::NaiveDate, chrono::NaiveDate)>(
+            "select c.email, c.first_name, aw.range_label, c.locale, aw.start_date, aw.end_date \
          from booking b join availability_week aw on aw.id = b.week_id \
          left join customer c on c.id = b.customer_id where b.id = $1",
         )
         .bind(b.id)
         .fetch_optional(&st.pool)
         .await?
-        .filter(|(e, _, _)| e.as_deref().map(|s| !s.is_empty()).unwrap_or(false))
+        .filter(|(e, ..)| e.as_deref().map(|s| !s.is_empty()).unwrap_or(false))
     {
-        let hello = match first_name
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            Some(n) => format!("Bonjour {n},"),
-            None => "Bonjour,".to_string(),
-        };
+        let lang = crate::i18n::Lang::from_param(locale.as_deref());
+        let hello = crate::email::bonjour_lang(first_name.as_deref(), lang);
         let refund_line = if refunded > 0 {
-            format!(
-                "\n\nUn remboursement de {},{:02} € a été effectué sur votre moyen de \
+            match lang {
+                crate::i18n::Lang::Fr => format!(
+                    "\n\nUn remboursement de {},{:02} € a été effectué sur votre moyen de \
                  paiement (délai bancaire habituel : quelques jours).",
-                refunded / 100,
-                (refunded % 100).abs()
-            )
+                    refunded / 100,
+                    (refunded % 100).abs()
+                ),
+                crate::i18n::Lang::En => format!(
+                    "\n\nA refund of €{}.{:02} has been issued to your payment method \
+                 (usual bank delay: a few days).",
+                    refunded / 100,
+                    (refunded % 100).abs()
+                ),
+            }
         } else {
             String::new()
+        };
+        let semaine = if lang == crate::i18n::Lang::Fr {
+            week_range.clone()
+        } else {
+            crate::i18n::range_label(start_date, end_date, lang)
         };
         let vars = vec![
             ("bonjour", hello.clone()),
             ("reference", reference.to_string()),
-            ("semaine", week_range.clone()),
+            ("semaine", semaine),
             ("remboursement", refund_line),
         ];
         let _ = crate::email::send_system(
@@ -3295,6 +3466,7 @@ async fn cancel_booking(
             email.unwrap(),
             &vars,
             "",
+            lang,
         )
         .await;
     }

@@ -4,6 +4,7 @@
 // Inline-styled to match the editorial funnel look.
 
 import { css } from "./css";
+import { useI18n } from "@/components/I18nProvider";
 
 function Stepper({
   label,
@@ -20,6 +21,7 @@ function Stepper({
   max: number;
   onChange: (n: number) => void;
 }) {
+  const { t } = useI18n();
   const btn = (enabled: boolean) =>
     css(
       `width:34px;height:34px;border-radius:9px;border:1px solid rgba(0,0,0,.14);background:#FFF;font:600 18px 'Hanken Grotesk';display:flex;align-items:center;justify-content:center;${
@@ -35,7 +37,7 @@ function Stepper({
       <div style={css("display:flex;align-items:center;gap:12px")}>
         <div
           role="button"
-          aria-label={`Retirer ${label}`}
+          aria-label={t.guests.remove(label)}
           onClick={() => value > min && onChange(value - 1)}
           style={btn(value > min)}
         >
@@ -44,7 +46,7 @@ function Stepper({
         <div style={css("min-width:20px;text-align:center;font:600 15px 'Hanken Grotesk'")}>{value}</div>
         <div
           role="button"
-          aria-label={`Ajouter ${label}`}
+          aria-label={t.guests.add(label)}
           onClick={() => value < max && onChange(value + 1)}
           style={btn(value < max)}
         >
@@ -68,19 +70,20 @@ export function GuestPicker({
   setAdults: (n: number) => void;
   setChildren: (n: number) => void;
 }) {
+  const { t } = useI18n();
   return (
     <div style={css("display:flex;flex-direction:column;gap:14px;padding:14px;border:1px solid rgba(0,0,0,.1);border-radius:12px;background:#FFF")}>
       <Stepper
-        label="Adultes"
-        hint={`Jusqu'à ${capacity} voyageurs au total`}
+        label={t.guests.adults}
+        hint={t.guests.adultsHint(capacity)}
         value={adults}
         min={1}
         max={capacity - children}
         onChange={setAdults}
       />
       <Stepper
-        label="Enfants"
-        hint="Moins de 12 ans"
+        label={t.guests.children}
+        hint={t.guests.childrenHint}
         value={children}
         min={0}
         max={capacity - adults}

@@ -118,6 +118,8 @@ export type CreateBookingInput = {
     postalCode?: string;
     city?: string;
     country?: string;
+    /** Langue du client (fr/en) — détermine la langue des e-mails. */
+    locale?: string;
   };
 };
 
@@ -138,11 +140,17 @@ export function mediaVariant(m: ApiMedia, targetWidth: number) {
   return mediaUrl(`${m.url.replace(/\.[^./]+$/, "")}-w${fit}.jpg`);
 }
 
-export async function getBookingContext(slug: string): Promise<BookingContext> {
-  const res = await fetch(`${API_URL}/api/booking-context/${slug}`, {
-    // Availability/prices change — always read fresh.
-    cache: "no-store",
-  });
+export async function getBookingContext(
+  slug: string,
+  locale = "fr",
+): Promise<BookingContext> {
+  const res = await fetch(
+    `${API_URL}/api/booking-context/${slug}?locale=${locale}`,
+    {
+      // Availability/prices change — always read fresh.
+      cache: "no-store",
+    },
+  );
   if (!res.ok) throw new Error(`booking-context: HTTP ${res.status}`);
   return res.json();
 }
@@ -382,8 +390,8 @@ export async function logoutEspace(): Promise<void> {
 }
 
 /** The logged-in customer + their bookings, or null if no session. */
-export async function getMe(): Promise<MeResponse | null> {
-  const res = await fetch(`${API_URL}/api/me`, {
+export async function getMe(locale = "fr"): Promise<MeResponse | null> {
+  const res = await fetch(`${API_URL}/api/me?locale=${locale}`, {
     credentials: "include",
     cache: "no-store",
   });

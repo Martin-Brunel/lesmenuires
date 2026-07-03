@@ -89,11 +89,14 @@ export default function EmailsPage() {
   // null = fermé ; "new" = création ; sinon l'automatisation en édition.
   const [editing, setEditing] = useState<EmailAutomation | "new" | null>(null);
   const [editingSystem, setEditingSystem] = useState<SystemEmail | null>(null);
+  // Langue des gabarits système édités : chaque langue a ses défauts et ses
+  // overrides (les clients anglophones reçoivent la version EN).
+  const [sysLocale, setSysLocale] = useState<"fr" | "en">("fr");
 
-  const reload = () =>
+  const reload = (locale: "fr" | "en" = sysLocale) =>
     Promise.all([
       adminApi.listEmailAutomations(),
-      adminApi.listSystemEmails(),
+      adminApi.listSystemEmails(locale),
       adminApi.emailStats(),
       adminApi.getSettings(),
     ])
@@ -105,8 +108,9 @@ export default function EmailsPage() {
       })
       .catch(() => setError(true));
   useEffect(() => {
-    reload();
-  }, []);
+    reload(sysLocale);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sysLocale]);
 
   const resetSystem = async (s: SystemEmail) => {
     if (
@@ -118,7 +122,7 @@ export default function EmailsPage() {
     )
       return;
     try {
-      await adminApi.resetSystemEmail(s.kind);
+      await adminApi.resetSystemEmail(s.kind, sysLocale);
       toast.success("Texte par défaut rétabli.");
       reload();
     } catch (e) {
@@ -285,12 +289,32 @@ export default function EmailsPage() {
       )}
 
       <div className="space-y-2 pt-2">
-        <div>
-          <h2 className="text-lg font-semibold">E-mails système</h2>
-          <p className="text-sm text-muted-foreground">
-            Envoyés automatiquement par la plateforme (paiements, annulations, contrat…).
-            Le texte est personnalisable ; « Rétablir » revient au texte d&apos;origine.
-          </p>
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-semibold">E-mails système</h2>
+            <p className="text-sm text-muted-foreground">
+              Envoyés automatiquement par la plateforme (paiements, annulations, contrat…).
+              Le texte est personnalisable par langue — les clients anglophones reçoivent
+              la version EN ; « Rétablir » revient au texte d&apos;origine.
+            </p>
+          </div>
+          <div className="flex gap-1 rounded-md border p-0.5">
+            {(["fr", "en"] as const).map((l) => (
+              <button
+                key={l}
+                type="button"
+                onClick={() => setSysLocale(l)}
+                className={
+                  "rounded px-3 py-1 text-xs font-medium transition-colors " +
+                  (sysLocale === l
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground")
+                }
+              >
+                {l.toUpperCase()}
+              </button>
+            ))}
+          </div>
         </div>
         {system.map((s) => (
           <Card key={s.kind}>
@@ -386,6 +410,7 @@ export default function EmailsPage() {
       {editingSystem && (
         <SystemEmailDialog
           item={editingSystem}
+          locale={sysLocale}
           onClose={() => setEditingSystem(null)}
           onSaved={() => {
             setEditingSystem(null);
@@ -432,10 +457,12 @@ function Switch({
 }
 
 function SystemEmailDialog({
+  locale,
   item,
   onClose,
   onSaved,
 }: {
+  locale: "fr" | "en";
   item: SystemEmail;
   onClose: () => void;
   onSaved: () => void;
@@ -454,8 +481,8 @@ function SystemEmailDialog({
     }
     setBusy(true);
     try {
-      await adminApi.saveSystemEmail(item.kind, subject, body);
-      toast.success(`« ${item.label} » personnalisé.`);
+      await adminApi.saveSystemEmail(item.kind, subject, body, locale);
+      toast.success(`« ${item.label} » personnalisé (${locale.toUpperCase()}).`);
       onSaved();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erreur");

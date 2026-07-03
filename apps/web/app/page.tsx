@@ -1,6 +1,9 @@
 import { redirect } from "next/navigation";
+import { localePath } from "@/lib/i18n";
+import { requestLocale } from "@/lib/i18n/server";
 
-export default function Home() {
+export default async function Home() {
   // The booking funnel is the product entry point for now.
-  redirect("/reserver");
+  const locale = await requestLocale();
+  redirect(localePath(locale, "/reserver"));
 }

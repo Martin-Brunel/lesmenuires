@@ -2,12 +2,21 @@
 //! logged and skipped (dev without a key). Every send is journaled in `email_log`
 //! for the reservation file (id Resend, statut, ouverture via webhook).
 
+use crate::i18n::Lang;
 use serde_json::json;
 use sqlx::postgres::PgPool;
 use uuid::Uuid;
 
 pub fn front_url() -> String {
     std::env::var("FRONT_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into())
+}
+
+/// URL du front dans la langue du destinataire (l'anglais vit sous /en).
+pub fn front_url_lang(lang: Lang) -> String {
+    match lang {
+        Lang::Fr => front_url(),
+        Lang::En => format!("{}/en", front_url()),
+    }
 }
 
 pub fn api_url() -> String {
@@ -165,6 +174,19 @@ pub fn template(
     cta_label: &str,
     cta_url: &str,
 ) -> String {
+    template_lang(brand_name, brand_location, heading, body_html, cta_label, cta_url, Lang::Fr)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn template_lang(
+    brand_name: &str,
+    brand_location: &str,
+    heading: &str,
+    body_html: &str,
+    cta_label: &str,
+    cta_url: &str,
+    lang: Lang,
+) -> String {
     let cta = if cta_label.is_empty() {
         String::new()
     } else {
@@ -176,6 +198,10 @@ pub fn template(
         brand_name.to_string()
     } else {
         format!("{brand_name} · {brand_location}")
+    };
+    let footer_note = match lang {
+        Lang::Fr => "cet e-mail vous est envoyé suite à votre démarche de réservation.",
+        Lang::En => "this e-mail is sent to you following your booking request.",
     };
     format!(
         r#"<div style="background:#F5F4F1;padding:32px 0;font-family:Helvetica,Arial,sans-serif;color:#1A1B1A">
@@ -189,7 +215,7 @@ pub fn template(
       {cta}
     </div>
     <div style="padding:18px 32px;border-top:1px solid #f0efec;font:400 12px Helvetica,Arial,sans-serif;color:#9A9C97">
-      {footer_brand} — cet e-mail vous est envoyé suite à votre démarche de réservation.
+      {footer_brand} — {footer_note}
     </div>
   </div>
 </div>"#
@@ -235,15 +261,41 @@ pub(crate) fn render_email_body(tpl: &str, vars: &[(&str, String)]) -> String {
         .to_string()
 }
 
-/// Un e-mail système personnalisable : gabarit par défaut + métadonnées UI.
+/// Un e-mail système personnalisable : gabarit par défaut (fr + en) +
+/// métadonnées UI. L'override admin est stocké par (kind, locale) ; en son
+/// absence, le gabarit par défaut de la langue du destinataire s'applique.
 pub(crate) struct SystemTemplate {
     pub kind: &'static str,
     pub label: &'static str,
     pub trigger: &'static str,
     pub subject: &'static str,
     pub body: &'static str,
+    pub subject_en: &'static str,
+    pub body_en: &'static str,
     pub cta_label: &'static str,
+    pub cta_label_en: &'static str,
     pub vars: &'static [&'static str],
+}
+
+impl SystemTemplate {
+    fn subject_for(&self, lang: Lang) -> &'static str {
+        match lang {
+            Lang::Fr => self.subject,
+            Lang::En => self.subject_en,
+        }
+    }
+    fn body_for(&self, lang: Lang) -> &'static str {
+        match lang {
+            Lang::Fr => self.body,
+            Lang::En => self.body_en,
+        }
+    }
+    fn cta_label_for(&self, lang: Lang) -> &'static str {
+        match lang {
+            Lang::Fr => self.cta_label,
+            Lang::En => self.cta_label_en,
+        }
+    }
 }
 
 pub(crate) const SYSTEM_TEMPLATES: &[SystemTemplate] = &[
@@ -253,7 +305,10 @@ pub(crate) const SYSTEM_TEMPLATES: &[SystemTemplate] = &[
         trigger: "Envoyé au client dès que l'acompte est réglé.",
         subject: "Votre réservation est confirmée — {{site}}",
         body: "{{bonjour}}\n\nVotre réservation {{reference}} est confirmée — merci de votre confiance. Retrouvez le détail de votre séjour, les échéances de paiement et les consignes d'arrivée dans votre espace personnel.",
+        subject_en: "Your booking is confirmed — {{site}}",
+        body_en: "{{bonjour}}\n\nYour booking {{reference}} is confirmed — thank you for your trust. Find the details of your stay, the payment schedule and the arrival instructions in your personal account.",
         cta_label: "Accéder à mon espace",
+        cta_label_en: "Go to my account",
         vars: &["bonjour", "prenom", "reference", "site"],
     },
     SystemTemplate {
@@ -262,7 +317,10 @@ pub(crate) const SYSTEM_TEMPLATES: &[SystemTemplate] = &[
         trigger: "Envoyé quand une réservation en ligne choisit le règlement par chèque ou virement.",
         subject: "Votre réservation est en attente de règlement — {{site}}",
         body: "{{bonjour}}\n\nVotre demande de réservation {{reference}} est bien enregistrée : la semaine est retenue pour vous.\n\nPour la confirmer définitivement, réglez l'acompte de {{montant}} par {{methode}} :\n\n{{instructions}}\n\nPensez à indiquer la référence {{reference}} avec votre règlement. Dès réception, nous validerons votre réservation et vous recevrez une confirmation.",
+        subject_en: "Your booking is awaiting payment — {{site}}",
+        body_en: "{{bonjour}}\n\nYour booking request {{reference}} has been recorded: the week is held for you.\n\nTo confirm it, pay the deposit of {{montant}} by {{methode}}:\n\n{{instructions}}\n\nPlease include the reference {{reference}} with your payment. Upon receipt, we will validate your booking and you will receive a confirmation.",
         cta_label: "Suivre ma réservation",
+        cta_label_en: "Follow my booking",
         vars: &["bonjour", "prenom", "reference", "montant", "methode", "instructions", "site"],
     },
     SystemTemplate {
@@ -271,7 +329,10 @@ pub(crate) const SYSTEM_TEMPLATES: &[SystemTemplate] = &[
         trigger: "Envoyé ~16 jours avant l'arrivée, avant le prélèvement automatique (J-14).",
         subject: "Prélèvement du solde à venir — {{site}}",
         body: "{{bonjour}}\n\nLe solde de votre séjour à {{site}}, soit {{montant}}, sera prélevé automatiquement le {{date}} sur la carte enregistrée lors de votre réservation {{reference}}.\n\nVous n'avez rien à faire : assurez-vous simplement que votre carte est toujours valide. Vous pouvez aussi régler le solde dès maintenant depuis votre espace.",
+        subject_en: "Upcoming balance charge — {{site}}",
+        body_en: "{{bonjour}}\n\nThe balance of your stay at {{site}}, i.e. {{montant}}, will be charged automatically on {{date}} to the card registered with your booking {{reference}}.\n\nThere is nothing you need to do: just make sure your card is still valid. You can also pay the balance now from your account.",
         cta_label: "Voir ma réservation",
+        cta_label_en: "View my booking",
         vars: &["bonjour", "prenom", "montant", "date", "reference", "site"],
     },
     SystemTemplate {
@@ -280,7 +341,10 @@ pub(crate) const SYSTEM_TEMPLATES: &[SystemTemplate] = &[
         trigger: "Envoyé quand le solde a été prélevé avec succès.",
         subject: "Solde réglé — {{site}}",
         body: "{{bonjour}}\n\nLe solde de votre séjour à {{site}} ({{montant}}) vient d'être prélevé sur votre moyen de paiement enregistré. Votre réservation {{reference}} est entièrement réglée.\n\nAucune caution n'est prélevée : votre carte reste simplement enregistrée et ne serait débitée qu'en cas de dégâts constatés à l'état des lieux de sortie.",
+        subject_en: "Balance paid — {{site}}",
+        body_en: "{{bonjour}}\n\nThe balance of your stay at {{site}} ({{montant}}) has just been charged to your registered payment method. Your booking {{reference}} is now fully paid.\n\nNo security deposit is charged: your card simply remains registered and would only be charged in case of damage recorded at the check-out inspection.",
         cta_label: "Voir ma réservation",
+        cta_label_en: "View my booking",
         vars: &["bonjour", "prenom", "montant", "reference", "site"],
     },
     SystemTemplate {
@@ -289,7 +353,10 @@ pub(crate) const SYSTEM_TEMPLATES: &[SystemTemplate] = &[
         trigger: "Envoyé quand un prélèvement automatique échoue définitivement.",
         subject: "Action requise sur votre réservation — {{site}}",
         body: "{{bonjour}}\n\nNous n'avons pas pu effectuer {{operation}} (réservation {{reference}}). Votre banque a peut-être refusé l'opération ou une confirmation est nécessaire. Merci de nous contacter ou de vérifier votre moyen de paiement depuis votre espace afin de finaliser votre réservation.",
+        subject_en: "Action required on your booking — {{site}}",
+        body_en: "{{bonjour}}\n\nWe could not process {{operation}} (booking {{reference}}). Your bank may have declined the operation or a confirmation is required. Please contact us or check your payment method from your account to finalise your booking.",
         cta_label: "Mon espace",
+        cta_label_en: "My account",
         vars: &["bonjour", "prenom", "operation", "reference", "site"],
     },
     SystemTemplate {
@@ -298,7 +365,10 @@ pub(crate) const SYSTEM_TEMPLATES: &[SystemTemplate] = &[
         trigger: "Envoyé au client qui a commencé une réservation sans la finaliser.",
         subject: "Votre réservation vous attend — {{site}}",
         body: "{{bonjour}}\n\nVous avez commencé une réservation à {{site}} sans la finaliser. Votre sélection vous attend — il ne reste que le règlement de l'acompte pour la confirmer.",
+        subject_en: "Your booking is waiting for you — {{site}}",
+        body_en: "{{bonjour}}\n\nYou started a booking at {{site}} without finishing it. Your selection is waiting for you — only the deposit payment is left to confirm it.",
         cta_label: "Finaliser ma réservation",
+        cta_label_en: "Finish my booking",
         vars: &["bonjour", "prenom", "site"],
     },
     SystemTemplate {
@@ -307,7 +377,10 @@ pub(crate) const SYSTEM_TEMPLATES: &[SystemTemplate] = &[
         trigger: "Envoyé au client quand sa réservation est annulée.",
         subject: "Annulation de votre réservation — {{site}}",
         body: "{{bonjour}}\n\nVotre réservation {{reference}} (semaine {{semaine}}) à {{site}} a bien été annulée.{{remboursement}}\n\nPour toute question, répondez simplement à cet e-mail.",
+        subject_en: "Cancellation of your booking — {{site}}",
+        body_en: "{{bonjour}}\n\nYour booking {{reference}} (week {{semaine}}) at {{site}} has been cancelled.{{remboursement}}\n\nFor any question, simply reply to this e-mail.",
         cta_label: "",
+        cta_label_en: "",
         vars: &["bonjour", "reference", "semaine", "remboursement", "site"],
     },
     SystemTemplate {
@@ -316,7 +389,10 @@ pub(crate) const SYSTEM_TEMPLATES: &[SystemTemplate] = &[
         trigger: "Envoyé au client après son départ, pour recueillir son avis sur le séjour.",
         subject: "Comment s'est passé votre séjour ? — {{site}}",
         body: "{{bonjour}}\n\nNous espérons que votre séjour à {{site}} (semaine {{semaine}}) s'est bien passé. Votre avis compte beaucoup : il aide les prochains voyageurs et nous permet de nous améliorer. Cela ne prend qu'une minute.",
+        subject_en: "How was your stay? — {{site}}",
+        body_en: "{{bonjour}}\n\nWe hope your stay at {{site}} (week {{semaine}}) went well. Your review matters a lot: it helps future guests and allows us to improve. It only takes a minute.",
         cta_label: "Laisser un avis",
+        cta_label_en: "Leave a review",
         vars: &["bonjour", "prenom", "semaine", "site"],
     },
     SystemTemplate {
@@ -325,13 +401,17 @@ pub(crate) const SYSTEM_TEMPLATES: &[SystemTemplate] = &[
         trigger: "Envoyé depuis un dossier (résa manuelle) pour faire signer le contrat en ligne.",
         subject: "Votre contrat de location à signer — {{site}}",
         body: "{{bonjour}}\n\nVotre contrat de location pour la semaine du {{semaine}} à {{site}} est prêt. Merci de le lire et de le signer en ligne — cela ne prend qu'une minute. Ce lien restera ensuite accessible comme copie de votre contrat signé.",
+        subject_en: "Your rental contract to sign — {{site}}",
+        body_en: "{{bonjour}}\n\nYour rental contract for the week of {{semaine}} at {{site}} is ready. Please read and sign it online — it only takes a minute. This link will then remain available as a copy of your signed contract.",
         cta_label: "Lire et signer le contrat",
+        cta_label_en: "Read and sign the contract",
         vars: &["bonjour", "prenom", "semaine", "site"],
     },
 ];
 
-/// Envoie un e-mail système : override admin s'il existe, gabarit par défaut
-/// sinon. `cta_url` vide = pas de bouton.
+/// Envoie un e-mail système dans la langue du destinataire : override admin
+/// (kind, locale) s'il existe, gabarit par défaut de la langue sinon.
+/// `cta_url` vide = pas de bouton.
 pub(crate) async fn send_system(
     pool: sqlx::PgPool,
     booking_id: Option<uuid::Uuid>,
@@ -339,20 +419,23 @@ pub(crate) async fn send_system(
     to: String,
     vars: &[(&str, String)],
     cta_url: &str,
+    lang: Lang,
 ) -> Result<(), sqlx::Error> {
     let def = SYSTEM_TEMPLATES
         .iter()
         .find(|t| t.kind == kind)
         .expect("e-mail système inconnu");
-    let ovr: Option<(String, String)> =
-        sqlx::query_as("select subject, body from email_template_override where kind = $1")
-            .bind(kind)
-            .fetch_optional(&pool)
-            .await?;
+    let ovr: Option<(String, String)> = sqlx::query_as(
+        "select subject, body from email_template_override where kind = $1 and locale = $2",
+    )
+    .bind(kind)
+    .bind(lang.as_str())
+    .fetch_optional(&pool)
+    .await?;
     let (subject_tpl, body_tpl) = ovr
         .as_ref()
         .map(|(s, b)| (s.as_str(), b.as_str()))
-        .unwrap_or((def.subject, def.body));
+        .unwrap_or((def.subject_for(lang), def.body_for(lang)));
     // {{site}} est injecté automatiquement dans tous les e-mails système.
     let (site, location) = brand(&pool).await;
     let mut all_vars: Vec<(&str, String)> = vars.to_vec();
@@ -364,9 +447,9 @@ pub(crate) async fn send_system(
     let (label, url) = if cta_url.is_empty() {
         ("", "")
     } else {
-        (def.cta_label, cta_url)
+        (def.cta_label_for(lang), cta_url)
     };
-    let html = template(&site, &location, &heading, &body, label, url);
+    let html = template_lang(&site, &location, &heading, &body, label, url, lang);
     spawn(pool, booking_id, kind, to, subject, html);
     Ok(())
 }
@@ -415,10 +498,19 @@ pub(crate) fn html_to_text(html: &str) -> String {
     cleaned.join("\n").trim().to_string()
 }
 
-/// « Bonjour Camille, » / « Bonjour, » — variable {{bonjour}} des gabarits.
-pub(crate) fn bonjour(first_name: Option<&str>) -> String {
+/// « Bonjour Camille, » / "Hello Camille," — variable {{bonjour}} des gabarits.
+pub(crate) fn bonjour_lang(first_name: Option<&str>, lang: Lang) -> String {
+    let greeting = match lang {
+        Lang::Fr => "Bonjour",
+        Lang::En => "Hello",
+    };
     match first_name.map(str::trim).filter(|s| !s.is_empty()) {
-        Some(n) => format!("Bonjour {n},"),
-        None => "Bonjour,".to_string(),
+        Some(n) => format!("{greeting} {n},"),
+        None => format!("{greeting},"),
     }
+}
+
+/// Variante française historique (campagnes et envois admin, toujours fr).
+pub(crate) fn bonjour(first_name: Option<&str>) -> String {
+    bonjour_lang(first_name, Lang::Fr)
 }

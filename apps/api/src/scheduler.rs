@@ -11,6 +11,7 @@
 //! are never touched, honouring the rule "acompte gardé, solde non prélevé".
 
 use crate::email;
+use crate::i18n::Lang;
 use crate::payments::PaymentProvider;
 use serde::Serialize;
 use sqlx::postgres::PgPool;
@@ -135,6 +136,7 @@ struct BalanceDue {
     emails_muted: bool,
     email: Option<String>,
     first_name: Option<String>,
+    locale: Option<String>,
     notified: bool,
 }
 
@@ -159,7 +161,7 @@ async fn charge_due_balances(
     let due = sqlx::query_as::<_, BalanceDue>(
         "select b.id, b.reference, b.balance_cents, b.provider_customer_id, \
                 b.provider_payment_method_id, b.balance_attempts as attempts, b.emails_muted, \
-                c.email, c.first_name, (b.balance_failed_notified_at is not null) as notified \
+                c.email, c.first_name, c.locale, (b.balance_failed_notified_at is not null) as notified \
          from booking b join availability_week aw on aw.id = b.week_id \
          left join customer c on c.id = b.customer_id \
          where b.status = 'confirmed' and b.balance_paid_at is null and b.balance_cents > 0 \
@@ -214,10 +216,11 @@ async fn charge_due_balances(
                     .clone()
                     .filter(|e| !e.is_empty() && emails_on && !d.emails_muted)
                 {
+                    let lang = Lang::from_param(d.locale.as_deref());
                     let vars = vec![
-                        ("bonjour", email::bonjour(d.first_name.as_deref())),
+                        ("bonjour", email::bonjour_lang(d.first_name.as_deref(), lang)),
                         ("prenom", d.first_name.clone().unwrap_or_default()),
-                        ("montant", eur(d.balance_cents)),
+                        ("montant", crate::i18n::eur(d.balance_cents, lang)),
                         ("reference", d.reference.clone()),
                     ];
                     email::send_system(
@@ -226,7 +229,8 @@ async fn charge_due_balances(
                         "balance_paid",
                         to,
                         &vars,
-                        &format!("{}/espace", email::front_url()),
+                        &format!("{}/espace", email::front_url_lang(lang)),
+                        lang,
                     )
                     .await?;
                 }
@@ -242,6 +246,7 @@ async fn charge_due_balances(
                         "balance",
                         d.email,
                         d.first_name,
+                        d.locale,
                         &d.reference,
                     )
                     .await;
@@ -263,8 +268,10 @@ struct PrenotifyRow {
     reference: String,
     balance_cents: i64,
     due_label: String,
+    start_date: chrono::NaiveDate,
     email: Option<String>,
     first_name: Option<String>,
+    locale: Option<String>,
 }
 
 /// A few days before the automatic balance charge (J-14), warn the customer so
@@ -435,7 +442,7 @@ async fn prenotify_balances(pool: &PgPool, r: &mut TickReport) -> Result<(), sql
     // Fires in the 3-day window before the charge opens (start_date-17 .. -15).
     let due: Vec<PrenotifyRow> = sqlx::query_as(
         "select b.id, b.reference, b.balance_cents, aw.balance_due_label as due_label, \
-                c.email, c.first_name \
+                aw.start_date, c.email, c.first_name, c.locale \
          from booking b join availability_week aw on aw.id = b.week_id \
          left join customer c on c.id = b.customer_id \
          where b.status = 'confirmed' and b.balance_paid_at is null and b.balance_cents > 0 \
@@ -458,11 +465,17 @@ async fn prenotify_balances(pool: &PgPool, r: &mut TickReport) -> Result<(), sql
         r.balances_prenotified += 1;
 
         if let Some(to) = d.email.clone().filter(|e| !e.is_empty()) {
+            let lang = Lang::from_param(d.locale.as_deref());
+            let date = if lang == Lang::Fr {
+                d.due_label.clone()
+            } else {
+                crate::i18n::balance_due_label(d.start_date, lang)
+            };
             let vars = vec![
-                ("bonjour", email::bonjour(d.first_name.as_deref())),
+                ("bonjour", email::bonjour_lang(d.first_name.as_deref(), lang)),
                 ("prenom", d.first_name.clone().unwrap_or_default()),
-                ("montant", eur(d.balance_cents)),
-                ("date", d.due_label.clone()),
+                ("montant", crate::i18n::eur(d.balance_cents, lang)),
+                ("date", date),
                 ("reference", d.reference.clone()),
             ];
             email::send_system(
@@ -471,7 +484,8 @@ async fn prenotify_balances(pool: &PgPool, r: &mut TickReport) -> Result<(), sql
                 "balance_prenotify",
                 to,
                 &vars,
-                &format!("{}/espace", email::front_url()),
+                &format!("{}/espace", email::front_url_lang(lang)),
+                lang,
             )
             .await?;
         }
@@ -518,6 +532,7 @@ async fn notify_payment_issue(
     kind: &str,
     email: Option<String>,
     first_name: Option<String>,
+    locale: Option<String>,
     reference: &str,
 ) {
     let marker = format!("update booking set {kind}_failed_notified_at = now() where id = $1");
@@ -532,13 +547,15 @@ async fn notify_payment_issue(
     let Some(mail) = email.filter(|m| !m.trim().is_empty()) else {
         return;
     };
-    let what = if kind == "balance" {
-        "le prélèvement du solde de votre séjour"
-    } else {
-        "une opération de paiement de votre séjour"
+    let lang = Lang::from_param(locale.as_deref());
+    let what = match (kind == "balance", lang) {
+        (true, Lang::Fr) => "le prélèvement du solde de votre séjour",
+        (true, Lang::En) => "the balance charge for your stay",
+        (false, Lang::Fr) => "une opération de paiement de votre séjour",
+        (false, Lang::En) => "a payment operation for your stay",
     };
     let vars = vec![
-        ("bonjour", email::bonjour(first_name.as_deref())),
+        ("bonjour", email::bonjour_lang(first_name.as_deref(), lang)),
         ("prenom", first_name.clone().unwrap_or_default()),
         ("operation", what.to_string()),
         ("reference", reference.to_string()),
@@ -549,7 +566,8 @@ async fn notify_payment_issue(
         "payment_issue",
         mail,
         &vars,
-        &format!("{}/espace", email::front_url()),
+        &format!("{}/espace", email::front_url_lang(lang)),
+        lang,
     )
     .await;
 }
@@ -560,6 +578,7 @@ struct CartRow {
     reference: String,
     email: String,
     first_name: String,
+    locale: String,
 }
 
 async fn remind_abandoned_carts(pool: &PgPool, r: &mut TickReport) -> Result<(), sqlx::Error> {
@@ -571,7 +590,7 @@ async fn remind_abandoned_carts(pool: &PgPool, r: &mut TickReport) -> Result<(),
               and not emails_muted \
               and created_at < now() - interval '1 hour' \
             returning id, reference, customer_id ) \
-         select u.id, u.reference, c.email, c.first_name \
+         select u.id, u.reference, c.email, c.first_name, c.locale \
          from updated u join customer c on c.id = u.customer_id \
          where coalesce(c.email, '') <> ''",
     )
@@ -579,8 +598,9 @@ async fn remind_abandoned_carts(pool: &PgPool, r: &mut TickReport) -> Result<(),
     .await?;
 
     for cart in carts {
+        let lang = Lang::from_param(Some(&cart.locale));
         let vars = vec![
-            ("bonjour", email::bonjour(Some(&cart.first_name))),
+            ("bonjour", email::bonjour_lang(Some(&cart.first_name), lang)),
             ("prenom", cart.first_name.clone()),
         ];
         email::send_system(
@@ -591,7 +611,8 @@ async fn remind_abandoned_carts(pool: &PgPool, r: &mut TickReport) -> Result<(),
             &vars,
             // Lien de reprise : le funnel restaure la sélection et les
             // coordonnées du panier (voir resume_booking dans main.rs).
-            &format!("{}/reserver?ref={}", email::front_url(), cart.reference),
+            &format!("{}/reserver?ref={}", email::front_url_lang(lang), cart.reference),
+            lang,
         )
         .await?;
         r.carts_reminded += 1;
@@ -642,8 +663,11 @@ async fn expire_stale_carts(
 struct ReviewDue {
     id: Uuid,
     week_range: String,
+    start_date: chrono::NaiveDate,
+    end_date: chrono::NaiveDate,
     email: String,
     first_name: Option<String>,
+    locale: Option<String>,
 }
 
 /// Après le départ, demande un avis au client (une seule fois) : jeton
@@ -661,7 +685,8 @@ async fn request_reviews(pool: &PgPool, r: &mut TickReport) -> Result<(), sqlx::
         return Ok(());
     }
     let due: Vec<ReviewDue> = sqlx::query_as(
-        "select b.id, aw.range_label as week_range, c.email, c.first_name \
+        "select b.id, aw.range_label as week_range, aw.start_date, aw.end_date, \
+                c.email, c.first_name, c.locale \
          from booking b \
          join availability_week aw on aw.id = b.week_id \
          join customer c on c.id = b.customer_id \
@@ -691,10 +716,16 @@ async fn request_reviews(pool: &PgPool, r: &mut TickReport) -> Result<(), sqlx::
         }
         r.reviews_requested += 1;
 
+        let lang = Lang::from_param(d.locale.as_deref());
+        let semaine = if lang == Lang::Fr {
+            d.week_range.clone()
+        } else {
+            crate::i18n::range_label(d.start_date, d.end_date, lang)
+        };
         let vars = vec![
-            ("bonjour", email::bonjour(d.first_name.as_deref())),
+            ("bonjour", email::bonjour_lang(d.first_name.as_deref(), lang)),
             ("prenom", d.first_name.clone().unwrap_or_default()),
-            ("semaine", d.week_range.clone()),
+            ("semaine", semaine),
         ];
         email::send_system(
             pool.clone(),
@@ -702,7 +733,8 @@ async fn request_reviews(pool: &PgPool, r: &mut TickReport) -> Result<(), sqlx::
             "review_request",
             d.email,
             &vars,
-            &format!("{}/avis/{token}", email::front_url()),
+            &format!("{}/avis/{token}", email::front_url_lang(lang)),
+            lang,
         )
         .await?;
     }

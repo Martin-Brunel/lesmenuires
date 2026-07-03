@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useI18n } from "@/components/I18nProvider";
 
 const KEY = "adret-cookie-ack";
 
@@ -9,6 +10,7 @@ const KEY = "adret-cookie-ack";
  *  interaction (Stripe's technical cookies load only inside the payment modal),
  *  so this is an informational banner with acknowledgement + a link to details. */
 export function CookieBanner() {
+  const { t, href } = useI18n();
   const [show, setShow] = useState(false);
 
   useEffect(() => {
@@ -33,7 +35,7 @@ export function CookieBanner() {
   return (
     <div
       role="dialog"
-      aria-label="Information cookies"
+      aria-label={t.cookieBanner.aria}
       style={{
         position: "fixed",
         left: 16,
@@ -56,10 +58,9 @@ export function CookieBanner() {
       }}
     >
       <p style={{ margin: 0, font: "400 13.5px/1.55 'Hanken Grotesk'", color: "#4a4c48", flex: "1 1 320px" }}>
-        Nous utilisons uniquement les cookies nécessaires au fonctionnement du site et au paiement
-        sécurisé. Aucun traceur publicitaire.{" "}
-        <Link href="/cookies" style={{ color: "#4E6E8C" }}>
-          En savoir plus
+        {t.cookieBanner.body}{" "}
+        <Link href={href("/cookies")} style={{ color: "#4E6E8C" }}>
+          {t.cookieBanner.learnMore}
         </Link>
         .
       </p>
@@ -75,7 +76,7 @@ export function CookieBanner() {
           cursor: "pointer",
         }}
       >
-        J’ai compris
+        {t.cookieBanner.ok}
       </button>
     </div>
   );

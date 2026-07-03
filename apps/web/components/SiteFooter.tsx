@@ -1,8 +1,12 @@
 import Link from "next/link";
 import { site } from "@/lib/site";
+import { getDict, localePath } from "@/lib/i18n";
+import { requestLocale } from "@/lib/i18n/server";
 
 /** Shared footer with the mandatory legal links (LCEN / RGPD / consumer law). */
-export function SiteFooter() {
+export async function SiteFooter() {
+  const locale = await requestLocale();
+  const t = getDict(locale);
   const year = site.legalUpdatedAt.slice(0, 4);
   const linkStyle: React.CSSProperties = {
     color: "#6B6E6B",
@@ -33,11 +37,11 @@ export function SiteFooter() {
           {site.name} <span style={{ fontSize: 13, color: "#9A9C97" }}>· {site.location}</span>
         </div>
         <nav style={{ display: "flex", flexWrap: "wrap", gap: "8px 18px" }}>
-          <Link href="/mentions-legales" style={linkStyle}>Mentions légales</Link>
-          <Link href="/cgv" style={linkStyle}>Conditions de location</Link>
-          <Link href="/confidentialite" style={linkStyle}>Confidentialité</Link>
-          <Link href="/cookies" style={linkStyle}>Cookies</Link>
-          <Link href="/espace" style={linkStyle}>Mon espace</Link>
+          <Link href={localePath(locale, "/mentions-legales")} style={linkStyle}>{t.footer.legalNotice}</Link>
+          <Link href={localePath(locale, "/cgv")} style={linkStyle}>{t.footer.terms}</Link>
+          <Link href={localePath(locale, "/confidentialite")} style={linkStyle}>{t.footer.privacy}</Link>
+          <Link href={localePath(locale, "/cookies")} style={linkStyle}>{t.footer.cookies}</Link>
+          <Link href={localePath(locale, "/espace")} style={linkStyle}>{t.nav.mySpace}</Link>
         </nav>
       </div>
       <div
@@ -48,7 +52,7 @@ export function SiteFooter() {
           color: "#9A9C97",
         }}
       >
-        © {year} {site.name}. Tous droits réservés.
+        {t.legal.allRightsReserved(year, site.name)}
       </div>
     </footer>
   );

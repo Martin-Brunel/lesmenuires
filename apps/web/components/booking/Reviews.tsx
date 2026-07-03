@@ -6,6 +6,8 @@
 import { useState } from "react";
 import type { ApiReview } from "@/lib/api";
 import { css } from "./css";
+import { monthOfDate, ratingAvg } from "@/lib/i18n";
+import { useI18n } from "@/components/I18nProvider";
 
 function StarIcon({ size = 14, filled = true }: { size?: number; filled?: boolean }) {
   return (
@@ -25,29 +27,25 @@ export const avgRating = (reviews: ApiReview[]) =>
     ? null
     : reviews.reduce((s, r) => s + r.rating, 0) / reviews.length;
 
-const fmtAvg = (avg: number) =>
-  avg.toLocaleString("fr-FR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-
 /** « ★ 4,8 · 12 avis » — à côté du titre. Rien tant qu'aucun avis publié. */
 export function RatingBadge({ reviews }: { reviews: ApiReview[] }) {
+  const { locale, t } = useI18n();
   const avg = avgRating(reviews);
   if (avg === null) return null;
   return (
     <span style={css("display:inline-flex;align-items:center;gap:5px;font:500 14px 'Hanken Grotesk';color:#1A1B1A")}>
       <StarIcon />
-      {fmtAvg(avg)}
+      {ratingAvg(avg, locale)}
       <span style={css("color:#9A9C97;font-weight:400")}>
-        · {reviews.length} avis
+        · {t.reviews.count(reviews.length)}
       </span>
     </span>
   );
 }
 
-const frMonth = (iso: string) =>
-  new Date(iso).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
-
 /** Section « Avis des voyageurs » : liste repliée à 4, réponse de l'hôte. */
 export function ReviewsSection({ reviews }: { reviews: ApiReview[] }) {
+  const { locale, t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const avg = avgRating(reviews);
   if (avg === null) return null;
@@ -55,11 +53,11 @@ export function ReviewsSection({ reviews }: { reviews: ApiReview[] }) {
   return (
     <div>
       <div style={css("display:flex;align-items:baseline;gap:12px;flex-wrap:wrap")}>
-        <h2 style={css("margin:0;font:400 28px 'Marcellus'")}>Avis des voyageurs</h2>
+        <h2 style={css("margin:0;font:400 28px 'Marcellus'")}>{t.reviews.title}</h2>
         <span style={css("display:inline-flex;align-items:center;gap:5px;font:500 15px 'Hanken Grotesk'")}>
           <StarIcon size={15} />
-          {fmtAvg(avg)}
-          <span style={css("color:#9A9C97;font-weight:400")}>· {reviews.length} avis</span>
+          {ratingAvg(avg, locale)}
+          <span style={css("color:#9A9C97;font-weight:400")}>· {t.reviews.count(reviews.length)}</span>
         </span>
       </div>
       <div style={css("margin-top:18px;display:flex;flex-direction:column;gap:14px")}>
@@ -72,7 +70,7 @@ export function ReviewsSection({ reviews }: { reviews: ApiReview[] }) {
                 ))}
               </span>
               <span style={css("font:500 14px 'Hanken Grotesk';color:#1A1B1A")}>{r.authorName}</span>
-              <span style={css("font:400 12.5px 'Hanken Grotesk';color:#9A9C97")}>{frMonth(r.submittedAt)}</span>
+              <span style={css("font:400 12.5px 'Hanken Grotesk';color:#9A9C97")}>{monthOfDate(r.submittedAt, locale)}</span>
             </div>
             {r.comment && (
               <p style={css("margin:10px 0 0;font:400 14.5px/1.65 'Hanken Grotesk';color:#5A5C58;white-space:pre-line")}>
@@ -81,7 +79,7 @@ export function ReviewsSection({ reviews }: { reviews: ApiReview[] }) {
             )}
             {r.adminReply && (
               <div style={css("margin-top:12px;padding:10px 14px;background:#F5F4F1;border-radius:10px")}>
-                <div style={css("font:600 12px 'Hanken Grotesk';color:#9A9C97")}>Réponse de votre hôte</div>
+                <div style={css("font:600 12px 'Hanken Grotesk';color:#9A9C97")}>{t.reviews.hostReply}</div>
                 <p style={css("margin:4px 0 0;font:400 13.5px/1.6 'Hanken Grotesk';color:#5A5C58;white-space:pre-line")}>
                   {r.adminReply}
                 </p>
@@ -95,7 +93,7 @@ export function ReviewsSection({ reviews }: { reviews: ApiReview[] }) {
           onClick={() => setExpanded(true)}
           style={css("margin-top:14px;background:none;border:1px solid rgba(0,0,0,.14);border-radius:10px;padding:10px 16px;font:500 13.5px 'Hanken Grotesk';color:#1A1B1A;cursor:pointer")}
         >
-          Voir les {reviews.length} avis
+          {t.reviews.seeAll(reviews.length)}
         </button>
       )}
     </div>

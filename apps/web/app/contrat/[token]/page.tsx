@@ -13,6 +13,8 @@ import {
 } from "@/components/booking/SignaturePad";
 import { contractText } from "@/lib/contract";
 import { CONTRACT_VERSION } from "@/lib/site";
+import type { Locale } from "@/lib/i18n";
+import { useI18n } from "@/components/I18nProvider";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
@@ -34,17 +36,22 @@ type ContractView = {
   signaturePng: string | null;
 };
 
-const buildText = (d: ContractView) =>
+// Un contrat déjà signé s'affiche tel qu'archivé ; à signer, il est généré
+// dans la langue du parcours (gabarit déjà localisé par l'API via ?locale=).
+const buildText = (d: ContractView, locale: Locale) =>
   d.contractText ??
-  contractText({
-    propertyName: d.propertyName,
-    locationLabel: d.locationLabel,
-    cautionCents: d.cautionCents,
-    capacity: d.capacity,
-    ownerName: d.ownerName,
-    ownerAddress: d.ownerAddress,
-    template: d.contractTemplate,
-  });
+  contractText(
+    {
+      propertyName: d.propertyName,
+      locationLabel: d.locationLabel,
+      cautionCents: d.cautionCents,
+      capacity: d.capacity,
+      ownerName: d.ownerName,
+      ownerAddress: d.ownerAddress,
+      template: d.contractTemplate,
+    },
+    locale,
+  );
 
 const S: Record<string, CSSProperties> = {
   page: { maxWidth: 680, margin: "0 auto", padding: "40px 20px 64px" },
@@ -123,6 +130,7 @@ const S: Record<string, CSSProperties> = {
 };
 
 export default function ContratPage() {
+  const { locale, t } = useI18n();
   const params = useParams<{ token: string }>();
   const token = params.token;
   const [data, setData] = useState<ContractView | null>(null);
@@ -133,13 +141,14 @@ export default function ContratPage() {
   const padRef = useRef<SignaturePadHandle>(null);
 
   const load = useCallback(() => {
-    fetch(`${API_URL}/api/contract/${token}`)
+    fetch(`${API_URL}/api/contract/${token}?locale=${locale}`)
       .then(async (r) => {
-        if (!r.ok) throw new Error("Lien de contrat introuvable ou expiré.");
+        if (!r.ok) throw new Error(t.contratPage.linkNotFound);
         setData(await r.json());
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "Erreur"));
-  }, [token]);
+      .catch((e) => setError(e instanceof Error ? e.message : t.contratPage.errorShort));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, locale]);
   useEffect(() => load(), [load]);
 
   const sign = async () => {
@@ -156,16 +165,16 @@ export default function ContratPage() {
           contractVersion: CONTRACT_VERSION,
           signaturePng: png,
           accepted: true,
-          contractText: buildText(data),
+          contractText: buildText(data, locale),
         }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? "La signature n'a pas pu être enregistrée.");
+        throw new Error(body.error ?? t.contratPage.signFailed);
       }
       load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erreur");
+      setError(e instanceof Error ? e.message : t.contratPage.errorShort);
     } finally {
       setBusy(false);
     }
@@ -181,12 +190,12 @@ export default function ContratPage() {
   if (!data) {
     return (
       <main style={S.center}>
-        <p style={{ color: "#8A8B86", fontSize: 14 }}>Chargement…</p>
+        <p style={{ color: "#8A8B86", fontSize: 14 }}>{t.espace.loading}</p>
       </main>
     );
   }
 
-  const text = buildText(data);
+  const text = buildText(data, locale);
 
   return (
     <main style={S.page}>
@@ -202,18 +211,18 @@ export default function ContratPage() {
         <div style={S.header}>
           <div>
             <div style={S.title}>{data.propertyName}</div>
-            <div style={S.subtitle}>Contrat de location saisonnière</div>
+            <div style={S.subtitle}>{t.contratPage.subtitle}</div>
           </div>
           <div style={S.meta}>
-            Réservation {data.reference}
+            {t.contratPage.bookingRef(data.reference)}
             <br />
-            Semaine du {data.weekRange}
+            {t.contratPage.weekOf(data.weekRange)}
           </div>
         </div>
 
         <p style={S.parties}>
-          <strong>Preneur :</strong> {data.customerName ?? "—"} ·{" "}
-          <strong>Arrivée :</strong> {data.arrival}
+          <strong>{t.contratPage.tenant}</strong> {data.customerName ?? "—"} ·{" "}
+          <strong>{t.contratPage.arrival}</strong> {data.arrival}
         </p>
 
         <div style={S.text}>{text}</div>
@@ -221,23 +230,23 @@ export default function ContratPage() {
         {data.signed ? (
           <div style={S.section}>
             <p style={S.signedNote}>
-              Contrat signé électroniquement
-              {data.signedAt
-                ? ` le ${new Date(data.signedAt).toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })}`
-                : ""}
-              .
+              {t.contratPage.signedNote(
+                data.signedAt
+                  ? new Date(data.signedAt).toLocaleString(locale === "fr" ? "fr-FR" : "en-GB", { dateStyle: "long", timeStyle: "short" })
+                  : null,
+              )}
             </p>
             {data.signaturePng && (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={data.signaturePng} alt="Signature du preneur" style={S.sigImg} />
+              <img src={data.signaturePng} alt={t.contratPage.signatureAlt} style={S.sigImg} />
             )}
             <div className="no-print">
               <div style={S.actions}>
                 <button style={S.primaryBtn} onClick={() => window.print()}>
-                  Imprimer / Enregistrer en PDF
+                  {t.contratPage.print}
                 </button>
               </div>
-              <p style={S.muted}>Conservez ce lien : il reste votre copie du contrat signé.</p>
+              <p style={S.muted}>{t.contratPage.keepLink}</p>
             </div>
           </div>
         ) : (
@@ -249,7 +258,7 @@ export default function ContratPage() {
                 checked={accepted}
                 onChange={(e) => setAccepted(e.target.checked)}
               />
-              <span>J&apos;ai lu le contrat et les conditions générales, et je les accepte.</span>
+              <span>{t.contratPage.acceptLabel}</span>
             </label>
             <div style={S.padWrap}>
               <SignaturePad
@@ -257,7 +266,7 @@ export default function ContratPage() {
                 width={560}
                 height={160}
                 fullWidth
-                placeholder="Signez ici avec la souris ou le doigt"
+                placeholder={t.contratPage.signHere}
                 onEmptyChange={setSigEmpty}
               />
             </div>
@@ -271,10 +280,10 @@ export default function ContratPage() {
                 disabled={busy || !accepted || sigEmpty}
                 onClick={sign}
               >
-                {busy ? "…" : "Signer le contrat"}
+                {busy ? "…" : t.contratPage.signButton}
               </button>
               <button style={S.linkBtn} onClick={() => padRef.current?.clear()}>
-                Effacer
+                {t.checkout.clear}
               </button>
             </div>
             {error && <p style={S.error}>{error}</p>}

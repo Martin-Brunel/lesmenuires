@@ -1,6 +1,10 @@
 import Link from "next/link";
+import { getDict, localePath } from "@/lib/i18n";
+import { requestLocale } from "@/lib/i18n/server";
 
-export default function NotFound() {
+export default async function NotFound() {
+  const locale = await requestLocale();
+  const t = getDict(locale);
   return (
     <main
       style={{
@@ -17,16 +21,16 @@ export default function NotFound() {
       }}
     >
       <p style={{ fontSize: "0.8rem", letterSpacing: "0.2em", color: "#4E6E8C" }}>
-        ERREUR 404
+        {t.notFound.kicker}
       </p>
       <h1 style={{ fontFamily: "Marcellus, serif", fontSize: "2.25rem", margin: 0 }}>
-        Page introuvable
+        {t.notFound.title}
       </h1>
       <p style={{ maxWidth: "28rem", color: "#5b6670", lineHeight: 1.6 }}>
-        La page que vous cherchez n’existe pas ou a été déplacée.
+        {t.notFound.body}
       </p>
       <Link
-        href="/"
+        href={localePath(locale, "/")}
         style={{
           marginTop: "0.5rem",
           padding: "0.75rem 1.5rem",
@@ -37,7 +41,7 @@ export default function NotFound() {
           fontWeight: 600,
         }}
       >
-        Retour à l’accueil
+        {t.notFound.backHome}
       </Link>
     </main>
   );

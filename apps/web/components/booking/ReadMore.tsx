@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { ACCENT } from "./data";
+import { useI18n } from "@/components/I18nProvider";
 
 /**
  * Renders the presentation text — rich HTML from the editor, or plain text
@@ -19,6 +20,7 @@ export function ReadMore({
   textStyle?: CSSProperties;
   fadeColor?: string;
 }) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -80,7 +82,7 @@ export function ReadMore({
             color: ACCENT,
           }}
         >
-          {expanded ? "Voir moins" : "Voir plus"}
+          {expanded ? t.readMore.less : t.readMore.more}
         </button>
       )}
     </div>

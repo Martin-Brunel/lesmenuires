@@ -19,6 +19,7 @@ import {
 import { CONTRACT_VERSION } from "@/lib/site";
 import { contractText } from "@/lib/contract";
 import { track } from "@/lib/analytics";
+import { useI18n } from "@/components/I18nProvider";
 import {
   computeTotals,
   defaultExtras,
@@ -53,6 +54,7 @@ const EMPTY_INFO: ContactInfo = {
 
 export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
   const { property, weeks, products } = ctx;
+  const { locale, t } = useI18n();
 
   const [info, setInfo] = useState<ContactInfo>(EMPTY_INFO);
   const setField =
@@ -178,14 +180,14 @@ export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
   // cart keeps the coordonnées for the relance.
   const ensureBooking = async (): Promise<string> => {
     if (reference) return reference;
-    if (!week) throw new Error("Aucune semaine sélectionnée.");
+    if (!week) throw new Error(t.errors.noWeekSelected);
     const res = await createBooking({
       propertySlug: property.slug,
       weekId: week.id,
       extras: selectedExtras.map((p) => p.key),
       adults,
       children,
-      customer: { ...info, country: "FR" },
+      customer: { ...info, country: "FR", locale },
     });
     setReference(res.reference);
     track("panier_cree");
@@ -202,7 +204,7 @@ export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
       await ensureBooking();
       return true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Une erreur est survenue.");
+      setError(e instanceof Error ? e.message : t.errors.generic);
       return false;
     } finally {
       busyRef.current = false;
@@ -216,7 +218,7 @@ export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
     if (busyRef.current) return false;
     const signaturePng = sigRef.current?.toDataURL() ?? null;
     if (!accepted || !signaturePng) {
-      setError("Merci d'accepter le contrat et de signer.");
+      setError(t.errors.acceptAndSignFirst);
       return false;
     }
     busyRef.current = true;
@@ -229,20 +231,25 @@ export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
         signaturePng,
         accepted,
         // Exact text the buyer signs — archived server-side as legal proof.
-        contractText: contractText({
-          propertyName: property.name,
-          locationLabel: property.locationLabel,
-          cautionCents: property.cautionCents,
-          capacity,
-          ownerName: property.ownerName,
-          ownerAddress: property.ownerAddress,
-          template: property.contractTemplate,
-        }),
+        // Le texte signé est archivé dans la langue du client (le gabarit
+        // renvoyé par l'API est déjà localisé quand une traduction existe).
+        contractText: contractText(
+          {
+            propertyName: property.name,
+            locationLabel: property.locationLabel,
+            cautionCents: property.cautionCents,
+            capacity,
+            ownerName: property.ownerName,
+            ownerAddress: property.ownerAddress,
+            template: property.contractTemplate,
+          },
+          locale,
+        ),
       });
       track("contrat_signe");
       return true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Une erreur est survenue.");
+      setError(e instanceof Error ? e.message : t.errors.generic);
       return false;
     } finally {
       busyRef.current = false;
@@ -268,7 +275,7 @@ export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
       track("acompte_paye", { mode: "direct" });
       onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Une erreur est survenue.");
+      setError(e instanceof Error ? e.message : t.errors.generic);
     } finally {
       busyRef.current = false;
       setSubmitting(false);
@@ -288,7 +295,7 @@ export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
       track("reservation_offline", { mode: payMethod });
       onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Une erreur est survenue.");
+      setError(e instanceof Error ? e.message : t.errors.generic);
     } finally {
       busyRef.current = false;
       setSubmitting(false);
@@ -313,11 +320,7 @@ export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
       if (e instanceof ApiError && e.status >= 400 && e.status < 500) {
         setError(e.message);
       } else {
-        setError(
-          "Votre paiement a bien été accepté. La confirmation finale est en cours " +
-            "et vous recevrez un e-mail ; vous pourrez suivre votre réservation " +
-            "dans votre espace client.",
-        );
+        setError(t.errors.paymentAcceptedPending);
       }
     }
   };
