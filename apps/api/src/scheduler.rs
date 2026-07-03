@@ -67,8 +67,35 @@ pub async fn transactional_emails_enabled(pool: &PgPool) -> bool {
     .unwrap_or(true)
 }
 
+/// Advisory-lock key guarding a scheduler tick. Only one tick may run at a time across
+/// the whole cluster (the periodic loop and the admin "run now" button, or two replicas):
+/// the jobs are not concurrency-safe (they'd insert duplicate `payment` rows for a single
+/// real charge → doubled finances/ledger). Arbitrary but fixed.
+const TICK_LOCK_KEY: i64 = 0x6C65736D_656E7500; // "lesmen\0"
+
 pub async fn run_tick(pool: &PgPool, payments: &Arc<dyn PaymentProvider>) -> TickReport {
     let mut r = TickReport::default();
+
+    // Hold a session-level advisory lock for the whole tick so concurrent ticks skip
+    // instead of racing. Keep `lock_conn` alive until the end to hold the lock; on any
+    // acquisition error we degrade to running unlocked (no worse than before).
+    let mut lock_conn = match pool.acquire().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("scheduler: acquisition connexion verrou: {e:?}");
+            return r;
+        }
+    };
+    let got: bool = sqlx::query_scalar("select pg_try_advisory_lock($1)")
+        .bind(TICK_LOCK_KEY)
+        .fetch_one(&mut *lock_conn)
+        .await
+        .unwrap_or(true);
+    if !got {
+        tracing::info!("scheduler: tick déjà en cours, on saute");
+        return r;
+    }
+
     let emails_on = transactional_emails_enabled(pool).await;
     if emails_on {
         if let Err(e) = prenotify_balances(pool, &mut r).await {
@@ -107,6 +134,12 @@ pub async fn run_tick(pool: &PgPool, payments: &Arc<dyn PaymentProvider>) -> Tic
         Ok(_) => {}
         Err(e) => tracing::error!("job compta: {e:?}"),
     }
+
+    // Release the advisory lock (the session also releases it if the connection drops).
+    let _ = sqlx::query("select pg_advisory_unlock($1)")
+        .bind(TICK_LOCK_KEY)
+        .execute(&mut *lock_conn)
+        .await;
     r
 }
 
@@ -176,6 +209,27 @@ async fn charge_due_balances(
     .await?;
 
     for d in due {
+        // Lock the booking row and re-verify it's still due *inside* the lock before
+        // charging. This serializes against a concurrent on-session settlement
+        // (pay_balance, which takes the same lock): whichever commits first wins, so an
+        // off-session and an on-session charge can't both fire (two intents → two real
+        // debits). The `due` list was read without a lock, so this closes that window.
+        let mut tx = pool.begin().await?;
+        let still_due: Option<i32> = sqlx::query_scalar(
+            "select 1 from booking b where b.id = $1 and b.status = 'confirmed' \
+               and b.balance_paid_at is null and b.payment_flag is null \
+               and not exists (select 1 from payment p where p.booking_id = b.id \
+                   and p.type = 'balance' and p.status = 'pending' \
+                   and p.created_at > now() - interval '2 hours') \
+             for update of b",
+        )
+        .bind(d.id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if still_due.is_none() {
+            let _ = tx.rollback().await;
+            continue;
+        }
         // Key advances only on genuine (definitive) retries: a transient network
         // error keeps the same key so a lost-but-applied charge replays safely.
         match payments
@@ -188,12 +242,17 @@ async fn charge_due_balances(
             .await
         {
             Ok(intent_id) => {
-                let mut tx = pool.begin().await?;
+                // Idempotent insert: at most one succeeded balance row per booking, so a
+                // retry after an in-doubt commit (Stripe dedups the charge on the same
+                // key) can't double the ledger/finances.
                 sqlx::query(
                     "insert into payment (booking_id, type, provider, provider_intent_id, amount_cents, status) \
-                     values ($1, 'balance', $2, $3, $4, 'succeeded')",
+                     select $1, $2, $3, $4, $5, 'succeeded' \
+                     where not exists (select 1 from payment \
+                         where booking_id = $1 and type = 'balance' and status = 'succeeded')",
                 )
                 .bind(d.id)
+                .bind("balance")
                 .bind(payments.name())
                 .bind(&intent_id)
                 .bind(d.balance_cents)
@@ -202,7 +261,7 @@ async fn charge_due_balances(
                 sqlx::query(
                     "update booking set status = 'balance_paid', balance_intent_id = $2, \
                         balance_paid_at = now(), balance_last_error = null, updated_at = now() \
-                     where id = $1",
+                     where id = $1 and balance_paid_at is null",
                 )
                 .bind(d.id)
                 .bind(&intent_id)
@@ -239,6 +298,8 @@ async fn charge_due_balances(
                 }
             }
             Err(e) => {
+                // Release the booking lock before record_failure opens its own tx.
+                let _ = tx.rollback().await;
                 r.balance_failures += 1;
                 let definitive = e.is_definitive();
                 record_failure(pool, d.id, "balance", definitive, &format!("{e:?}")).await?;
@@ -771,6 +832,20 @@ async fn purge_expired_tokens(pool: &PgPool, r: &mut TickReport) -> Result<(), s
         .await?
         .rows_affected() as i64;
     purged += sqlx::query("delete from admin_session where expires_at < now()")
+        .execute(pool)
+        .await?
+        .rows_affected() as i64;
+    // Invite / password-reset tokens: drop them once well past expiry (used or not) —
+    // password_set only cleans them on a successful set, so abandoned invites linger.
+    purged +=
+        sqlx::query("delete from admin_password_token where expires_at < now() - interval '1 day'")
+            .execute(pool)
+            .await?
+            .rows_affected() as i64;
+    // E-mail delivery log holds recipient addresses (PII) + subjects for every send and
+    // is never otherwise pruned (unbounded growth + RGPD data minimisation). Keep 24
+    // months of per-dossier history, then purge — the booking record itself remains.
+    purged += sqlx::query("delete from email_log where created_at < now() - interval '24 months'")
         .execute(pool)
         .await?
         .rows_affected() as i64;

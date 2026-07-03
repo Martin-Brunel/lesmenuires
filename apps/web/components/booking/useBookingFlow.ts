@@ -271,7 +271,7 @@ export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
         setStripeSession({ clientSecret: p.clientSecret, pk: p.publishableKey, reference: ref });
         return;
       }
-      await confirmDeposit(ref);
+      await confirmDeposit(ref, p.clientSecret);
       track("acompte_paye", { mode: "direct" });
       onDone();
     } catch (e) {
@@ -309,7 +309,7 @@ export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
   const finishStripe = async (onDone: () => void): Promise<void> => {
     if (!stripeSession) return;
     try {
-      await confirmDeposit(stripeSession.reference);
+      await confirmDeposit(stripeSession.reference, stripeSession.clientSecret);
       track("acompte_paye", { mode: "stripe" });
       onDone();
     } catch (e) {

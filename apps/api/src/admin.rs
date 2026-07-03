@@ -3422,9 +3422,12 @@ async fn cancel_booking(
     if body.refund_balance_cents > 0 {
         perform_refund(&mut tx, &st, b.id, "balance", body.refund_balance_cents).await?;
     }
+    // Drop the pending balance intent so a late webhook / on-session confirm for a
+    // balance the client was mid-paying can't rematch this booking and resurrect it
+    // (settle_balance also guards on status — belt and braces).
     sqlx::query(
         "update booking set status = 'cancelled', cancelled_at = now(), \
-            cancel_reason = $2, updated_at = now() where id = $1",
+            cancel_reason = $2, balance_intent_id = null, updated_at = now() where id = $1",
     )
     .bind(b.id)
     .bind(&body.reason)
@@ -3602,16 +3605,23 @@ async fn capture_caution(
 
     // Persist the settlement + payment row atomically: after a real card charge,
     // a half-write (booking marked settled but no payment row) would lose the
-    // record of debited money.
+    // record of debited money. The `caution_released_at is null` guard makes it
+    // idempotent under a double-click / concurrent capture: Postgres row-locking
+    // serializes the two UPDATEs, the second sees 0 rows and inserts nothing (the
+    // Stripe key already dedup'd the charge) — no duplicate ledger/finance line.
     let mut tx = st.pool.begin().await?;
-    sqlx::query(
+    let settled = sqlx::query(
         "update booking set caution_captured_cents = $2, caution_released_at = now(), \
-            updated_at = now() where id = $1",
+            updated_at = now() where id = $1 and caution_released_at is null",
     )
     .bind(b.id)
     .bind(body.amount_cents)
     .execute(&mut *tx)
     .await?;
+    if settled.rows_affected() == 0 {
+        let _ = tx.rollback().await;
+        return Err(AppError::BadRequest("Caution déjà traitée.".into()));
+    }
     sqlx::query(
         "insert into payment (booking_id, type, provider, provider_intent_id, amount_cents, status, method) \
          values ($1, 'caution_capture', $2, $3, $4, 'captured', $5)",
@@ -3633,21 +3643,29 @@ async fn release_caution(
     Path(reference): Path<String>,
 ) -> Result<StatusCode, AppError> {
     let b = load_caution(&st, &reference).await?;
-    sqlx::query(
+    // Same idempotency guard as capture: a double-click must not insert two
+    // caution_release rows. Only the first UPDATE (caution_released_at null→now) wins.
+    let mut tx = st.pool.begin().await?;
+    let released = sqlx::query(
         "update booking set caution_captured_cents = 0, caution_released_at = now(), \
-            updated_at = now() where id = $1",
+            updated_at = now() where id = $1 and caution_released_at is null",
     )
     .bind(b.id)
-    .execute(&st.pool)
+    .execute(&mut *tx)
     .await?;
+    if released.rows_affected() == 0 {
+        let _ = tx.rollback().await;
+        return Err(AppError::BadRequest("Caution déjà traitée.".into()));
+    }
     sqlx::query(
         "insert into payment (booking_id, type, provider, provider_intent_id, amount_cents, status) \
          values ($1, 'caution_release', $2, null, 0, 'released')",
     )
     .bind(b.id)
     .bind(st.payments.name())
-    .execute(&st.pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

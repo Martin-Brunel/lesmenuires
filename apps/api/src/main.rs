@@ -760,8 +760,18 @@ async fn create_booking(
 
 async fn get_booking(
     State(st): State<AppState>,
+    headers: HeaderMap,
     Path(reference): Path<String>,
 ) -> Result<Json<BookingDto>, AppError> {
+    // The reference (6 hex) is a public identifier, not a secret, and this endpoint
+    // leaks a booking's existence/status. Throttle per IP so it can't be used as an
+    // unbounded enumeration oracle to find confirmed references to target.
+    st.rate.check(
+        "get_booking",
+        &rate::client_ip(&headers),
+        30,
+        std::time::Duration::from_secs(600),
+    )?;
     Ok(Json(fetch_booking(&st.pool, &reference).await?))
 }
 
@@ -1158,9 +1168,18 @@ fn ical_escape(s: &str) -> String {
 /// as legal evidence, before payment. Only a pending cart can be signed.
 async fn sign_contract(
     State(st): State<AppState>,
+    headers: HeaderMap,
     Path(reference): Path<String>,
     Json(body): Json<ContractInput>,
 ) -> Result<StatusCode, AppError> {
+    // Unauthenticated write on a public cart reference: throttle per IP so it can't be
+    // used to overwrite signatures / spam ~1 MB payloads across guessed references.
+    st.rate.check(
+        "sign_contract",
+        &rate::client_ip(&headers),
+        20,
+        std::time::Duration::from_secs(600),
+    )?;
     if !body.accepted {
         return Err(AppError::BadRequest("Le contrat doit être accepté.".into()));
     }
@@ -1208,8 +1227,17 @@ struct PayDepositResponse {
 
 async fn pay_deposit(
     State(st): State<AppState>,
+    headers: HeaderMap,
     Path(reference): Path<String>,
 ) -> Result<Json<PayDepositResponse>, AppError> {
+    // Unauthenticated: creates a payment intent per call. Throttle per IP so guessed
+    // references can't be used to spin up Stripe intents in bulk.
+    st.rate.check(
+        "pay_deposit",
+        &rate::client_ip(&headers),
+        20,
+        std::time::Duration::from_secs(600),
+    )?;
     let b = sqlx::query_as::<_, PayRow>(
         "select b.id, b.deposit_cents, b.status, aw.status as week_status, \
                 b.contract_accepted_at \
@@ -1317,9 +1345,18 @@ struct OfflineRow {
 /// libère.
 async fn reserve_offline(
     State(st): State<AppState>,
+    headers: HeaderMap,
     Path(reference): Path<String>,
     Json(input): Json<ReserveOfflineInput>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    // Unauthenticated: claims the week and e-mails the real customer. Throttle per IP so
+    // guessed references can't be used to grief availability or spam notifications.
+    st.rate.check(
+        "reserve_offline",
+        &rate::client_ip(&headers),
+        20,
+        std::time::Duration::from_secs(600),
+    )?;
     if !["cheque", "virement"].contains(&input.method.as_str()) {
         return Err(AppError::BadRequest("Moyen de règlement invalide.".into()));
     }
@@ -1486,15 +1523,26 @@ async fn try_claim_week(
     if claimed.rows_affected() > 0 {
         return Ok(true);
     }
-    let taken: Option<i32> = sqlx::query_scalar(
-        "select 1 from booking b2 \
-         where b2.week_id = (select week_id from booking where id = $1) \
-           and b2.id <> $1 and b2.status in ('confirmed', 'balance_paid') limit 1",
+    // The week wasn't 'available'. Confirming is safe ONLY if it's already 'booked' and
+    // no *other* active booking holds it — i.e. an idempotent re-claim by this same
+    // booking (e.g. a concurrent double-tap that just claimed it). A 'blocked' week
+    // (admin or iCal) is NOT bookable: confirming would strand a confirmed booking on a
+    // blocked week and later trip the `booking_one_active_per_week` index (500 + orphan
+    // deposit). Treat any non-'booked' state as taken → caller refunds the deposit.
+    let claimable: Option<i32> = sqlx::query_scalar(
+        "select 1 from availability_week w \
+         where w.id = (select week_id from booking where id = $1) \
+           and w.status = 'booked' \
+           and not exists ( \
+             select 1 from booking b2 \
+             where b2.week_id = w.id and b2.id <> $1 \
+               and b2.status in ('confirmed', 'balance_paid')) \
+         limit 1",
     )
     .bind(booking_id)
     .fetch_optional(&mut **tx)
     .await?;
-    Ok(taken.is_none())
+    Ok(claimable.is_some())
 }
 
 /// Loser of a double-booking race: the buyer's deposit succeeded but the week was
@@ -1552,10 +1600,33 @@ async fn refund_lost_deposit(st: &AppState, booking_id: Uuid, intent_id: &str) {
     }
 }
 
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct ConfirmDepositInput {
+    /// The deposit PaymentIntent client_secret, returned to the buyer's browser by
+    /// `pay-deposit`. Presenting it proves the caller initiated this payment and gates
+    /// issuance of the session cookie: the booking reference alone is public (it appears
+    /// in e-mails, URLs and `get_booking`), so without this a session could be minted for
+    /// anyone's confirmed booking from its reference (account takeover).
+    client_secret: Option<String>,
+}
+
+/// True when `provided` is the client_secret of the deposit intent. Stripe secrets are
+/// `{intent_id}_secret_{random}`, the mock's are `{intent_id}_secret`; both begin with
+/// `{intent_id}_secret`. The intent id is never exposed publicly, so the prefix suffices.
+fn deposit_secret_matches(provided: &Option<String>, intent_id: &Option<String>) -> bool {
+    match (provided, intent_id) {
+        (Some(cs), Some(id)) if !id.is_empty() => cs.starts_with(&format!("{id}_secret")),
+        _ => false,
+    }
+}
+
 async fn confirm_deposit(
     State(st): State<AppState>,
     Path(reference): Path<String>,
+    body: Option<Json<ConfirmDepositInput>>,
 ) -> Result<Response, AppError> {
+    let provided_secret = body.map(|Json(b)| b.client_secret).unwrap_or_default();
     let b = sqlx::query_as::<_, ConfirmRow>(
         "select id, status, deposit_intent_id, customer_id from booking where reference = $1",
     )
@@ -1563,6 +1634,10 @@ async fn confirm_deposit(
     .fetch_optional(&st.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("réservation".into()))?;
+
+    // Only ever set the session cookie for a caller who proves they initiated this
+    // deposit by presenting its client_secret — never on the reference alone.
+    let authed = deposit_secret_matches(&provided_secret, &b.deposit_intent_id);
 
     // Idempotent / terminal states: only a still-pending cart is confirmed here.
     // Re-confirming an already-confirmed booking would resend the welcome e-mail and
@@ -1572,7 +1647,7 @@ async fn confirm_deposit(
         // Idempotent: re-establish the session cookie (so a lost-response retry still
         // logs the buyer in) but don't re-run the claim or re-send the welcome e-mail.
         "confirmed" | "balance_paid" => {
-            return confirmed_session_response(&st, &reference, b.customer_id).await
+            return confirmed_session_response(&st, &reference, b.customer_id, authed).await
         }
         "cancelled" => {
             return Err(AppError::BadRequest(
@@ -1623,7 +1698,7 @@ async fn confirm_deposit(
     tx.commit().await?;
 
     // Fresh confirmation: open the session (cookie) and send the welcome e-mail once.
-    let resp = confirmed_session_response(&st, &reference, b.customer_id).await?;
+    let resp = confirmed_session_response(&st, &reference, b.customer_id, authed).await?;
     if let Some(cid) = b.customer_id {
         send_welcome_email(&st.pool, b.id, cid, &reference).await;
     }
@@ -1636,16 +1711,22 @@ async fn confirmed_session_response(
     st: &AppState,
     reference: &str,
     customer_id: Option<Uuid>,
+    set_session: bool,
 ) -> Result<Response, AppError> {
     let dto = fetch_booking(&st.pool, reference).await?;
     let mut resp = Json(dto).into_response();
-    if let Some(cid) = customer_id {
-        let token = create_customer_session(&st.pool, cid).await?;
-        resp.headers_mut().insert(
-            header::SET_COOKIE,
-            HeaderValue::from_str(&session_cookie(&token))
-                .map_err(|_| AppError::Internal("cookie".into()))?,
-        );
+    // Only mint the session cookie when the caller proved ownership of the deposit
+    // (see `confirm_deposit`). Otherwise return the booking JSON alone — the buyer can
+    // still reach /espace via the magic link in the welcome e-mail.
+    if set_session {
+        if let Some(cid) = customer_id {
+            let token = create_customer_session(&st.pool, cid).await?;
+            resp.headers_mut().insert(
+                header::SET_COOKIE,
+                HeaderValue::from_str(&session_cookie(&token))
+                    .map_err(|_| AppError::Internal("cookie".into()))?,
+            );
+        }
     }
     Ok(resp)
 }
@@ -2144,17 +2225,25 @@ async fn pay_balance(
         ));
     }
 
-    let intent = st
-        .payments
-        .create_balance_intent(
-            &reference,
-            b.balance_cents,
-            b.provider_customer_id.as_deref(),
-        )
-        .await?;
     let provider = st.payments.name().to_string();
 
+    // Lock the booking row and re-check the balance isn't already settled *inside* the
+    // lock before creating an intent: the off-session scheduler charge takes the same
+    // FOR UPDATE lock and re-checks too, so an on-session and an off-session charge can
+    // never both fire (two distinct intents → two real debits). Whoever commits first wins.
     let mut tx = st.pool.begin().await?;
+    let already_paid: Option<DateTime<Utc>> =
+        sqlx::query_scalar("select balance_paid_at from booking where id = $1 for update")
+            .bind(b.id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if already_paid.is_some() {
+        return Err(AppError::BadRequest("Le solde est déjà réglé.".into()));
+    }
+    let intent = st
+        .payments
+        .create_balance_intent(&reference, b.balance_cents, b.provider_customer_id.as_deref())
+        .await?;
     sqlx::query(
         "insert into payment (booking_id, type, provider, provider_intent_id, amount_cents, status) \
          values ($1, 'balance', $2, $3, $4, 'pending')",
@@ -2214,10 +2303,15 @@ async fn settle_balance(pool: &PgPool, booking_id: Uuid, intent_id: &str) -> Res
     .bind(intent_id)
     .execute(&mut *tx)
     .await?;
+    // Never resurrect a cancelled/expired booking: a balance payment that lands after
+    // the admin cancelled (client finished 3DS post-cancel, or a replayed webhook) must
+    // not flip it back to 'balance_paid' — that would strand a zombie booking and can
+    // violate `booking_one_active_per_week` if the week was re-let (→ 500 + webhook
+    // retry loop). The payment row above still records the real charge for admin refund.
     sqlx::query(
         "update booking set status = 'balance_paid', balance_paid_at = coalesce(balance_paid_at, now()), \
             balance_last_error = null, updated_at = now() \
-         where id = $1 and balance_paid_at is null",
+         where id = $1 and balance_paid_at is null and status not in ('cancelled', 'expired')",
     )
     .bind(booking_id)
     .execute(&mut *tx)
@@ -2246,6 +2340,13 @@ fn verify_stripe_signature(payload: &[u8], sig_header: &str, secret: &str) -> bo
         }
     }
     let Some(t) = timestamp else { return false };
+    // Anti-replay: reject events whose signed timestamp is outside Stripe's recommended
+    // 5-minute tolerance, so a captured signed payload can't be replayed later (e.g. to
+    // re-clear a `disputed` flag via a stale `charge.dispute.closed`).
+    let Ok(ts) = t.parse::<i64>() else { return false };
+    if (chrono::Utc::now().timestamp() - ts).abs() > 300 {
+        return false;
+    }
     let Ok(payload_str) = std::str::from_utf8(payload) else {
         return false;
     };
@@ -2607,20 +2708,27 @@ mod tests {
         hex::encode(mac.finalize().into_bytes())
     }
 
+    /// A current unix timestamp string (inside the anti-replay tolerance window).
+    fn now_ts() -> String {
+        chrono::Utc::now().timestamp().to_string()
+    }
+
     #[test]
     fn accepts_a_valid_signature() {
         let payload = br#"{"type":"payment_intent.succeeded"}"#;
         let secret = "whsec_test";
-        let v1 = sign(payload, "1700000000", secret);
-        let header = format!("t=1700000000,v1={v1}");
+        let t = now_ts();
+        let v1 = sign(payload, &t, secret);
+        let header = format!("t={t},v1={v1}");
         assert!(verify_stripe_signature(payload, &header, secret));
     }
 
     #[test]
     fn rejects_wrong_secret_or_tampered_payload() {
         let payload = br#"{"amount":100}"#;
-        let v1 = sign(payload, "1700000000", "whsec_test");
-        let header = format!("t=1700000000,v1={v1}");
+        let t = now_ts();
+        let v1 = sign(payload, &t, "whsec_test");
+        let header = format!("t={t},v1={v1}");
         // Wrong secret.
         assert!(!verify_stripe_signature(payload, &header, "whsec_other"));
         // Tampered payload, signature unchanged.
@@ -2629,6 +2737,16 @@ mod tests {
             &header,
             "whsec_test"
         ));
+    }
+
+    #[test]
+    fn rejects_stale_timestamp_replay() {
+        // A correctly-signed but old event must be rejected (replay protection).
+        let payload = br#"{"type":"charge.dispute.closed"}"#;
+        let secret = "whsec_test";
+        let v1 = sign(payload, "1700000000", secret);
+        let header = format!("t=1700000000,v1={v1}");
+        assert!(!verify_stripe_signature(payload, &header, secret));
     }
 
     #[test]
@@ -2651,8 +2769,9 @@ mod tests {
     fn accepts_when_any_v1_matches() {
         // Stripe may send multiple v1 signatures during secret rotation.
         let payload = b"body";
-        let good = sign(payload, "1700000000", "whsec_test");
-        let header = format!("t=1700000000,v1=deadbeef,v1={good}");
+        let t = now_ts();
+        let good = sign(payload, &t, "whsec_test");
+        let header = format!("t={t},v1=deadbeef,v1={good}");
         assert!(verify_stripe_signature(payload, &header, "whsec_test"));
     }
 }

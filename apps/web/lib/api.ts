@@ -258,11 +258,18 @@ export async function reserveOffline(
   return res.json();
 }
 
-/** Confirm the deposit (also opens the customer session cookie). */
-export async function confirmDeposit(reference: string): Promise<BookingResult> {
+/** Confirm the deposit (also opens the customer session cookie). The deposit
+ *  client_secret is sent as proof of ownership: the server only mints the session
+ *  cookie for a caller that presents it (the booking reference alone is public). */
+export async function confirmDeposit(
+  reference: string,
+  clientSecret?: string,
+): Promise<BookingResult> {
   const res = await fetch(`${API_URL}/api/bookings/${reference}/confirm-deposit`, {
     method: "POST",
     credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clientSecret: clientSecret ?? null }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
