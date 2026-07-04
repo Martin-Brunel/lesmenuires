@@ -2749,21 +2749,58 @@ async fn resend_webhook(
     if email_id.is_empty() {
         return Ok(StatusCode::OK);
     }
-    // Map the event to a status; opened is terminal-best (don't downgrade to delivered).
-    let sql = match kind {
-        "email.delivered" => {
-            "update email_log set status = 'delivered', delivered_at = coalesce(delivered_at, now()) \
-             where provider_id = $1 and status not in ('opened')"
-        }
-        "email.opened" => {
-            "update email_log set status = 'opened', opened_at = coalesce(opened_at, now()), \
-             delivered_at = coalesce(delivered_at, now()) where provider_id = $1"
-        }
-        "email.bounced" => "update email_log set status = 'bounced' where provider_id = $1",
-        "email.complained" => "update email_log set status = 'complained' where provider_id = $1",
+    let (event_kind, title, status) = match kind {
+        "email.delivered" => ("email.delivered", "E-mail délivré", "delivered"),
+        "email.opened" => ("email.opened", "E-mail ouvert", "opened"),
+        "email.bounced" => ("email.bounced", "E-mail en échec", "bounced"),
+        "email.complained" => ("email.complained", "Plainte e-mail", "complained"),
         _ => return Ok(StatusCode::OK),
     };
-    sqlx::query(sql).bind(email_id).execute(&st.pool).await?;
+
+    // Map the event to a status; opened is terminal-best (don't downgrade to delivered).
+    let row: Option<(Uuid, Option<Uuid>, String, String)> = match kind {
+        "email.delivered" => sqlx::query_as(
+            "update email_log set status = 'delivered', delivered_at = coalesce(delivered_at, now()) \
+             where provider_id = $1 and status not in ('opened') \
+             returning id, booking_id, subject, recipient",
+        )
+        .bind(email_id)
+        .fetch_optional(&st.pool)
+        .await?,
+        "email.opened" => sqlx::query_as(
+            "update email_log set status = 'opened', opened_at = coalesce(opened_at, now()), \
+                    delivered_at = coalesce(delivered_at, now()) \
+             where provider_id = $1 \
+             returning id, booking_id, subject, recipient",
+        )
+        .bind(email_id)
+        .fetch_optional(&st.pool)
+        .await?,
+        "email.bounced" | "email.complained" => sqlx::query_as(
+            "update email_log set status = $2 where provider_id = $1 \
+             returning id, booking_id, subject, recipient",
+        )
+        .bind(email_id)
+        .bind(status)
+        .fetch_optional(&st.pool)
+        .await?,
+        _ => None,
+    };
+
+    if let Some((email_log_id, Some(booking_id), subject, recipient)) = row {
+        sqlx::query(
+            "insert into booking_event (booking_id, kind, title, detail, email_log_id) \
+             values ($1, $2, $3, $4, $5) \
+             on conflict (email_log_id, kind) where email_log_id is not null do nothing",
+        )
+        .bind(booking_id)
+        .bind(event_kind)
+        .bind(title)
+        .bind(format!("{subject} · {recipient}"))
+        .bind(email_log_id)
+        .execute(&st.pool)
+        .await?;
+    }
     Ok(StatusCode::OK)
 }
 

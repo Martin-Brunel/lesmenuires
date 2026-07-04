@@ -71,10 +71,10 @@ export default function EquipePage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Équipe</h1>
         <p className="text-sm text-muted-foreground">
-          Comptes du back-office.
+          Comptes du back-office. Chaque membre peut inviter un nouveau compte.
           {me.isSuper
-            ? " Vous êtes le compte principal : vous seul pouvez inviter ou supprimer des comptes."
-            : " Seul le compte principal peut inviter ou supprimer des comptes."}{" "}
+            ? " Le compte principal peut aussi supprimer les comptes secondaires."
+            : " Seul le compte principal peut supprimer des comptes."}{" "}
           Vos informations personnelles se gèrent dans « Mon compte ».
         </p>
       </div>
@@ -100,7 +100,7 @@ export default function EquipePage() {
                       {a.email} · créé le {dt(a.createdAt)}
                     </div>
                   </div>
-                  {me.isSuper && a.pending && (
+                  {a.pending && (
                     <Button size="sm" variant="secondary" onClick={() => reinvite(a)}>
                       Renvoyer l&apos;invitation
                     </Button>
@@ -118,7 +118,7 @@ export default function EquipePage() {
                 </li>
               ))}
             </ul>
-            {me.isSuper && <CreateAccountForm onCreated={reload} />}
+            <CreateAccountForm onCreated={reload} />
           </CardContent>
         </Card>
       </div>

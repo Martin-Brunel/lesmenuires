@@ -174,6 +174,59 @@ fn audit(pool: sqlx::PgPool, admin_id: Uuid, admin_name: String, method: String,
     });
 }
 
+fn booking_action_from_path(path: &str) -> Option<(String, String, String)> {
+    let prefix = "/api/admin/bookings/";
+    let rest = path.strip_prefix(prefix)?;
+    let mut parts = rest.split('/');
+    let reference = parts.next()?.trim();
+    if reference.is_empty() || reference == "manual" {
+        return None;
+    }
+    let action = parts.collect::<Vec<_>>().join("/");
+    let (kind, title) = match action.as_str() {
+        "clear-flag" => ("admin.clear_flag", "Blocage levé"),
+        "note" => ("admin.note", "Note interne ajoutée"),
+        "emails-muted" => ("admin.emails_muted", "Réglage e-mails modifié"),
+        "send-contract" => ("admin.send_contract", "Contrat envoyé"),
+        "email" => ("admin.email", "E-mail manuel envoyé"),
+        "mark-paid" => ("admin.mark_paid", "Règlement pointé"),
+        "cancel" => ("admin.cancel", "Réservation annulée"),
+        "caution/capture" => ("admin.caution_capture", "Caution débitée"),
+        "caution/release" => ("admin.caution_release", "Caution clôturée"),
+        "refund" => ("admin.refund", "Remboursement enregistré"),
+        "request-review" => ("admin.request_review", "Demande d'avis envoyée"),
+        _ => return None,
+    };
+    Some((reference.to_string(), kind.to_string(), title.to_string()))
+}
+
+async fn booking_event_for_admin_action(
+    pool: sqlx::PgPool,
+    admin_id: Uuid,
+    admin_name: String,
+    path: String,
+) {
+    let Some((reference, kind, title)) = booking_action_from_path(&path) else {
+        return;
+    };
+    if let Err(e) = sqlx::query(
+        "insert into booking_event \
+            (booking_id, kind, title, detail, actor_admin_id, actor_name) \
+         select id, $2, $3, $4, $5, $6 from booking where reference = $1",
+    )
+    .bind(&reference)
+    .bind(&kind)
+    .bind(&title)
+    .bind(Option::<String>::None)
+    .bind(admin_id)
+    .bind(&admin_name)
+    .execute(&pool)
+    .await
+    {
+        tracing::warn!("historique dossier: {e:?}");
+    }
+}
+
 async fn require_admin(
     State(st): State<AppState>,
     mut req: Request,
@@ -217,7 +270,14 @@ async fn require_admin(
             let pool = st.pool.clone();
             let res = next.run(req).await;
             if mutating && res.status().is_success() {
-                audit(pool, admin_id, name, method, path);
+                audit(
+                    pool.clone(),
+                    admin_id,
+                    name.clone(),
+                    method.clone(),
+                    path.clone(),
+                );
+                booking_event_for_admin_action(pool, admin_id, name, path).await;
             }
             Ok(res)
         }
@@ -1198,6 +1258,16 @@ struct NoteDto {
 
 #[derive(Serialize, FromRow)]
 #[serde(rename_all = "camelCase")]
+struct BookingEventDto {
+    kind: String,
+    title: String,
+    detail: Option<String>,
+    actor_name: Option<String>,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
 struct LineDto {
     kind: String,
     label: String,
@@ -1214,6 +1284,7 @@ struct BookingDetail {
     payments: Vec<PaymentDto>,
     emails: Vec<EmailDto>,
     notes: Vec<NoteDto>,
+    events: Vec<BookingEventDto>,
 }
 
 async fn booking_detail(
@@ -1289,12 +1360,22 @@ async fn booking_detail(
     .fetch_all(&st.pool)
     .await?;
 
+    let events = sqlx::query_as::<_, BookingEventDto>(
+        "select ev.kind, ev.title, ev.detail, ev.actor_name, ev.created_at \
+         from booking_event ev join booking b on b.id = ev.booking_id \
+         where b.reference = $1 order by ev.created_at desc",
+    )
+    .bind(&reference)
+    .fetch_all(&st.pool)
+    .await?;
+
     Ok(Json(BookingDetail {
         booking,
         lines,
         payments,
         emails,
         notes,
+        events,
     }))
 }
 
@@ -1841,10 +1922,8 @@ struct CreateAdminInput {
 /// définit elle-même son mot de passe via le lien reçu.
 async fn create_admin_user(
     State(st): State<AppState>,
-    Extension(AdminId(admin_id)): Extension<AdminId>,
     Json(p): Json<CreateAdminInput>,
 ) -> Result<Json<AdminUserDto>, AppError> {
-    require_super(&st.pool, admin_id).await?;
     let email = p.email.trim().to_lowercase();
     if !(email.contains('@') && email.rsplit('@').next().unwrap_or("").contains('.')) {
         return Err(AppError::BadRequest("E-mail invalide.".into()));
@@ -1869,10 +1948,8 @@ async fn create_admin_user(
 /// Renvoie l'invitation d'un compte encore en attente (lien perdu/expiré).
 async fn reinvite_admin_user(
     State(st): State<AppState>,
-    Extension(AdminId(admin_id)): Extension<AdminId>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    require_super(&st.pool, admin_id).await?;
     let row: Option<(String, String, bool)> = sqlx::query_as(
         "select email, display_name, (password_hash is null) from admin_user where id = $1",
     )

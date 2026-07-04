@@ -282,6 +282,14 @@ export type NoteEntry = {
   createdAt: string;
 };
 
+export type BookingEventEntry = {
+  kind: string;
+  title: string;
+  detail: string | null;
+  actorName: string | null;
+  createdAt: string;
+};
+
 export type BookingLine = {
   kind: string;
   label: string;
@@ -296,6 +304,7 @@ export type BookingDetail = {
   payments: PaymentEntry[];
   emails: EmailEntry[];
   notes: NoteEntry[];
+  events: BookingEventEntry[];
 };
 
 export type ContactInfo = {

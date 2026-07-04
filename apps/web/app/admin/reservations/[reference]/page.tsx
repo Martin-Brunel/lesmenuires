@@ -57,6 +57,15 @@ const PAYMENT_KIND: Record<string, string> = {
   caution_release: "Clôture caution",
   refund: "Remboursement",
 };
+const EMAIL_STATUS: Record<string, { label: string; variant: "success" | "warning" | "muted" | "destructive" }> = {
+  sent: { label: "Envoyé", variant: "muted" },
+  delivered: { label: "Délivré", variant: "success" },
+  opened: { label: "Ouvert", variant: "success" },
+  bounced: { label: "Rebond", variant: "destructive" },
+  complained: { label: "Plainte", variant: "destructive" },
+  failed: { label: "Échec", variant: "destructive" },
+  queued: { label: "En attente", variant: "warning" },
+};
 
 const dt = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" }) : "—";
@@ -292,12 +301,29 @@ export default function ReservationDetailPage() {
   );
   data.emails.forEach((e) => {
     const name = EMAIL_KIND[e.kind] ?? e.kind;
-    events.push({ at: e.createdAt, title: `E-mail envoyé : ${name}`, detail: e.status === "failed" ? "échec" : e.recipient, tone: e.status === "failed" ? "danger" : "muted" });
-    if (e.deliveredAt) events.push({ at: e.deliveredAt, title: `E-mail délivré : ${name}`, tone: "muted" });
-    if (e.openedAt) events.push({ at: e.openedAt, title: `E-mail ouvert : ${name}`, tone: "success" });
+    const status = EMAIL_STATUS[e.status] ?? { label: e.status, variant: "muted" as const };
+    events.push({
+      at: e.createdAt,
+      title: `E-mail envoyé : ${name}`,
+      detail: `${e.recipient} · ${status.label}`,
+      tone: e.status === "failed" || e.status === "bounced" || e.status === "complained" ? "danger" : "muted",
+    });
   });
   data.notes.forEach((n) =>
     events.push({ at: n.createdAt, title: "Note interne", detail: n.body + (n.author ? ` — ${n.author}` : ""), tone: "default" }),
+  );
+  data.events.forEach((ev) =>
+    events.push({
+      at: ev.createdAt,
+      title: ev.title,
+      detail: [ev.detail, ev.actorName ? `par ${ev.actorName}` : null].filter(Boolean).join(" · ") || undefined,
+      tone:
+        ev.kind === "email.opened" || ev.kind.endsWith("mark_paid")
+          ? "success"
+          : ev.kind === "email.bounced" || ev.kind === "email.complained" || ev.kind.endsWith("cancel")
+            ? "danger"
+            : "default",
+    }),
   );
   if (b.cancelledAt) events.push({ at: b.cancelledAt, title: "Réservation annulée", tone: "danger" });
   events.sort((x, y) => y.at.localeCompare(x.at));
@@ -575,6 +601,18 @@ export default function ReservationDetailPage() {
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-base">Historique du dossier</CardTitle></CardHeader>
         <CardContent>
+          {data.emails.length > 0 && (
+            <div className="mb-4 flex flex-wrap gap-2">
+              {data.emails.map((e, i) => {
+                const status = EMAIL_STATUS[e.status] ?? { label: e.status, variant: "muted" as const };
+                return (
+                  <Badge key={`${e.createdAt}-${i}`} variant={status.variant}>
+                    {(EMAIL_KIND[e.kind] ?? e.kind)} · {status.label}
+                  </Badge>
+                );
+              })}
+            </div>
+          )}
           <ol className="relative space-y-4 border-l pl-5">
             {events.map((e, i) => (
               <li key={i} className="relative">

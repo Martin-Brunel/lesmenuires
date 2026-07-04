@@ -30,16 +30,19 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY --from=builder /usr/local/bin/api /usr/local/bin/api
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 # Les migrations sont embarquées dans le binaire (sqlx::migrate!), mais on les
 # copie aussi pour référence/débogage.
 COPY --from=builder /app/migrations /app/migrations
 
 # Dossier média (monté en volume en prod).
-RUN mkdir -p /app/media && chown -R appuser:appuser /app
-USER appuser
+RUN mkdir -p /app/media \
+    && chown -R appuser:appuser /app \
+    && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENV BIND_ADDR=0.0.0.0:8080
 ENV MEDIA_DIR=/app/media
 EXPOSE 8080
 
-CMD ["api"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["/usr/local/bin/api"]
