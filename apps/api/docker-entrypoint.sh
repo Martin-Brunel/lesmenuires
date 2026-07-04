@@ -4,4 +4,4 @@ set -eu
 mkdir -p /app/media
 chown -R appuser:appuser /app/media
 
-exec runuser -u appuser -- "$@"
+exec setpriv --reuid=10001 --regid=999 --clear-groups "$@"
