@@ -205,6 +205,7 @@ export function MobileFunnel({
               <ReadMore
                 content={property.description}
                 lines={5}
+                amenities={property.amenities ?? []}
                 textStyle={css("margin:0;font:400 14.5px/1.65 'Hanken Grotesk';color:#5A5C58")}
               />
               <div style={css("margin-top:20px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-top:1px solid rgba(0,0,0,.09)")}>

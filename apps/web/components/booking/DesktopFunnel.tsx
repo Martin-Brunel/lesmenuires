@@ -212,6 +212,7 @@ export function DesktopFunnel({
               <ReadMore
                 content={property.description}
                 lines={5}
+                amenities={property.amenities ?? []}
                 textStyle={css("margin:0;font:400 16px/1.7 'Hanken Grotesk';color:#5A5C58;max-width:60ch")}
               />
 
