@@ -1,6 +1,8 @@
 // Client for the back-office API (/api/admin). Sends the HttpOnly session cookie
 // cross-origin via credentials:"include"; on 401 it bounces to the login page.
 
+import type { Amenity } from "@/lib/amenities";
+
 export type Me = { id: string; email: string; displayName: string; isSuper: boolean };
 
 export type AdminAccount = {
@@ -44,6 +46,7 @@ export type AdminProperty = {
   ownerPhone: string;
   ownerEmail: string;
   ownerSiret: string;
+  amenities: Amenity[];
 };
 
 export type AdminWeek = {

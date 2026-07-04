@@ -239,6 +239,16 @@ struct PropertyDto {
     instructions_cheque: String,
     instructions_virement: String,
     contract_template: String,
+    amenities: sqlx::types::Json<Vec<AmenityDto>>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AmenityDto {
+    icon: String,
+    label: String,
+    #[serde(default)]
+    label_en: String,
 }
 
 #[derive(FromRow, Serialize)]
@@ -338,7 +348,7 @@ async fn booking_context(
                 tourist_tax_cents, tourist_tax_included, owner_name, owner_address, \
                 online_booking_enabled, pay_card_enabled, pay_cheque_enabled, \
                 pay_virement_enabled, instructions_cheque, instructions_virement, \
-                contract_template \
+                contract_template, amenities \
          from property where slug = $1",
     )
     .bind(&slug)

@@ -17,6 +17,7 @@ import { ReadMore } from "./ReadMore";
 import { RatingBadge, ReviewsSection } from "./Reviews";
 import { StripeCheckout } from "./StripeCheckout";
 import { SignaturePad } from "./SignaturePad";
+import { AmenitiesSection } from "./Amenities";
 
 type Screen = "booking" | "checkout" | "done";
 
@@ -213,6 +214,8 @@ export function DesktopFunnel({
                 lines={5}
                 textStyle={css("margin:0;font:400 16px/1.7 'Hanken Grotesk';color:#5A5C58;max-width:60ch")}
               />
+
+              <AmenitiesSection amenities={property.amenities ?? []} locale={locale} />
 
               <div style={css("height:1px;background:rgba(0,0,0,.09);margin:30px 0")} />
 

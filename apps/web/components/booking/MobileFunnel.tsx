@@ -17,6 +17,7 @@ import { RatingBadge, ReviewsSection } from "./Reviews";
 import { SignaturePad } from "./SignaturePad";
 import { StripeCheckout } from "./StripeCheckout";
 import { GuestPicker } from "./GuestPicker";
+import { AmenitiesSection } from "./Amenities";
 
 type Screen = "home" | "week" | "extras" | "infos" | "contract" | "payment" | "done";
 
@@ -224,6 +225,7 @@ export function MobileFunnel({
                   <div style={css("margin-top:2px;font:500 11px 'Hanken Grotesk';letter-spacing:.04em;color:#9A9C97")}>&nbsp;</div>
                 </div>
               </div>
+              <AmenitiesSection amenities={property.amenities ?? []} locale={locale} compact />
               <div style={css("margin-top:20px;display:flex;align-items:baseline;gap:8px")}>
                 <span style={css("font:400 26px 'Marcellus'")}>{t.booking.from} {eur(fromPrice)}</span>
                 <span style={css("font:400 13px 'Hanken Grotesk';color:#9A9C97")}>{t.booking.perWeek}</span>

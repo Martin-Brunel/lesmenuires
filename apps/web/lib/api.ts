@@ -1,3 +1,5 @@
+import type { Amenity } from "@/lib/amenities";
+
 // Typed client for the Rust API (apps/api). Mirrors its JSON DTOs.
 
 /** Error carrying the HTTP status, so callers can tell a definitive rejection
@@ -36,6 +38,7 @@ export type ApiProperty = {
   instructionsCheque: string;
   instructionsVirement: string;
   contractTemplate: string;
+  amenities: Amenity[];
 };
 
 export type ApiWeek = {

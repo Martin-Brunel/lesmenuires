@@ -2,6 +2,22 @@
 
 import { useEffect, useState } from "react";
 import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  verticalListSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { GripVertical, Trash2 } from "lucide-react";
+import {
   adminApi,
   type AdminProperty,
   type PropertyTranslations,
@@ -14,12 +30,15 @@ import { PhotosManager } from "@/components/admin/PhotosManager";
 import { RichTextEditor } from "@/components/admin/RichTextEditor";
 import { contractText } from "@/lib/contract";
 import { cn } from "@/lib/utils";
+import { AmenityIconGlyph } from "@/components/AmenityIconGlyph";
+import { AMENITY_ICON_OPTIONS, type Amenity } from "@/lib/amenities";
 
 const SLUG = "ladret";
 
 type Tab =
   | "presentation"
   | "sejour"
+  | "equipements"
   | "paiement"
   | "proprietaire"
   | "contrat"
@@ -28,6 +47,7 @@ type Tab =
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "presentation", label: "Présentation" },
+  { key: "equipements", label: "Équipements" },
   { key: "sejour", label: "Séjour & accès" },
   { key: "paiement", label: "Paiement & taxe" },
   { key: "proprietaire", label: "Propriétaire" },
@@ -213,6 +233,13 @@ export default function EditorialPage() {
                     />
                   </Field>
                 </>
+              )}
+
+              {tab === "equipements" && (
+                <AmenitiesEditor
+                  value={p.amenities ?? []}
+                  onChange={(amenities) => set("amenities", amenities)}
+                />
               )}
 
               {tab === "paiement" && (
@@ -516,6 +543,153 @@ function Field({
       <Label>{label}</Label>
       {children}
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+    </div>
+  );
+}
+
+function AmenitiesEditor({
+  value,
+  onChange,
+}: {
+  value: Amenity[];
+  onChange: (amenities: Amenity[]) => void;
+}) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
+  const itemIds = value.map((_, idx) => `amenity-${idx}`);
+  const update = (idx: number, patch: Partial<Amenity>) =>
+    onChange(value.map((a, i) => (i === idx ? { ...a, ...patch } : a)));
+  const remove = (idx: number) => onChange(value.filter((_, i) => i !== idx));
+  const onDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const from = itemIds.indexOf(String(active.id));
+    const to = itemIds.indexOf(String(over.id));
+    if (from === -1 || to === -1) return;
+    onChange(arrayMove(value, from, to));
+  };
+  const add = () =>
+    onChange([
+      ...value,
+      { icon: "home", label: "Nouvel équipement", labelEn: "" },
+    ]);
+
+  return (
+    <>
+      <p className="text-sm text-muted-foreground">
+        Liste affichée sur la page publique avec pictogrammes. L&apos;ordre ici est
+        l&apos;ordre d&apos;affichage sur le site. Glissez une ligne pour la réordonner.
+      </p>
+      {value.length === 0 ? (
+        <p className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">
+          Aucun équipement configuré.
+        </p>
+      ) : (
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+          <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
+            <div className="space-y-3">
+              {value.map((a, idx) => (
+                <SortableAmenityRow
+                  key={itemIds[idx]}
+                  id={itemIds[idx]}
+                  amenity={a}
+                  onUpdate={(patch) => update(idx, patch)}
+                  onRemove={() => remove(idx)}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
+      )}
+      <Button type="button" variant="secondary" size="sm" onClick={add}>
+        Ajouter un équipement
+      </Button>
+    </>
+  );
+}
+
+function SortableAmenityRow({
+  id,
+  amenity,
+  onUpdate,
+  onRemove,
+}: {
+  id: string;
+  amenity: Amenity;
+  onUpdate: (patch: Partial<Amenity>) => void;
+  onRemove: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        "grid grid-cols-[auto_minmax(240px,1.05fr)_1fr_1fr_auto] items-start gap-3 rounded-md border bg-background p-3",
+        isDragging && "z-10 opacity-70 shadow-lg",
+      )}
+    >
+      <div className="pt-[25px]">
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          aria-label="Déplacer l'équipement"
+          className="inline-flex h-9 w-8 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground cursor-grab active:cursor-grabbing touch-none"
+        >
+          <GripVertical className="size-4" />
+        </button>
+      </div>
+      <Field label="Pictogramme">
+        <div className="flex items-center gap-2">
+          <div className="flex h-9 w-10 shrink-0 items-center justify-center rounded-md border bg-muted/30 text-foreground">
+            <AmenityIconGlyph icon={amenity.icon} size={21} />
+          </div>
+          <select
+            className="flex h-9 min-w-0 flex-1 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            value={amenity.icon}
+            onChange={(e) => onUpdate({ icon: e.target.value as Amenity["icon"] })}
+          >
+            {AMENITY_ICON_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </Field>
+      <Field label="Libellé FR">
+        <Input
+          value={amenity.label}
+          maxLength={80}
+          onChange={(e) => onUpdate({ label: e.target.value })}
+        />
+      </Field>
+      <Field label="Libellé EN">
+        <Input
+          value={amenity.labelEn ?? ""}
+          maxLength={80}
+          placeholder={amenity.label}
+          onChange={(e) => onUpdate({ labelEn: e.target.value })}
+        />
+      </Field>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="mt-[25px] h-9 w-9 text-destructive hover:text-destructive"
+        onClick={onRemove}
+        title="Supprimer"
+      >
+        <Trash2 className="size-4" />
+      </Button>
     </div>
   );
 }

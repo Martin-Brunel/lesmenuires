@@ -1,0 +1,106 @@
+import {
+  Accessibility,
+  AirVent,
+  AlarmSmoke,
+  Armchair,
+  Baby,
+  Badge,
+  Bath,
+  BedDouble,
+  BriefcaseBusiness,
+  Car,
+  CircleParking,
+  Coffee,
+  CookingPot,
+  Dog,
+  DoorOpen,
+  Fence,
+  FireExtinguisher,
+  Flame,
+  Flower2,
+  Footprints,
+  Heater,
+  Home,
+  KeyRound,
+  Microwave,
+  Mountain,
+  PlugZap,
+  Plus,
+  Refrigerator,
+  ShowerHead,
+  ShipWheel,
+  Snowflake,
+  Trees,
+  Tv,
+  Utensils,
+  Waves,
+  Warehouse,
+  WashingMachine,
+  Wifi,
+  type LucideIcon,
+} from "lucide-react";
+import type { CSSProperties } from "react";
+import type { AmenityIcon } from "@/lib/amenities";
+
+const ICONS: Record<AmenityIcon, LucideIcon> = {
+  wifi: Wifi,
+  car: Car,
+  garage: Warehouse,
+  evCharger: PlugZap,
+  kitchen: Utensils,
+  dishwasher: CookingPot,
+  oven: CookingPot,
+  microwave: Microwave,
+  fridge: Refrigerator,
+  washer: WashingMachine,
+  dryer: AirVent,
+  iron: Badge,
+  tv: Tv,
+  snowflake: Snowflake,
+  heating: Heater,
+  fireplace: Flame,
+  bath: Bath,
+  shower: ShowerHead,
+  bed: BedDouble,
+  mountain: Mountain,
+  balcony: Fence,
+  terrace: Trees,
+  garden: Flower2,
+  pool: Waves,
+  hotTub: Bath,
+  sauna: Heater,
+  baby: Baby,
+  chair: Armchair,
+  pet: Dog,
+  coffee: Coffee,
+  workspace: BriefcaseBusiness,
+  key: KeyRound,
+  ski: ShipWheel,
+  boot: Footprints,
+  locker: DoorOpen,
+  elevator: CircleParking,
+  accessible: Accessibility,
+  smokeAlarm: AlarmSmoke,
+  firstAid: Plus,
+  extinguisher: FireExtinguisher,
+  home: Home,
+};
+
+export function AmenityIconGlyph({
+  icon,
+  size = 22,
+  color = "currentColor",
+  strokeWidth = 1.8,
+  className,
+  style,
+}: {
+  icon: AmenityIcon;
+  size?: number;
+  color?: string;
+  strokeWidth?: number;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  const Icon = ICONS[icon] ?? Home;
+  return <Icon size={size} color={color} strokeWidth={strokeWidth} className={className} style={style} />;
+}

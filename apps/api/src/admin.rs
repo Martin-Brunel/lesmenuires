@@ -539,6 +539,16 @@ struct AdminPropertyDto {
     owner_phone: String,
     owner_email: String,
     owner_siret: String,
+    amenities: sqlx::types::Json<Vec<AmenityDto>>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AmenityDto {
+    icon: String,
+    label: String,
+    #[serde(default)]
+    label_en: String,
 }
 
 async fn get_property(
@@ -549,7 +559,8 @@ async fn get_property(
         "select slug, name, location_label, description, surface_label, capacity, bedrooms, \
                 specs_label, highlight_label, hero_seed, deposit_pct, caution_cents, \
                 tourist_tax_cents, tourist_tax_included, arrival_instructions, house_rules, \
-                contract_template, owner_name, owner_address, owner_phone, owner_email, owner_siret \
+                contract_template, owner_name, owner_address, owner_phone, owner_email, owner_siret, \
+                amenities \
          from property where slug = $1",
     )
     .bind(&slug)
@@ -593,6 +604,75 @@ struct UpdateProperty {
     owner_email: String,
     #[serde(default)]
     owner_siret: String,
+    #[serde(default)]
+    amenities: Vec<AmenityDto>,
+}
+
+const AMENITY_ICONS: &[&str] = &[
+    "wifi",
+    "car",
+    "garage",
+    "evCharger",
+    "kitchen",
+    "dishwasher",
+    "oven",
+    "microwave",
+    "fridge",
+    "washer",
+    "dryer",
+    "iron",
+    "tv",
+    "snowflake",
+    "heating",
+    "fireplace",
+    "bath",
+    "shower",
+    "bed",
+    "mountain",
+    "balcony",
+    "terrace",
+    "garden",
+    "pool",
+    "hotTub",
+    "sauna",
+    "baby",
+    "chair",
+    "pet",
+    "coffee",
+    "workspace",
+    "key",
+    "ski",
+    "boot",
+    "locker",
+    "elevator",
+    "accessible",
+    "smokeAlarm",
+    "firstAid",
+    "extinguisher",
+    "home",
+];
+
+fn clean_amenities(input: &[AmenityDto]) -> Vec<AmenityDto> {
+    input
+        .iter()
+        .filter_map(|a| {
+            let label = a.label.trim();
+            if label.is_empty() {
+                return None;
+            }
+            let icon = if AMENITY_ICONS.contains(&a.icon.as_str()) {
+                a.icon.as_str()
+            } else {
+                "home"
+            };
+            Some(AmenityDto {
+                icon: icon.to_string(),
+                label: label.chars().take(80).collect(),
+                label_en: a.label_en.trim().chars().take(80).collect(),
+            })
+        })
+        .take(24)
+        .collect()
 }
 
 async fn update_property(
@@ -614,18 +694,21 @@ async fn update_property(
     let clean_description = ammonia::clean(&p.description);
     let clean_instructions = ammonia::clean(&p.arrival_instructions);
     let clean_rules = ammonia::clean(&p.house_rules);
+    let amenities = clean_amenities(&p.amenities);
     let dto = sqlx::query_as::<_, AdminPropertyDto>(
         "update property set name=$2, location_label=$3, description=$4, surface_label=$5, \
                 capacity=$6, bedrooms=$7, specs_label=$8, highlight_label=$9, hero_seed=$10, \
                 deposit_pct=$11, caution_cents=$12, arrival_instructions=$13, house_rules=$14, \
                 tourist_tax_cents=$15, tourist_tax_included=$16, owner_name=$17, owner_address=$18, \
                 owner_phone=$19, owner_email=$20, owner_siret=$21, contract_template=$22, \
+                amenities=$23, \
                 updated_at=now() \
          where slug=$1 \
          returning slug, name, location_label, description, surface_label, capacity, bedrooms, \
                    specs_label, highlight_label, hero_seed, deposit_pct, caution_cents, \
                    tourist_tax_cents, tourist_tax_included, arrival_instructions, house_rules, \
-                   contract_template, owner_name, owner_address, owner_phone, owner_email, owner_siret",
+                   contract_template, owner_name, owner_address, owner_phone, owner_email, owner_siret, \
+                   amenities",
     )
     .bind(&slug)
     .bind(&p.name)
@@ -649,6 +732,7 @@ async fn update_property(
     .bind(p.owner_email.trim())
     .bind(p.owner_siret.trim())
     .bind(p.contract_template.trim())
+    .bind(sqlx::types::Json(amenities))
     .fetch_optional(&st.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("propriété".into()))?;
