@@ -126,14 +126,26 @@ export function ReadMore({
             style={{
               width: "min(760px, 100%)",
               maxHeight: "min(82vh, 760px)",
-              overflow: "auto",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
               borderRadius: 18,
               background: "#FFF",
               boxShadow: "0 24px 80px rgba(0,0,0,.24)",
-              padding: "26px 28px 30px",
             }}
           >
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 18, justifyContent: "space-between" }}>
+            <div
+              style={{
+                flex: "0 0 auto",
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 18,
+                justifyContent: "space-between",
+                padding: "24px 28px 18px",
+                borderBottom: "1px solid rgba(0,0,0,.08)",
+                background: "#FFF",
+              }}
+            >
               <h2 id="description-modal-title" style={{ margin: 0, font: "400 30px 'Marcellus'", color: "#1A1B1A" }}>
                 {title}
               </h2>
@@ -156,29 +168,31 @@ export function ReadMore({
                 ×
               </button>
             </div>
-            {isHtml ? (
-              <div
-                className="rich-text"
-                style={{
-                  marginTop: 18,
-                  font: "400 16px/1.75 'Hanken Grotesk'",
-                  color: "#4E504D",
-                }}
-                dangerouslySetInnerHTML={{ __html: content }}
-              />
-            ) : (
-              <div
-                style={{
-                  marginTop: 18,
-                  whiteSpace: "pre-line",
-                  font: "400 16px/1.75 'Hanken Grotesk'",
-                  color: "#4E504D",
-                }}
-              >
-                {content}
-              </div>
-            )}
-            <AmenitiesSection amenities={amenities} locale={locale} />
+            <div style={{ minHeight: 0, overflow: "auto", padding: "0 28px 30px" }}>
+              {isHtml ? (
+                <div
+                  className="rich-text"
+                  style={{
+                    marginTop: 18,
+                    font: "400 16px/1.75 'Hanken Grotesk'",
+                    color: "#4E504D",
+                  }}
+                  dangerouslySetInnerHTML={{ __html: content }}
+                />
+              ) : (
+                <div
+                  style={{
+                    marginTop: 18,
+                    whiteSpace: "pre-line",
+                    font: "400 16px/1.75 'Hanken Grotesk'",
+                    color: "#4E504D",
+                  }}
+                >
+                  {content}
+                </div>
+              )}
+              <AmenitiesSection amenities={amenities} locale={locale} />
+            </div>
           </div>
         </div>
       )}
