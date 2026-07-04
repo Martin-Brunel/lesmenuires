@@ -997,6 +997,59 @@ pub(crate) async fn admin_set_conversation_processed(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReplyInput {
+    subject: String,
+    message: String,
+}
+
+/// Répond par e-mail au visiteur qui a laissé un message via le chat, puis
+/// marque la conversation comme traitée. Journalisé dans email_log (kind
+/// `chat_reply`, réconcilié par destinataire sur les fiches contact).
+pub(crate) async fn admin_reply_conversation(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<ReplyInput>,
+) -> Result<StatusCode, AppError> {
+    let subject = input.subject.trim().to_string();
+    let message = input.message.trim();
+    if subject.is_empty() || message.is_empty() {
+        return Err(AppError::BadRequest("Sujet et message requis.".into()));
+    }
+    let (visitor_email, locale) = sqlx::query_as::<_, (Option<String>, String)>(
+        "select visitor_email, locale from chat_conversation where id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("conversation".into()))?;
+    let to = visitor_email
+        .filter(|e| !e.trim().is_empty())
+        .ok_or_else(|| AppError::BadRequest("Cette conversation n'a pas d'e-mail visiteur.".into()))?;
+
+    let safe = escape_html(message).replace('\n', "<br>");
+    let (site, location) = crate::email::brand(&st.pool).await;
+    let html = crate::email::template_lang(
+        &site,
+        &location,
+        &subject,
+        &safe,
+        "",
+        "",
+        i18n::Lang::from_param(Some(&locale)),
+    );
+    crate::email::spawn(st.pool.clone(), None, "chat_reply", to, subject, html);
+
+    sqlx::query(
+        "update chat_conversation set contact_processed_at = now() where id = $1",
+    )
+    .bind(id)
+    .execute(&st.pool)
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[derive(Serialize, FromRow)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ChatMessageDto {

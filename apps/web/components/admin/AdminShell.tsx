@@ -83,6 +83,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     pathname === "/admin/login" || pathname === "/admin/definir-mot-de-passe";
   const [me, setMe] = useState<Me | null>(null);
   const [checked, setChecked] = useState(false);
+  const [chatTodoCount, setChatTodoCount] = useState(0);
 
   useEffect(() => {
     if (isLogin) {
@@ -95,6 +96,20 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       .catch(() => router.replace("/admin/login"))
       .finally(() => setChecked(true));
   }, [isLogin, router]);
+
+  // Badge « à traiter » du menu Conversations : messages laissés à l'équipe non
+  // traités. Rafraîchi à chaque navigation (pathname) — pas de polling.
+  useEffect(() => {
+    if (isLogin) return;
+    adminApi
+      .listConversations()
+      .then((cs) =>
+        setChatTodoCount(
+          cs.filter((c) => c.contactLeftAt !== null && c.contactProcessedAt === null).length,
+        ),
+      )
+      .catch(() => setChatTodoCount(0));
+  }, [isLogin, pathname]);
 
   if (isLogin) {
     return (
@@ -153,7 +168,19 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                       )}
                     >
                       <Icon className="size-4" />
-                      {n.label}
+                      <span className="flex-1">{n.label}</span>
+                      {n.href === "/admin/conversations" && chatTodoCount > 0 && (
+                        <span
+                          className={cn(
+                            "ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold",
+                            active
+                              ? "bg-primary-foreground text-primary"
+                              : "bg-amber-500 text-white",
+                          )}
+                        >
+                          {chatTodoCount}
+                        </span>
+                      )}
                     </Link>
                   );
                 })}

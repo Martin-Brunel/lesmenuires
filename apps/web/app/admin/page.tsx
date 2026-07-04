@@ -7,9 +7,12 @@ import {
   fmtEur,
   type AdminBooking,
   type AdminWeek,
+  type ChatConversation,
 } from "@/lib/admin-api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ConversationReplyDialog } from "@/components/admin/ConversationReplyDialog";
 import { attentionReasons } from "@/lib/attention";
 
 const SLUG = "ladret";
@@ -111,8 +114,19 @@ function BookingRow({
 export default function DashboardPage() {
   const [weeks, setWeeks] = useState<AdminWeek[]>([]);
   const [bookings, setBookings] = useState<AdminBooking[]>([]);
+  const [chatTodo, setChatTodo] = useState<ChatConversation[]>([]);
+  const [replyTo, setReplyTo] = useState<ChatConversation | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+
+  const reloadChat = () => {
+    adminApi
+      .listConversations()
+      .then((cs) =>
+        setChatTodo(cs.filter((c) => c.contactLeftAt !== null && c.contactProcessedAt === null)),
+      )
+      .catch(() => setChatTodo([]));
+  };
 
   useEffect(() => {
     Promise.all([adminApi.listWeeks(SLUG), adminApi.listBookings()])
@@ -122,6 +136,7 @@ export default function DashboardPage() {
       })
       .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
+    reloadChat();
   }, []);
 
   // KPIs scopés sur l'activité réelle : les saisons passées ne comptent pas.
@@ -180,6 +195,54 @@ export default function DashboardPage() {
           </Card>
         ))}
       </div>
+
+      {chatTodo.length > 0 && (
+        <Card className="border-amber-300">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">
+              Messages visiteurs à traiter
+              <span className="ml-2 text-sm font-normal text-amber-700">{chatTodo.length}</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-2">
+              {chatTodo.map((c) => (
+                <li
+                  key={c.id}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 p-3"
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium">
+                      {c.visitorName ?? "Visiteur"}
+                      <span className="ml-2 text-xs font-normal text-muted-foreground">
+                        {c.visitorEmail} ·{" "}
+                        {new Date(c.contactLeftAt ?? c.updatedAt).toLocaleString("fr-FR", {
+                          dateStyle: "short",
+                          timeStyle: "short",
+                        })}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 line-clamp-2 max-w-[560px] text-sm text-muted-foreground">
+                      {c.lastMessage}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Link
+                      href="/admin/conversations"
+                      className="text-sm text-primary underline underline-offset-2"
+                    >
+                      Voir
+                    </Link>
+                    <Button size="sm" onClick={() => setReplyTo(c)}>
+                      Répondre
+                    </Button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
 
       {!loading && (
         <Card>
@@ -275,6 +338,17 @@ export default function DashboardPage() {
             )}
           </CardContent>
         </Card>
+      )}
+
+      {replyTo && (
+        <ConversationReplyDialog
+          conversation={replyTo}
+          onClose={() => setReplyTo(null)}
+          onSent={() => {
+            setReplyTo(null);
+            reloadChat();
+          }}
+        />
       )}
     </div>
   );

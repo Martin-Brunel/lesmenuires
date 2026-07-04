@@ -834,6 +834,11 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify({ processed }),
     }),
+  replyConversation: (id: string, subject: string, message: string) =>
+    req<void>(`/conversations/${id}/reply`, {
+      method: "POST",
+      body: JSON.stringify({ subject, message }),
+    }),
   updateContact: (
     id: string,
     data: {

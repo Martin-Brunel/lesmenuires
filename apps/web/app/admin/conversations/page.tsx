@@ -19,6 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ConversationReplyDialog } from "@/components/admin/ConversationReplyDialog";
 import { ConversationTranscript } from "@/components/admin/ConversationTranscript";
 import { HelpCard } from "@/components/admin/HelpCard";
 
@@ -44,6 +45,7 @@ export default function ConversationsPage() {
   const [detail, setDetail] = useState<ChatConversationDetail | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [processedBusy, setProcessedBusy] = useState(false);
+  const [replyTo, setReplyTo] = useState<ChatConversation | null>(null);
 
   const reload = useCallback(() => {
     adminApi
@@ -213,12 +215,20 @@ export default function ConversationsPage() {
         footer={
           detail?.conversation.contactLeftAt ? (
             needsAction(detail.conversation) ? (
-              <Button
-                disabled={processedBusy}
-                onClick={() => setProcessed(detail.conversation, true)}
-              >
-                Marquer comme traité
-              </Button>
+              <div className="flex gap-2">
+                {detail.conversation.visitorEmail && (
+                  <Button onClick={() => setReplyTo(detail.conversation)}>
+                    Répondre par e-mail
+                  </Button>
+                )}
+                <Button
+                  variant="secondary"
+                  disabled={processedBusy}
+                  onClick={() => setProcessed(detail.conversation, true)}
+                >
+                  Marquer comme traité
+                </Button>
+              </div>
             ) : (
               <Button
                 variant="secondary"
@@ -234,6 +244,18 @@ export default function ConversationsPage() {
       >
         <ConversationTranscript detail={detail} />
       </Modal>
+
+      {replyTo && (
+        <ConversationReplyDialog
+          conversation={replyTo}
+          onClose={() => setReplyTo(null)}
+          onSent={() => {
+            setReplyTo(null);
+            setDetailOpen(false);
+            reload();
+          }}
+        />
+      )}
     </div>
   );
 }

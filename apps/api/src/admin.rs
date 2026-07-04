@@ -57,6 +57,10 @@ pub fn routes(state: AppState) -> Router {
             post(crate::chat::admin_set_conversation_processed),
         )
         .route(
+            "/conversations/:id/reply",
+            post(crate::chat::admin_reply_conversation),
+        )
+        .route(
             "/email-automations",
             get(list_email_automations).post(create_email_automation),
         )
