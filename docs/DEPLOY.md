@@ -27,7 +27,7 @@ Renseigner `.env` (racine) :
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | compte admin seedé au 1er démarrage |
 | `STRIPE_SECRET_KEY` / `STRIPE_PUBLISHABLE_KEY` | clés **live** en production |
 | `STRIPE_WEBHOOK_SECRET` | secret du endpoint webhook (étape 5) |
-| `RESEND_API_KEY` / `MAIL_FROM` | envoi d'e-mails (domaine vérifié) |
+| `RESEND_API_KEY` / `RESEND_WEBHOOK_SECRET` / `MAIL_FROM` | envoi d'e-mails + signature webhooks (domaine vérifié) |
 
 > `COOKIE_SECURE=true`, `FRONT_ORIGIN`/`API_BASE_URL=https://$DOMAIN` et
 > `DATABASE_URL` sont déjà câblés dans `infra/docker-compose.prod.yml`.
@@ -234,7 +234,8 @@ Volumes persistants : `pgdata` (base), `media` (photos), `backups` (sauvegardes)
 - [ ] `API_BASE_URL` / `FRONT_ORIGIN` = `https://$DOMAIN` (liens des e-mails).
 - [ ] (Optionnel, pour le suivi des ouvertures dans le dossier de réservation)
       créer un webhook Resend vers `https://$DOMAIN/api/emails/webhook` (events
-      `email.delivered`, `email.opened`, `email.bounced`, `email.complained`) et
+      `email.delivered`, `email.opened`, `email.bounced`, `email.complained`),
+      copier son signing secret dans `RESEND_WEBHOOK_SECRET` (`whsec_…`) et
       activer l'open tracking sur le domaine.
 
 ### Identité légale & contenu (inlinés au build du front → reconstruire `web`)

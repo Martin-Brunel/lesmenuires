@@ -2242,7 +2242,11 @@ async fn pay_balance(
     }
     let intent = st
         .payments
-        .create_balance_intent(&reference, b.balance_cents, b.provider_customer_id.as_deref())
+        .create_balance_intent(
+            &reference,
+            b.balance_cents,
+            b.provider_customer_id.as_deref(),
+        )
         .await?;
     sqlx::query(
         "insert into payment (booking_id, type, provider, provider_intent_id, amount_cents, status) \
@@ -2343,7 +2347,9 @@ fn verify_stripe_signature(payload: &[u8], sig_header: &str, secret: &str) -> bo
     // Anti-replay: reject events whose signed timestamp is outside Stripe's recommended
     // 5-minute tolerance, so a captured signed payload can't be replayed later (e.g. to
     // re-clear a `disputed` flag via a stale `charge.dispute.closed`).
-    let Ok(ts) = t.parse::<i64>() else { return false };
+    let Ok(ts) = t.parse::<i64>() else {
+        return false;
+    };
     if (chrono::Utc::now().timestamp() - ts).abs() > 300 {
         return false;
     }
@@ -2635,13 +2641,103 @@ async fn confirm_from_webhook(st: &AppState, pi: &serde_json::Value) -> Result<(
     Ok(())
 }
 
+fn verify_resend_signature(
+    payload: &[u8],
+    svix_id: &str,
+    svix_timestamp: &str,
+    svix_signature: &str,
+    secret: &str,
+) -> bool {
+    use base64::prelude::*;
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    if svix_id.is_empty()
+        || svix_timestamp.is_empty()
+        || svix_signature.is_empty()
+        || secret.is_empty()
+    {
+        return false;
+    }
+
+    let Ok(ts) = svix_timestamp.parse::<i64>() else {
+        return false;
+    };
+    if (chrono::Utc::now().timestamp() - ts).abs() > 300 {
+        return false;
+    }
+
+    let key = secret.strip_prefix("whsec_").unwrap_or(secret);
+    let Ok(key) = BASE64_STANDARD.decode(key) else {
+        return false;
+    };
+
+    let mut signed = Vec::with_capacity(svix_id.len() + svix_timestamp.len() + payload.len() + 2);
+    signed.extend_from_slice(svix_id.as_bytes());
+    signed.push(b'.');
+    signed.extend_from_slice(svix_timestamp.as_bytes());
+    signed.push(b'.');
+    signed.extend_from_slice(payload);
+
+    let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(&key) else {
+        return false;
+    };
+    mac.update(&signed);
+    let expected = mac.finalize().into_bytes();
+
+    svix_signature
+        .split_whitespace()
+        .filter_map(|part| part.split_once(','))
+        .filter(|(version, _)| *version == "v1")
+        .filter_map(|(_, sig)| BASE64_STANDARD.decode(sig).ok())
+        .any(|sig| sig.len() == expected.len() && constant_time_eq(&sig, expected.as_slice()))
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 /// Resend delivery webhook: enriches the email log with delivery/open/bounce
-/// events. Matched by the Resend email id (provider_id). Low-stakes (tracking
-/// only, no money/auth), so accepted without signature verification.
+/// events. Matched by the Resend email id (provider_id). The signature must be
+/// verified on the raw body before JSON parsing; Resend signs requests with Svix
+/// headers (`svix-id`, `svix-timestamp`, `svix-signature`).
 async fn resend_webhook(
     State(st): State<AppState>,
-    Json(event): Json<serde_json::Value>,
+    headers: HeaderMap,
+    body: Bytes,
 ) -> Result<StatusCode, AppError> {
+    let secret = env::var("RESEND_WEBHOOK_SECRET")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            tracing::error!("RESEND_WEBHOOK_SECRET absent: webhook Resend refusé");
+            AppError::BadRequest("Signature webhook invalide.".into())
+        })?;
+    let svix_id = headers
+        .get("svix-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    let svix_timestamp = headers
+        .get("svix-timestamp")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    let svix_signature = headers
+        .get("svix-signature")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    if !verify_resend_signature(&body, svix_id, svix_timestamp, svix_signature, &secret) {
+        return Err(AppError::BadRequest("Signature webhook invalide.".into()));
+    }
+
+    let event: serde_json::Value = serde_json::from_slice(&body)
+        .map_err(|_| AppError::BadRequest("Payload webhook invalide.".into()))?;
     let kind = event
         .get("type")
         .and_then(|t| t.as_str())
@@ -2708,6 +2804,23 @@ mod tests {
         hex::encode(mac.finalize().into_bytes())
     }
 
+    fn sign_resend(payload: &[u8], id: &str, t: &str, secret: &str) -> String {
+        use base64::prelude::*;
+
+        let key = BASE64_STANDARD
+            .decode(secret.strip_prefix("whsec_").unwrap())
+            .unwrap();
+        let mut signed = Vec::new();
+        signed.extend_from_slice(id.as_bytes());
+        signed.push(b'.');
+        signed.extend_from_slice(t.as_bytes());
+        signed.push(b'.');
+        signed.extend_from_slice(payload);
+        let mut mac = Hmac::<Sha256>::new_from_slice(&key).unwrap();
+        mac.update(&signed);
+        format!("v1,{}", BASE64_STANDARD.encode(mac.finalize().into_bytes()))
+    }
+
     /// A current unix timestamp string (inside the anti-replay tolerance window).
     fn now_ts() -> String {
         chrono::Utc::now().timestamp().to_string()
@@ -2721,6 +2834,35 @@ mod tests {
         let v1 = sign(payload, &t, secret);
         let header = format!("t={t},v1={v1}");
         assert!(verify_stripe_signature(payload, &header, secret));
+    }
+
+    #[test]
+    fn accepts_a_valid_resend_signature() {
+        let payload = br#"{"type":"email.delivered","data":{"email_id":"email_123"}}"#;
+        let secret = "whsec_c2VjcmV0X3Rlc3Rfa2V5";
+        let id = "msg_test";
+        let t = now_ts();
+        let signature = sign_resend(payload, id, &t, secret);
+        assert!(verify_resend_signature(payload, id, &t, &signature, secret));
+    }
+
+    #[test]
+    fn rejects_invalid_or_stale_resend_signature() {
+        let payload = br#"{"type":"email.delivered","data":{"email_id":"email_123"}}"#;
+        let secret = "whsec_c2VjcmV0X3Rlc3Rfa2V5";
+        let id = "msg_test";
+        let t = now_ts();
+        let signature = sign_resend(payload, id, &t, secret);
+        assert!(!verify_resend_signature(
+            br#"{"type":"email.opened","data":{"email_id":"email_123"}}"#,
+            id,
+            &t,
+            &signature,
+            secret,
+        ));
+        assert!(!verify_resend_signature(
+            payload, id, "1", &signature, secret,
+        ));
     }
 
     #[test]
