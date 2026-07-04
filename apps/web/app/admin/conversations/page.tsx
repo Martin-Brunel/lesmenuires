@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   adminApi,
   type ChatConversation,
   type ChatConversationDetail,
 } from "@/lib/admin-api";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Modal } from "@/components/ui/modal";
+import { toast } from "@/components/ui/toast";
 import {
   Table,
   TableBody,
@@ -32,25 +34,57 @@ function excerpt(s: string, max = 90) {
   return clean.length > max ? `${clean.slice(0, max)}…` : clean;
 }
 
+/** Message laissé à l'équipe et pas encore traité. */
+const needsAction = (c: ChatConversation) =>
+  c.contactLeftAt !== null && c.contactProcessedAt === null;
+
 export default function ConversationsPage() {
   const [rows, setRows] = useState<ChatConversation[] | null>(null);
   const [error, setError] = useState(false);
   const [detail, setDetail] = useState<ChatConversationDetail | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [processedBusy, setProcessedBusy] = useState(false);
 
-  useEffect(() => {
+  const reload = useCallback(() => {
     adminApi
       .listConversations()
       .then(setRows)
       .catch(() => setError(true));
   }, []);
+  useEffect(() => reload(), [reload]);
 
   const openDetail = async (id: string) => {
     try {
       setDetail(await adminApi.conversationDetail(id));
       setDetailOpen(true);
-    } catch {
-      /* toast non monté ici : silencieux, la ligne reste cliquable */
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    }
+  };
+
+  const setProcessed = async (conv: ChatConversation, processed: boolean) => {
+    if (processedBusy) return;
+    setProcessedBusy(true);
+    try {
+      await adminApi.setConversationProcessed(conv.id, processed);
+      toast.success(processed ? "Message marqué comme traité." : "Message repassé à traiter.");
+      reload();
+      // Reflète le changement dans le modal s'il est ouvert sur cette conversation.
+      setDetail((d) =>
+        d && d.conversation.id === conv.id
+          ? {
+              ...d,
+              conversation: {
+                ...d.conversation,
+                contactProcessedAt: processed ? new Date().toISOString() : null,
+              },
+            }
+          : d,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      setProcessedBusy(false);
     }
   };
 
@@ -58,22 +92,32 @@ export default function ConversationsPage() {
     return <p className="text-sm text-destructive">Impossible de charger les conversations.</p>;
   if (rows === null) return <p className="text-sm text-muted-foreground">Chargement…</p>;
 
+  const todo = rows.filter(needsAction);
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Conversations</h1>
-        <p className="text-sm text-muted-foreground">
-          Échanges des visiteurs avec l&apos;assistant IA du site
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Conversations</h1>
+          <p className="text-sm text-muted-foreground">
+            Échanges des visiteurs avec l&apos;assistant IA du site
+          </p>
+        </div>
+        {todo.length > 0 && (
+          <Badge variant="warning" className="px-3 py-1 text-sm">
+            {todo.length} message{todo.length > 1 ? "s" : ""} à traiter
+          </Badge>
+        )}
       </div>
 
       <HelpCard id="conversations">
         <p>
           Chaque ligne est une conversation avec l&apos;assistant « Léa » sur le site public.
-          Le badge <b>Message laissé</b> signale qu&apos;un visiteur a utilisé le formulaire de
-          contact : vous avez reçu un e-mail et ses coordonnées sont dans la colonne Visiteur.
-          Relisez les transcripts pour repérer les questions qui reviennent — c&apos;est la
-          meilleure source pour enrichir le contenu éditorial.
+          Quand un visiteur laisse un message à l&apos;équipe, la conversation passe en tête de
+          liste avec le badge <b>À traiter</b> jusqu&apos;à ce que vous la marquiez traitée
+          (après avoir répondu au visiteur par e-mail). Relisez aussi les transcripts pour
+          repérer les questions qui reviennent — c&apos;est la meilleure source pour enrichir
+          les connaissances de Léa (Réglages → Assistant IA).
         </p>
       </HelpCard>
 
@@ -90,38 +134,65 @@ export default function ConversationsPage() {
               <TableHead>Dernière activité</TableHead>
               <TableHead>Dernier message</TableHead>
               <TableHead>Visiteur</TableHead>
+              <TableHead>Statut</TableHead>
               <TableHead className="text-center">Messages</TableHead>
               <TableHead>Langue</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((c) => (
-              <TableRow
-                key={c.id}
-                className="cursor-pointer"
-                onClick={() => openDetail(c.id)}
-              >
-                <TableCell className="whitespace-nowrap">
-                  {dateFmt.format(new Date(c.updatedAt))}
-                </TableCell>
-                <TableCell className="max-w-[340px] text-muted-foreground">
-                  {excerpt(c.lastMessage)}
-                </TableCell>
-                <TableCell>
-                  {c.visitorName || c.visitorEmail ? (
-                    <div className="space-y-0.5">
-                      <div>{c.visitorName ?? "—"}</div>
-                      <div className="text-xs text-muted-foreground">{c.visitorEmail}</div>
-                      {c.contactLeftAt && <Badge variant="secondary">Message laissé</Badge>}
-                    </div>
-                  ) : (
-                    <span className="text-muted-foreground">Anonyme</span>
-                  )}
-                </TableCell>
-                <TableCell className="text-center">{c.messageCount}</TableCell>
-                <TableCell className="uppercase text-muted-foreground">{c.locale}</TableCell>
-              </TableRow>
-            ))}
+            {rows.map((c) => {
+              const urgent = needsAction(c);
+              return (
+                <TableRow
+                  key={c.id}
+                  className={
+                    "cursor-pointer " + (urgent ? "bg-amber-50 hover:bg-amber-100/70" : "")
+                  }
+                  onClick={() => openDetail(c.id)}
+                >
+                  <TableCell className="whitespace-nowrap">
+                    {dateFmt.format(new Date(c.updatedAt))}
+                  </TableCell>
+                  <TableCell className="max-w-[320px] text-muted-foreground">
+                    {excerpt(c.lastMessage)}
+                  </TableCell>
+                  <TableCell>
+                    {c.visitorName || c.visitorEmail ? (
+                      <div className="space-y-0.5">
+                        <div className={urgent ? "font-medium" : ""}>{c.visitorName ?? "—"}</div>
+                        <div className="text-xs text-muted-foreground">{c.visitorEmail}</div>
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">Anonyme</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {urgent ? (
+                      <div className="flex items-center gap-2">
+                        <Badge variant="warning">À traiter</Badge>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={processedBusy}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setProcessed(c, true);
+                          }}
+                        >
+                          Traité
+                        </Button>
+                      </div>
+                    ) : c.contactLeftAt ? (
+                      <Badge variant="success">Traité</Badge>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-center">{c.messageCount}</TableCell>
+                  <TableCell className="uppercase text-muted-foreground">{c.locale}</TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       )}
@@ -138,6 +209,26 @@ export default function ConversationsPage() {
           detail
             ? `${dateFmt.format(new Date(detail.conversation.createdAt))} · ${detail.conversation.messageCount} messages${detail.conversation.visitorEmail ? ` · ${detail.conversation.visitorEmail}` : ""}`
             : undefined
+        }
+        footer={
+          detail?.conversation.contactLeftAt ? (
+            needsAction(detail.conversation) ? (
+              <Button
+                disabled={processedBusy}
+                onClick={() => setProcessed(detail.conversation, true)}
+              >
+                Marquer comme traité
+              </Button>
+            ) : (
+              <Button
+                variant="secondary"
+                disabled={processedBusy}
+                onClick={() => setProcessed(detail.conversation, false)}
+              >
+                Repasser à traiter
+              </Button>
+            )
+          ) : undefined
         }
         wide
       >

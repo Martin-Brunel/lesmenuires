@@ -593,6 +593,7 @@ export type ChatConversation = {
   visitorName: string | null;
   visitorEmail: string | null;
   contactLeftAt: string | null;
+  contactProcessedAt: string | null;
   messageCount: number;
   lastMessage: string;
   createdAt: string;
@@ -828,6 +829,11 @@ export const adminApi = {
     ),
   conversationDetail: (id: string) =>
     req<ChatConversationDetail>(`/conversations/${id}`),
+  setConversationProcessed: (id: string, processed: boolean) =>
+    req<void>(`/conversations/${id}/processed`, {
+      method: "POST",
+      body: JSON.stringify({ processed }),
+    }),
   updateContact: (
     id: string,
     data: {

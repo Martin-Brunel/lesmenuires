@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
 import { ApiError, sendChatContact, sendChatMessage } from "@/lib/api";
 import { site } from "@/lib/site";
@@ -47,6 +48,7 @@ function humanDelay(startedAt: number, replyLength: number) {
 
 export function ChatWidget() {
   const { t, locale } = useI18n();
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
@@ -162,6 +164,9 @@ export function ChatWidget() {
       setContactSending(false);
     }
   };
+
+  // Jamais sur le back-office : le widget est réservé au site public.
+  if (pathname?.startsWith("/admin")) return null;
 
   const bubbleBase: React.CSSProperties = {
     maxWidth: "82%",
