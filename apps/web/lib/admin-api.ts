@@ -582,6 +582,7 @@ export type GlobalSettings = {
   instructionsCheque: string;
   instructionsVirement: string;
   reviewsEnabled: boolean;
+  englishEnabled: boolean;
 };
 
 export type CampaignFilters = {

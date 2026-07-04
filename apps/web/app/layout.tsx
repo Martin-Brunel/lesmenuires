@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { CookieBanner } from "@/components/CookieBanner";
 import { I18nProvider } from "@/components/I18nProvider";
+import { getPublicSettings } from "@/lib/api";
 import { getDict } from "@/lib/i18n";
 import { requestLocale } from "@/lib/i18n/server";
 import { site } from "@/lib/site";
@@ -42,6 +43,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }) {
   const locale = await requestLocale();
+  const settings = await getPublicSettings();
   return (
     <html lang={locale}>
       <head>
@@ -63,7 +65,7 @@ export default async function RootLayout({
         )}
       </head>
       <body>
-        <I18nProvider locale={locale}>
+        <I18nProvider locale={locale} englishEnabled={settings.englishEnabled}>
           {children}
           <CookieBanner />
         </I18nProvider>

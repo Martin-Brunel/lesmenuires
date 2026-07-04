@@ -20,6 +20,7 @@ import { GripVertical, Trash2 } from "lucide-react";
 import {
   adminApi,
   type AdminProperty,
+  type GlobalSettings,
   type PropertyTranslations,
 } from "@/lib/admin-api";
 import { Button } from "@/components/ui/button";
@@ -67,14 +68,20 @@ export default function EditorialPage() {
   const [loadError, setLoadError] = useState(false);
   const [tab, setTab] = useState<Tab>("presentation");
   const [tr, setTr] = useState<EnFields | null>(null);
+  const [settings, setSettings] = useState<GlobalSettings | null>(null);
 
   useEffect(() => {
     adminApi.getProperty(SLUG).then(setP).catch(() => setLoadError(true));
+    adminApi.getSettings().then(setSettings).catch(() => {});
     adminApi
       .getPropertyTranslations(SLUG)
       .then((t) => setTr(t.en ?? {}))
       .catch(() => setTr({}));
   }, []);
+
+  useEffect(() => {
+    if (settings?.englishEnabled === false && tab === "english") setTab("presentation");
+  }, [settings?.englishEnabled, tab]);
 
   const set = <K extends keyof AdminProperty>(k: K, v: AdminProperty[K]) =>
     setP((prev) => (prev ? { ...prev, [k]: v } : prev));
@@ -91,7 +98,7 @@ export default function EditorialPage() {
       const { slug, ...data } = p;
       void slug;
       const updated = await adminApi.updateProperty(SLUG, data);
-      if (tr) {
+      if (settings?.englishEnabled && tr) {
         const saved = await adminApi.updatePropertyTranslations(SLUG, { en: tr });
         setTr(saved.en ?? {});
       }
@@ -111,6 +118,8 @@ export default function EditorialPage() {
   if (!p) {
     return <div className="text-sm text-muted-foreground">Chargement…</div>;
   }
+  const englishEnabled = settings?.englishEnabled ?? true;
+  const tabs = englishEnabled ? TABS : TABS.filter((t) => t.key !== "english");
 
   return (
     <div className="space-y-6">
@@ -122,7 +131,7 @@ export default function EditorialPage() {
       </div>
 
       <div className="flex gap-1 border-b overflow-x-auto">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.key}
             type="button"
@@ -139,7 +148,7 @@ export default function EditorialPage() {
         ))}
       </div>
 
-      {tab !== "photos" && tab !== "english" && (
+      {tab !== "photos" && (englishEnabled || tab !== "english") && tab !== "english" && (
         <form onSubmit={save}>
           <Card>
             <CardContent className="pt-6 space-y-5">
@@ -238,6 +247,7 @@ export default function EditorialPage() {
               {tab === "equipements" && (
                 <AmenitiesEditor
                   value={p.amenities ?? []}
+                  englishEnabled={englishEnabled}
                   onChange={(amenities) => set("amenities", amenities)}
                 />
               )}
@@ -425,7 +435,7 @@ export default function EditorialPage() {
         </form>
       )}
 
-      {tab === "english" && (
+      {englishEnabled && tab === "english" && (
         <form onSubmit={save}>
           <Card>
             <CardContent className="pt-6 space-y-5">
@@ -549,9 +559,11 @@ function Field({
 
 function AmenitiesEditor({
   value,
+  englishEnabled,
   onChange,
 }: {
   value: Amenity[];
+  englishEnabled: boolean;
   onChange: (amenities: Amenity[]) => void;
 }) {
   const sensors = useSensors(
@@ -594,6 +606,7 @@ function AmenitiesEditor({
                   key={itemIds[idx]}
                   id={itemIds[idx]}
                   amenity={a}
+                  englishEnabled={englishEnabled}
                   onUpdate={(patch) => update(idx, patch)}
                   onRemove={() => remove(idx)}
                 />
@@ -612,11 +625,13 @@ function AmenitiesEditor({
 function SortableAmenityRow({
   id,
   amenity,
+  englishEnabled,
   onUpdate,
   onRemove,
 }: {
   id: string;
   amenity: Amenity;
+  englishEnabled: boolean;
   onUpdate: (patch: Partial<Amenity>) => void;
   onRemove: () => void;
 }) {
@@ -632,7 +647,9 @@ function SortableAmenityRow({
       ref={setNodeRef}
       style={style}
       className={cn(
-        "grid grid-cols-[auto_minmax(240px,1.05fr)_1fr_1fr_auto] items-start gap-3 rounded-md border bg-background p-3",
+        englishEnabled
+          ? "grid grid-cols-[auto_minmax(240px,1.05fr)_1fr_1fr_auto] items-start gap-3 rounded-md border bg-background p-3"
+          : "grid grid-cols-[auto_minmax(240px,1.05fr)_1fr_auto] items-start gap-3 rounded-md border bg-background p-3",
         isDragging && "z-10 opacity-70 shadow-lg",
       )}
     >
@@ -672,14 +689,16 @@ function SortableAmenityRow({
           onChange={(e) => onUpdate({ label: e.target.value })}
         />
       </Field>
-      <Field label="Libellé EN">
-        <Input
-          value={amenity.labelEn ?? ""}
-          maxLength={80}
-          placeholder={amenity.label}
-          onChange={(e) => onUpdate({ labelEn: e.target.value })}
-        />
-      </Field>
+      {englishEnabled && (
+        <Field label="Libellé EN">
+          <Input
+            value={amenity.labelEn ?? ""}
+            maxLength={80}
+            placeholder={amenity.label}
+            onChange={(e) => onUpdate({ labelEn: e.target.value })}
+          />
+        </Field>
+      )}
       <Button
         type="button"
         variant="ghost"

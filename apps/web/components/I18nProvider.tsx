@@ -15,6 +15,7 @@ import {
 
 type I18nValue = {
   locale: Locale;
+  englishEnabled: boolean;
   t: Dict;
   /** Préfixe un chemin interne pour la locale courante. */
   href: (path: string) => string;
@@ -22,19 +23,23 @@ type I18nValue = {
 
 const I18nContext = createContext<I18nValue>({
   locale: DEFAULT_LOCALE,
+  englishEnabled: true,
   t: getDict(DEFAULT_LOCALE),
   href: (p) => p,
 });
 
 export function I18nProvider({
   locale,
+  englishEnabled = true,
   children,
 }: {
   locale: Locale;
+  englishEnabled?: boolean;
   children: React.ReactNode;
 }) {
   const value: I18nValue = {
     locale,
+    englishEnabled,
     t: getDict(locale),
     href: (path) => localePath(locale, path),
   };

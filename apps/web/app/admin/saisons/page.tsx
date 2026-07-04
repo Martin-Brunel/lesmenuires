@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Plus, Trash2 } from "lucide-react";
-import { adminApi, type AdminSeason, type RateTier } from "@/lib/admin-api";
+import { adminApi, type AdminSeason, type GlobalSettings, type RateTier } from "@/lib/admin-api";
 import { useConfirm } from "@/components/admin/dialogs";
 import { toast } from "@/components/ui/toast";
 import { frLong, frShort, todayIso } from "@/lib/dates";
@@ -26,6 +26,7 @@ const slugify = (s: string) =>
 
 export default function SaisonsPage() {
   const [seasons, setSeasons] = useState<AdminSeason[] | null>(null);
+  const [settings, setSettings] = useState<GlobalSettings | null>(null);
   const [loadError, setLoadError] = useState(false);
 
   const load = () =>
@@ -38,7 +39,10 @@ export default function SaisonsPage() {
       .catch(() => setLoadError(true));
   useEffect(() => {
     load();
+    adminApi.getSettings().then(setSettings).catch(() => {});
   }, []);
+
+  const englishEnabled = settings?.englishEnabled ?? true;
 
   return (
     <div className="space-y-6">
@@ -63,7 +67,12 @@ export default function SaisonsPage() {
       )}
       {!loadError &&
         seasons?.map((s) => (
-        <SeasonCard key={s.id} season={s} onChanged={load} />
+        <SeasonCard
+          key={s.id}
+          season={s}
+          englishEnabled={englishEnabled}
+          onChanged={load}
+        />
       ))}
 
       <CreateSeason onCreated={load} />
@@ -71,7 +80,15 @@ export default function SaisonsPage() {
   );
 }
 
-function SeasonCard({ season, onChanged }: { season: AdminSeason; onChanged: () => void }) {
+function SeasonCard({
+  season,
+  englishEnabled,
+  onChanged,
+}: {
+  season: AdminSeason;
+  englishEnabled: boolean;
+  onChanged: () => void;
+}) {
   const [name, setName] = useState(season.name);
   const [startDate, setStart] = useState(season.startDate);
   const [endDate, setEnd] = useState(season.endDate);
@@ -218,12 +235,14 @@ function SeasonCard({ season, onChanged }: { season: AdminSeason; onChanged: () 
                   className="h-8"
                   onChange={(e) => setTier(i, { label: e.target.value })}
                 />
-                <Input
-                  value={t.labelEn}
-                  placeholder="English (facultatif)"
-                  className="h-8"
-                  onChange={(e) => setTier(i, { labelEn: e.target.value })}
-                />
+                {englishEnabled && (
+                  <Input
+                    value={t.labelEn}
+                    placeholder="English (facultatif)"
+                    className="h-8"
+                    onChange={(e) => setTier(i, { labelEn: e.target.value })}
+                  />
+                )}
                 <div className="flex items-center gap-1 w-32 shrink-0">
                   <Input
                     type="number"

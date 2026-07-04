@@ -113,6 +113,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/api/health", get(health))
+        .route("/api/public-settings", get(public_settings))
         .route("/api/booking-context/:slug", get(booking_context))
         .route("/api/bookings", post(create_booking))
         .route("/api/bookings/:reference", get(get_booking))
@@ -207,6 +208,21 @@ async fn health(State(st): State<AppState>) -> Response {
                 .into_response()
         }
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublicSettings {
+    english_enabled: bool,
+}
+
+async fn public_settings(State(st): State<AppState>) -> Result<Json<PublicSettings>, AppError> {
+    let english_enabled =
+        sqlx::query_scalar::<_, bool>("select english_enabled from property limit 1")
+            .fetch_optional(&st.pool)
+            .await?
+            .unwrap_or(true);
+    Ok(Json(PublicSettings { english_enabled }))
 }
 
 // ----------------------------------------------------------------------------

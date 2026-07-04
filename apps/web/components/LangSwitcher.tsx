@@ -9,13 +9,14 @@ import { LOCALES, switchLocalePath, type Locale } from "@/lib/i18n";
 import { useI18n } from "./I18nProvider";
 
 export function LangSwitcher({ compact = false }: { compact?: boolean }) {
-  const { locale } = useI18n();
+  const { englishEnabled, locale } = useI18n();
   const pathname = usePathname() ?? "/";
   // Preserve the query string (e.g. /reserver?ref=… cart-resume link) when switching
   // language. Read it after mount rather than via useSearchParams, which would force a
   // Suspense boundary / dynamic rendering on the static pages that host this switcher.
   const [search, setSearch] = useState("");
   useEffect(() => setSearch(window.location.search), [pathname]);
+  if (!englishEnabled) return null;
   return (
     <div
       style={{

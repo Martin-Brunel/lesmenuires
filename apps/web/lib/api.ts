@@ -143,6 +143,12 @@ export function mediaVariant(m: ApiMedia, targetWidth: number) {
   return mediaUrl(`${m.url.replace(/\.[^./]+$/, "")}-w${fit}.jpg`);
 }
 
+export async function getPublicSettings(): Promise<{ englishEnabled: boolean }> {
+  const res = await fetch(`${API_URL}/api/public-settings`, { cache: "no-store" });
+  if (!res.ok) return { englishEnabled: true };
+  return res.json();
+}
+
 export async function getBookingContext(
   slug: string,
   locale = "fr",

@@ -8,7 +8,22 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const LOCALE_HEADER = "x-locale";
 
-export function proxy(req: NextRequest) {
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+
+async function englishEnabled(): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_URL}/api/public-settings`, {
+      next: { revalidate: 30 },
+    });
+    if (!res.ok) return true;
+    const data = (await res.json()) as { englishEnabled?: boolean };
+    return data.englishEnabled !== false;
+  } catch {
+    return true;
+  }
+}
+
+export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   // /fr/... → redirection canonique sans préfixe (évite le contenu dupliqué).
@@ -19,6 +34,11 @@ export function proxy(req: NextRequest) {
   }
 
   if (pathname === "/en" || pathname.startsWith("/en/")) {
+    if (!(await englishEnabled())) {
+      const redirect = req.nextUrl.clone();
+      redirect.pathname = pathname === "/en" ? "/" : pathname.slice(3);
+      return NextResponse.redirect(redirect, 307);
+    }
     const url = req.nextUrl.clone();
     url.pathname = pathname === "/en" ? "/" : pathname.slice(3);
     const headers = new Headers(req.headers);

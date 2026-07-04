@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Trash2 } from "lucide-react";
-import { adminApi, type AdminProduct } from "@/lib/admin-api";
+import { adminApi, type AdminProduct, type GlobalSettings } from "@/lib/admin-api";
 import { useConfirm } from "@/components/admin/dialogs";
 import { toast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import {
 
 export default function PrestationsPage() {
   const [products, setProducts] = useState<AdminProduct[] | null>(null);
+  const [settings, setSettings] = useState<GlobalSettings | null>(null);
   const [loadError, setLoadError] = useState(false);
 
   const reload = () =>
@@ -33,15 +34,19 @@ export default function PrestationsPage() {
       .catch(() => setLoadError(true));
   useEffect(() => {
     reload();
+    adminApi.getSettings().then(setSettings).catch(() => {});
   }, []);
+
+  const englishEnabled = settings?.englishEnabled ?? true;
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Prestations</h1>
         <p className="text-sm text-muted-foreground">
-          Produits complémentaires proposés au moment de la réservation. Le second
-          champ (English) alimente le site anglais — vide, le français s&apos;affiche.
+          Produits complémentaires proposés au moment de la réservation.
+          {englishEnabled &&
+            " Les champs English alimentent le site anglais — vides, le français s'affiche."}
         </p>
       </div>
 
@@ -81,7 +86,12 @@ export default function PrestationsPage() {
             )}
             {!loadError &&
               products?.map((p) => (
-                <ProductRow key={p.id} product={p} onChanged={reload} />
+                <ProductRow
+                  key={p.id}
+                  product={p}
+                  englishEnabled={englishEnabled}
+                  onChanged={reload}
+                />
               ))}
           </TableBody>
         </Table>
@@ -94,9 +104,11 @@ export default function PrestationsPage() {
 
 function ProductRow({
   product,
+  englishEnabled,
   onChanged,
 }: {
   product: AdminProduct;
+  englishEnabled: boolean;
   onChanged: () => void;
 }) {
   const [label, setLabel] = useState(product.label);
@@ -167,12 +179,14 @@ function ProductRow({
       <TableCell>
         <div className="space-y-1">
           <Input value={label} onChange={(e) => setLabel(e.target.value)} className="h-8" />
-          <Input
-            value={labelEn}
-            onChange={(e) => setLabelEn(e.target.value)}
-            className="h-8"
-            placeholder="English (facultatif)"
-          />
+          {englishEnabled && (
+            <Input
+              value={labelEn}
+              onChange={(e) => setLabelEn(e.target.value)}
+              className="h-8"
+              placeholder="English (facultatif)"
+            />
+          )}
         </div>
       </TableCell>
       <TableCell>
@@ -182,12 +196,14 @@ function ProductRow({
             onChange={(e) => setDescription(e.target.value)}
             className="h-8"
           />
-          <Input
-            value={descriptionEn}
-            onChange={(e) => setDescriptionEn(e.target.value)}
-            className="h-8"
-            placeholder="English (facultatif)"
-          />
+          {englishEnabled && (
+            <Input
+              value={descriptionEn}
+              onChange={(e) => setDescriptionEn(e.target.value)}
+              className="h-8"
+              placeholder="English (facultatif)"
+            />
+          )}
         </div>
       </TableCell>
       <TableCell>

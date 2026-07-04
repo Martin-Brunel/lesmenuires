@@ -109,6 +109,13 @@ export default function ReglagesPage() {
       toast.success(next ? "Avis voyageurs réactivés." : "Avis voyageurs désactivés.");
   };
 
+  const toggleEnglish = async () => {
+    if (!settings || busy) return;
+    const next = !settings.englishEnabled;
+    if (await apply({ englishEnabled: next }))
+      toast.success(next ? "Site anglais réactivé." : "Site anglais désactivé.");
+  };
+
   const saveInstructions = async () => {
     if (!settings || instrBusy) return;
     setInstrBusy(true);
@@ -156,6 +163,37 @@ export default function ReglagesPage() {
           celui des e-mails automatiques sur la page E-mails auto — c&apos;est le même réglage.
         </p>
       </HelpCard>
+
+      {/* ------------------------------------------------------ Multilingue */}
+      <Card>
+        <CardContent className="space-y-3 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-medium">Site anglais</h2>
+              <p className="text-sm text-muted-foreground">
+                Accès public /en et champs de traduction dans le back-office
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">
+                {settings.englishEnabled ? "Actif" : "Désactivé"}
+              </span>
+              <Switch
+                checked={settings.englishEnabled}
+                disabled={busy}
+                onChange={toggleEnglish}
+                label="Site anglais"
+              />
+            </div>
+          </div>
+          {!settings.englishEnabled && (
+            <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+              Le sélecteur de langue disparaît du site public, les URLs /en redirigent vers la
+              version française et les champs de traduction sont masqués dans l&apos;admin.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ---------------------------------------------------------- Réservation */}
       <Card>

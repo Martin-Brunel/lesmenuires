@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
 import { localePath, LOCALES } from "@/lib/i18n";
+import { getPublicSettings } from "@/lib/api";
 
 // En prod, le front et l'API partagent le domaine public (routés par Caddy),
 // donc NEXT_PUBLIC_API_URL vaut aussi l'URL du site. NEXT_PUBLIC_SITE_URL permet
@@ -18,17 +19,17 @@ const PAGES: { path: string; changeFrequency: "daily" | "weekly" | "yearly"; pri
   { path: "/cookies", changeFrequency: "yearly", priority: 0.2 },
 ];
 
-export default function sitemap(): MetadataRoute.Sitemap {
-  // Chaque page publique existe dans les deux langues (fr sans préfixe, /en),
-  // reliées par leurs alternates hreflang.
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const settings = await getPublicSettings();
+  const locales = settings.englishEnabled ? LOCALES : (["fr"] as const);
   return PAGES.flatMap((p) =>
-    LOCALES.map((locale) => ({
+    locales.map((locale) => ({
       url: `${SITE_URL}${localePath(locale, p.path)}`,
       changeFrequency: p.changeFrequency,
       priority: locale === "fr" ? p.priority : p.priority * 0.8,
       alternates: {
         languages: Object.fromEntries(
-          LOCALES.map((l) => [l, `${SITE_URL}${localePath(l, p.path)}`]),
+          locales.map((l) => [l, `${SITE_URL}${localePath(l, p.path)}`]),
         ),
       },
     })),
