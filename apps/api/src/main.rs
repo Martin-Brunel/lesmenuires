@@ -2784,19 +2784,38 @@ async fn resend_webhook(
     if email_id.is_empty() {
         return Ok(StatusCode::OK);
     }
-    let (event_kind, title, status) = match kind {
-        "email.delivered" => ("email.delivered", "E-mail délivré", "delivered"),
-        "email.opened" => ("email.opened", "E-mail ouvert", "opened"),
-        "email.bounced" => ("email.bounced", "E-mail en échec", "bounced"),
-        "email.complained" => ("email.complained", "Plainte e-mail", "complained"),
+    let (event_kind, title) = match kind {
+        "email.delivered" => ("email.delivered", "E-mail délivré"),
+        "email.delivery_delayed" => ("email.delivery_delayed", "E-mail différé"),
+        "email.opened" => ("email.opened", "E-mail ouvert"),
+        "email.clicked" => ("email.clicked", "Lien cliqué"),
+        "email.bounced" => ("email.bounced", "E-mail en échec"),
+        "email.complained" => ("email.complained", "Plainte e-mail"),
+        "email.failed" => ("email.failed", "E-mail en échec"),
         _ => return Ok(StatusCode::OK),
     };
 
-    // Map the event to a status; opened is terminal-best (don't downgrade to delivered).
+    // Raison d'échec fournie par Resend (bounce SMTP, échec d'envoi) → colonne error.
+    let reason = event
+        .pointer("/data/bounce/message")
+        .or_else(|| event.pointer("/data/failed/reason"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+
+    // Map the event to a status; never downgrade (queued < sent < delayed <
+    // delivered < opened < clicked). bounced/complained/failed are terminal.
     let row: Option<(Uuid, Option<Uuid>, String, String)> = match kind {
         "email.delivered" => sqlx::query_as(
             "update email_log set status = 'delivered', delivered_at = coalesce(delivered_at, now()) \
-             where provider_id = $1 and status not in ('opened') \
+             where provider_id = $1 and status in ('queued', 'sent', 'delayed') \
+             returning id, booking_id, subject, recipient",
+        )
+        .bind(email_id)
+        .fetch_optional(&st.pool)
+        .await?,
+        "email.delivery_delayed" => sqlx::query_as(
+            "update email_log set status = 'delayed' \
+             where provider_id = $1 and status in ('queued', 'sent') \
              returning id, booking_id, subject, recipient",
         )
         .bind(email_id)
@@ -2805,18 +2824,30 @@ async fn resend_webhook(
         "email.opened" => sqlx::query_as(
             "update email_log set status = 'opened', opened_at = coalesce(opened_at, now()), \
                     delivered_at = coalesce(delivered_at, now()) \
+             where provider_id = $1 and status not in ('clicked') \
+             returning id, booking_id, subject, recipient",
+        )
+        .bind(email_id)
+        .fetch_optional(&st.pool)
+        .await?,
+        "email.clicked" => sqlx::query_as(
+            "update email_log set status = 'clicked', clicked_at = coalesce(clicked_at, now()), \
+                    opened_at = coalesce(opened_at, now()), \
+                    delivered_at = coalesce(delivered_at, now()) \
              where provider_id = $1 \
              returning id, booking_id, subject, recipient",
         )
         .bind(email_id)
         .fetch_optional(&st.pool)
         .await?,
-        "email.bounced" | "email.complained" => sqlx::query_as(
-            "update email_log set status = $2 where provider_id = $1 \
+        "email.bounced" | "email.complained" | "email.failed" => sqlx::query_as(
+            "update email_log set status = $2, error = coalesce($3, error) \
+             where provider_id = $1 \
              returning id, booking_id, subject, recipient",
         )
         .bind(email_id)
-        .bind(status)
+        .bind(kind.trim_start_matches("email."))
+        .bind(&reason)
         .fetch_optional(&st.pool)
         .await?,
         _ => None,

@@ -59,8 +59,10 @@ const PAYMENT_KIND: Record<string, string> = {
 };
 const EMAIL_STATUS: Record<string, { label: string; variant: "success" | "warning" | "muted" | "destructive" }> = {
   sent: { label: "Envoyé", variant: "muted" },
+  delayed: { label: "Différé", variant: "warning" },
   delivered: { label: "Délivré", variant: "success" },
   opened: { label: "Ouvert", variant: "success" },
+  clicked: { label: "Cliqué", variant: "success" },
   bounced: { label: "Rebond", variant: "destructive" },
   complained: { label: "Plainte", variant: "destructive" },
   failed: { label: "Échec", variant: "destructive" },
@@ -318,9 +320,12 @@ export default function ReservationDetailPage() {
       title: ev.title,
       detail: [ev.detail, ev.actorName ? `par ${ev.actorName}` : null].filter(Boolean).join(" · ") || undefined,
       tone:
-        ev.kind === "email.opened" || ev.kind.endsWith("mark_paid")
+        ev.kind === "email.opened" || ev.kind === "email.clicked" || ev.kind.endsWith("mark_paid")
           ? "success"
-          : ev.kind === "email.bounced" || ev.kind === "email.complained" || ev.kind.endsWith("cancel")
+          : ev.kind === "email.bounced" ||
+              ev.kind === "email.complained" ||
+              ev.kind === "email.failed" ||
+              ev.kind.endsWith("cancel")
             ? "danger"
             : "default",
     }),

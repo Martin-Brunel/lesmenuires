@@ -1762,7 +1762,7 @@ async fn email_stats(State(st): State<AppState>) -> Result<Json<Vec<EmailStatRow
         "select kind, count(*) as sent, \
                 count(delivered_at) as delivered, \
                 count(opened_at) as opened, \
-                count(*) filter (where status = 'failed') as failed \
+                count(*) filter (where status in ('failed', 'bounced', 'complained')) as failed \
          from email_log \
          where created_at > now() - interval '90 days' \
          group by kind order by sent desc",

@@ -235,9 +235,10 @@ Volumes persistants : `pgdata` (base), `media` (photos), `backups` (sauvegardes)
 - [ ] `API_BASE_URL` / `FRONT_ORIGIN` = `https://$DOMAIN` (liens des e-mails).
 - [ ] (Optionnel, pour le suivi des ouvertures dans le dossier de réservation)
       créer un webhook Resend vers `https://$DOMAIN/api/emails/webhook` (events
-      `email.delivered`, `email.opened`, `email.bounced`, `email.complained`),
+      `email.delivered`, `email.delivery_delayed`, `email.opened`,
+      `email.clicked`, `email.bounced`, `email.complained`, `email.failed`),
       copier son signing secret dans `RESEND_WEBHOOK_SECRET` (`whsec_…`) et
-      activer l'open tracking sur le domaine.
+      activer l'open tracking + le click tracking sur le domaine.
 
 ### Assistant IA (chatbot « Léa », optionnel)
 - [ ] Créer une clé API sur console.anthropic.com et la poser dans
