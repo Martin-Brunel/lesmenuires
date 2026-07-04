@@ -169,7 +169,12 @@ export function DesktopFunnel({
         <div onClick={() => setScreen("booking")} style={css("font:400 24px 'Marcellus';letter-spacing:.02em;cursor:pointer")}>{name}</div>
         <div style={css("display:flex;align-items:center;gap:26px")}>
           <LangSwitcher />
-          <div style={css("font:500 13px 'Hanken Grotesk';color:#5A5C58;cursor:pointer")}>{t.nav.contact}</div>
+          <div
+            onClick={() => window.dispatchEvent(new Event("adret:open-chat"))}
+            style={css("font:500 13px 'Hanken Grotesk';color:#5A5C58;cursor:pointer")}
+          >
+            {t.nav.contact}
+          </div>
           <a href={href("/espace")} style={css("font:600 13px 'Hanken Grotesk';color:#1A1B1A;cursor:pointer;text-decoration:none")}>{t.nav.mySpace}</a>
         </div>
       </div>

@@ -20,6 +20,30 @@ export const en: typeof fr = {
     backToBooking: "Back to booking",
   },
 
+  chat: {
+    open: "Open the conversation",
+    close: "Close the conversation",
+    title: "Léa",
+    subtitle: "Online",
+    intro:
+      "Hi! I'm Léa, from the team. Any question about the accommodation, availability or prices? Just ask!",
+    placeholder: "Type your message…",
+    send: "Send",
+    unavailable:
+      "I'm having a little technical hiccup… Leave us a message just below and we'll get back to you quickly!",
+    rateLimited: "One moment please, you're typing a little too fast for me!",
+    leaveMessage: "Leave a message for the team",
+    contactName: "Your name",
+    contactEmail: "Your email",
+    contactMessage: "Your message",
+    contactSend: "Send the message",
+    contactSent:
+      "Thank you! Your message has been passed on to the team — we'll reply by email very soon.",
+    contactError: "Sending failed, please try again in a moment.",
+    aiNotice: "Virtual assistant · a team member takes over whenever needed",
+    disclaimer: "Indicative answers — only the online booking is binding",
+  },
+
   footer: {
     legalNotice: "Legal notice",
     terms: "Rental terms",

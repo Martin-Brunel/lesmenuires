@@ -64,6 +64,8 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY}
       RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
       MAIL_FROM: ${MAIL_FROM}
+      # Assistant IA du site public (optionnel : sans clé, le widget reste masqué).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       SCHEDULER_INTERVAL_SECS: ${SCHEDULER_INTERVAL_SECS:-300}
     volumes:
       - media:/app/media

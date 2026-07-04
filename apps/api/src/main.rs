@@ -1,6 +1,7 @@
 mod accounting;
 mod admin;
 mod campaigns;
+mod chat;
 mod email;
 mod error;
 mod i18n;
@@ -115,6 +116,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/health", get(health))
         .route("/api/public-settings", get(public_settings))
         .route("/api/booking-context/:slug", get(booking_context))
+        .route("/api/chat", post(chat::chat_message))
+        .route("/api/chat/contact", post(chat::chat_contact))
         .route("/api/bookings", post(create_booking))
         .route("/api/bookings/:reference", get(get_booking))
         .route("/api/bookings/:reference/resume", get(resume_booking))
@@ -214,15 +217,21 @@ async fn health(State(st): State<AppState>) -> Response {
 #[serde(rename_all = "camelCase")]
 struct PublicSettings {
     english_enabled: bool,
+    chatbot_enabled: bool,
 }
 
 async fn public_settings(State(st): State<AppState>) -> Result<Json<PublicSettings>, AppError> {
-    let english_enabled =
-        sqlx::query_scalar::<_, bool>("select english_enabled from property limit 1")
-            .fetch_optional(&st.pool)
-            .await?
-            .unwrap_or(true);
-    Ok(Json(PublicSettings { english_enabled }))
+    let row = sqlx::query_as::<_, (bool, bool)>(
+        "select english_enabled, chatbot_enabled from property limit 1",
+    )
+    .fetch_optional(&st.pool)
+    .await?;
+    let (english_enabled, chatbot_enabled) = row.unwrap_or((true, false));
+    Ok(Json(PublicSettings {
+        english_enabled,
+        // Sans clé API le bot ne peut pas répondre : le widget reste masqué.
+        chatbot_enabled: chatbot_enabled && chat::bot_available(),
+    }))
 }
 
 // ----------------------------------------------------------------------------

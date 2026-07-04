@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { OpenChatLink } from "@/components/OpenChatLink";
 import { site } from "@/lib/site";
 import { getDict, localePath } from "@/lib/i18n";
 import { requestLocale } from "@/lib/i18n/server";
@@ -42,6 +43,7 @@ export async function SiteFooter() {
           <Link href={localePath(locale, "/confidentialite")} style={linkStyle}>{t.footer.privacy}</Link>
           <Link href={localePath(locale, "/cookies")} style={linkStyle}>{t.footer.cookies}</Link>
           <Link href={localePath(locale, "/espace")} style={linkStyle}>{t.nav.mySpace}</Link>
+          <OpenChatLink />
         </nav>
       </div>
       <div

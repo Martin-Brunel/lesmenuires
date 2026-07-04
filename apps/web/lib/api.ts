@@ -143,10 +143,48 @@ export function mediaVariant(m: ApiMedia, targetWidth: number) {
   return mediaUrl(`${m.url.replace(/\.[^./]+$/, "")}-w${fit}.jpg`);
 }
 
-export async function getPublicSettings(): Promise<{ englishEnabled: boolean }> {
+export async function getPublicSettings(): Promise<{
+  englishEnabled: boolean;
+  chatbotEnabled: boolean;
+}> {
   const res = await fetch(`${API_URL}/api/public-settings`, { cache: "no-store" });
-  if (!res.ok) return { englishEnabled: true };
+  if (!res.ok) return { englishEnabled: true, chatbotEnabled: false };
   return res.json();
+}
+
+export async function sendChatMessage(input: {
+  sessionToken?: string;
+  message: string;
+  locale: string;
+}): Promise<{ sessionToken: string; reply: string }> {
+  const res = await fetch(`${API_URL}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new ApiError(body.error ?? `chat: HTTP ${res.status}`, res.status);
+  }
+  return res.json();
+}
+
+export async function sendChatContact(input: {
+  sessionToken?: string;
+  name: string;
+  email: string;
+  message: string;
+  locale: string;
+}): Promise<void> {
+  const res = await fetch(`${API_URL}/api/chat/contact`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new ApiError(body.error ?? `chat-contact: HTTP ${res.status}`, res.status);
+  }
 }
 
 export async function getBookingContext(

@@ -116,6 +116,13 @@ export default function ReglagesPage() {
       toast.success(next ? "Site anglais réactivé." : "Site anglais désactivé.");
   };
 
+  const toggleChatbot = async () => {
+    if (!settings || busy) return;
+    const next = !settings.chatbotEnabled;
+    if (await apply({ chatbotEnabled: next }))
+      toast.success(next ? "Assistant IA activé." : "Assistant IA désactivé.");
+  };
+
   const saveInstructions = async () => {
     if (!settings || instrBusy) return;
     setInstrBusy(true);
@@ -192,6 +199,37 @@ export default function ReglagesPage() {
               version française et les champs de traduction sont masqués dans l&apos;admin.
             </p>
           )}
+        </CardContent>
+      </Card>
+
+      {/* ------------------------------------------------------ Assistant IA */}
+      <Card>
+        <CardContent className="space-y-3 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-medium">Assistant IA (chat « Léa »)</h2>
+              <p className="text-sm text-muted-foreground">
+                Bulle de conversation sur le site public : répond aux questions
+                (logement, dispos, tarifs) et recueille les messages des visiteurs
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">
+                {settings.chatbotEnabled ? "Actif" : "Désactivé"}
+              </span>
+              <Switch
+                checked={settings.chatbotEnabled}
+                disabled={busy}
+                onChange={toggleChatbot}
+                label="Assistant IA"
+              />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Nécessite la variable d&apos;environnement <code>ANTHROPIC_API_KEY</code> côté
+            serveur — sans clé, le widget reste masqué même si le réglage est actif. Les
+            conversations sont consultables dans l&apos;onglet Conversations.
+          </p>
         </CardContent>
       </Card>
 

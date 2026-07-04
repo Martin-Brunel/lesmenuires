@@ -22,6 +22,30 @@ export const fr = {
     backToBooking: "Retour à la réservation",
   },
 
+  chat: {
+    open: "Ouvrir la conversation",
+    close: "Fermer la conversation",
+    title: "Léa",
+    subtitle: "En ligne",
+    intro:
+      "Bonjour ! Je suis Léa, de l'équipe. Une question sur le logement, les disponibilités ou les tarifs ? Écrivez-moi !",
+    placeholder: "Écrivez votre message…",
+    send: "Envoyer",
+    unavailable:
+      "Je rencontre un petit souci technique… Laissez-nous un message juste en dessous, on revient vers vous rapidement !",
+    rateLimited: "Un instant s'il vous plaît, vous m'écrivez un peu trop vite !",
+    leaveMessage: "Laisser un message à l'équipe",
+    contactName: "Votre nom",
+    contactEmail: "Votre e-mail",
+    contactMessage: "Votre message",
+    contactSend: "Envoyer le message",
+    contactSent:
+      "Merci ! Votre message est bien transmis à l'équipe, on vous répond très vite par e-mail.",
+    contactError: "L'envoi a échoué, réessayez dans un instant.",
+    aiNotice: "Assistant virtuel · un membre de l'équipe reprend la conversation si besoin",
+    disclaimer: "Réponses indicatives — seule la réservation en ligne fait foi",
+  },
+
   footer: {
     legalNotice: "Mentions légales",
     terms: "Conditions de location",

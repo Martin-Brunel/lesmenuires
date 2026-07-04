@@ -47,6 +47,11 @@ pub fn routes(state: AppState) -> Router {
         .route("/contacts/:id", get(contact_detail).put(update_contact))
         .route("/contacts/:id/email", post(send_contact_email))
         .route("/contacts/:id/note", post(add_contact_note))
+        .route("/conversations", get(crate::chat::admin_list_conversations))
+        .route(
+            "/conversations/:id",
+            get(crate::chat::admin_conversation_detail),
+        )
         .route(
             "/email-automations",
             get(list_email_automations).post(create_email_automation),
@@ -3143,11 +3148,13 @@ struct GlobalSettings {
     instructions_virement: String,
     reviews_enabled: bool,
     english_enabled: bool,
+    chatbot_enabled: bool,
 }
 
 const SETTINGS_COLS: &str = "transactional_emails_enabled, online_booking_enabled, \
     pay_card_enabled, pay_cheque_enabled, pay_virement_enabled, \
-    instructions_cheque, instructions_virement, reviews_enabled, english_enabled";
+    instructions_cheque, instructions_virement, reviews_enabled, english_enabled, \
+    chatbot_enabled";
 
 /// Réglages globaux (plateforme mono-propriété : portés par la propriété).
 async fn get_settings(State(st): State<AppState>) -> Result<Json<GlobalSettings>, AppError> {
@@ -3172,6 +3179,7 @@ struct SettingsUpdate {
     instructions_virement: Option<String>,
     reviews_enabled: Option<bool>,
     english_enabled: Option<bool>,
+    chatbot_enabled: Option<bool>,
 }
 
 async fn update_settings(
@@ -3204,7 +3212,8 @@ async fn update_settings(
             instructions_cheque = coalesce($6, instructions_cheque), \
             instructions_virement = coalesce($7, instructions_virement), \
             reviews_enabled = coalesce($8, reviews_enabled), \
-            english_enabled = coalesce($9, english_enabled) \
+            english_enabled = coalesce($9, english_enabled), \
+            chatbot_enabled = coalesce($10, chatbot_enabled) \
          returning {SETTINGS_COLS}"
     ))
     .bind(body.transactional_emails_enabled)
@@ -3216,6 +3225,7 @@ async fn update_settings(
     .bind(body.instructions_virement)
     .bind(body.reviews_enabled)
     .bind(body.english_enabled)
+    .bind(body.chatbot_enabled)
     .fetch_one(&st.pool)
     .await?;
     Ok(Json(s))

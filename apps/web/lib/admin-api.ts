@@ -583,6 +583,24 @@ export type GlobalSettings = {
   instructionsVirement: string;
   reviewsEnabled: boolean;
   englishEnabled: boolean;
+  chatbotEnabled: boolean;
+};
+
+export type ChatConversation = {
+  id: string;
+  locale: string;
+  visitorName: string | null;
+  visitorEmail: string | null;
+  contactLeftAt: string | null;
+  messageCount: number;
+  lastMessage: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ChatConversationDetail = {
+  conversation: ChatConversation;
+  messages: { role: "user" | "assistant" | "contact"; content: string; createdAt: string }[];
 };
 
 export type CampaignFilters = {
@@ -803,6 +821,12 @@ export const adminApi = {
   finances: () => req<FinancesResponse>("/finances"),
   listContacts: () => req<Contact[]>("/contacts"),
   contactDetail: (id: string) => req<ContactDetail>(`/contacts/${id}`),
+  listConversations: (email?: string) =>
+    req<ChatConversation[]>(
+      `/conversations${email ? `?email=${encodeURIComponent(email)}` : ""}`,
+    ),
+  conversationDetail: (id: string) =>
+    req<ChatConversationDetail>(`/conversations/${id}`),
   updateContact: (
     id: string,
     data: {

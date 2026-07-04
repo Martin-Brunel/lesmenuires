@@ -28,6 +28,7 @@ Renseigner `.env` (racine) :
 | `STRIPE_SECRET_KEY` / `STRIPE_PUBLISHABLE_KEY` | clés **live** en production |
 | `STRIPE_WEBHOOK_SECRET` | secret du endpoint webhook (étape 5) |
 | `RESEND_API_KEY` / `RESEND_WEBHOOK_SECRET` / `MAIL_FROM` | envoi d'e-mails + signature webhooks (domaine vérifié) |
+| `ANTHROPIC_API_KEY` | assistant IA du site public (optionnel — sans clé, le widget de chat reste masqué même si le réglage admin est actif) |
 
 > `COOKIE_SECURE=true`, `FRONT_ORIGIN`/`API_BASE_URL=https://$DOMAIN` et
 > `DATABASE_URL` sont déjà câblés dans `infra/docker-compose.prod.yml`.
@@ -237,6 +238,16 @@ Volumes persistants : `pgdata` (base), `media` (photos), `backups` (sauvegardes)
       `email.delivered`, `email.opened`, `email.bounced`, `email.complained`),
       copier son signing secret dans `RESEND_WEBHOOK_SECRET` (`whsec_…`) et
       activer l'open tracking sur le domaine.
+
+### Assistant IA (chatbot « Léa », optionnel)
+- [ ] Créer une clé API sur console.anthropic.com et la poser dans
+      `ANTHROPIC_API_KEY` (ne jamais la committer ; la révoquer/régénérer si elle
+      a transité en clair). Sans clé, le widget reste masqué.
+- [ ] Activer le réglage « Assistant IA » dans l'admin (Réglages) après déploiement.
+- [ ] Vérifier `ADMIN_EMAIL` : c'est le destinataire des messages laissés via le
+      formulaire du chat (nécessite le domaine Resend vérifié).
+- [ ] Tester une question (dispos/tarifs) et un message laissé, puis contrôler
+      l'onglet Conversations de l'admin.
 
 ### Identité légale & contenu (inlinés au build du front → reconstruire `web`)
 - [ ] Renseigner `NEXT_PUBLIC_EDITOR_*` et `NEXT_PUBLIC_HOST_*` (mentions légales)

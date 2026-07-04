@@ -3,7 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { adminApi, fmtEur, type ContactDetail, type ContactInfo } from "@/lib/admin-api";
+import {
+  adminApi,
+  fmtEur,
+  type ChatConversation,
+  type ChatConversationDetail,
+  type ContactDetail,
+  type ContactInfo,
+} from "@/lib/admin-api";
+import { ConversationTranscript } from "@/components/admin/ConversationTranscript";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -55,6 +63,9 @@ export default function ContactDetailPage() {
   const [emailOpen, setEmailOpen] = useState(false);
   const [noteDraft, setNoteDraft] = useState<string | null>(null);
   const [noteBusy, setNoteBusy] = useState(false);
+  const [conversations, setConversations] = useState<ChatConversation[]>([]);
+  const [convDetail, setConvDetail] = useState<ChatConversationDetail | null>(null);
+  const [convOpen, setConvOpen] = useState(false);
 
   const saveNote = async () => {
     const body = (noteDraft ?? "").trim();
@@ -77,10 +88,25 @@ export default function ContactDetailPage() {
       .then((r) => {
         setData(r);
         setError(false);
+        if (r.contact.email) {
+          adminApi
+            .listConversations(r.contact.email)
+            .then(setConversations)
+            .catch(() => setConversations([]));
+        }
       })
       .catch(() => setError(true));
   }, [id]);
   useEffect(() => reload(), [reload]);
+
+  const openConversation = async (convId: string) => {
+    try {
+      setConvDetail(await adminApi.conversationDetail(convId));
+      setConvOpen(true);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    }
+  };
 
   if (error) return <p className="text-sm text-destructive">Contact introuvable.</p>;
   if (!data) return <p className="text-sm text-muted-foreground">Chargement…</p>;
@@ -243,6 +269,44 @@ export default function ContactDetailPage() {
           )}
         </CardContent>
       </Card>
+      {conversations.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">
+              Conversations chatbot ({conversations.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul className="divide-y">
+              {conversations.map((conv) => (
+                <li
+                  key={conv.id}
+                  className="flex cursor-pointer items-center justify-between gap-3 py-2 text-sm hover:bg-muted/40"
+                  onClick={() => openConversation(conv.id)}
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-muted-foreground">
+                      {conv.lastMessage.replace(/\s+/g, " ").slice(0, 90)}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {dt(conv.updatedAt)} · {conv.messageCount} messages
+                    </div>
+                  </div>
+                  {conv.contactLeftAt && <Badge variant="warning">Message laissé</Badge>}
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+      <Modal
+        open={convOpen}
+        onClose={() => setConvOpen(false)}
+        title="Conversation chatbot"
+        wide
+      >
+        <ConversationTranscript detail={convDetail} />
+      </Modal>
       {emailOpen && c.email && (
         <ContactEmailDialog
           contactId={c.id}

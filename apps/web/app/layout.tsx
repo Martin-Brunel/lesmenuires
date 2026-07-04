@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { ChatWidget } from "@/components/ChatWidget";
 import { CookieBanner } from "@/components/CookieBanner";
 import { I18nProvider } from "@/components/I18nProvider";
 import { getPublicSettings } from "@/lib/api";
@@ -67,6 +68,7 @@ export default async function RootLayout({
       <body>
         <I18nProvider locale={locale} englishEnabled={settings.englishEnabled}>
           {children}
+          {settings.chatbotEnabled && <ChatWidget />}
           <CookieBanner />
         </I18nProvider>
       </body>
