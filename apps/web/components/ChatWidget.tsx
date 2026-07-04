@@ -97,6 +97,24 @@ export function ChatWidget() {
     [persist],
   );
 
+  /** Repart sur une conversation vierge (nouveau token côté serveur au
+   *  prochain message ; l'ancien transcript reste consultable en admin). */
+  const reset = () => {
+    if (typing) return;
+    tokenRef.current = undefined;
+    setMessages([]);
+    setInput("");
+    setContactMode(false);
+    setContactSent(false);
+    setContactError(false);
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+    inputRef.current?.focus();
+  };
+
   const send = async () => {
     const text = input.trim();
     if (!text || typing) return;
@@ -274,6 +292,31 @@ export function ChatWidget() {
                 {t.chat.subtitle}
               </div>
             </div>
+            {(messages.length > 0 || contactMode) && (
+              <button
+                onClick={reset}
+                aria-label={t.chat.reset}
+                title={t.chat.reset}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  color: "#6B6E6B",
+                  cursor: "pointer",
+                  padding: 4,
+                  display: "flex",
+                }}
+              >
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path
+                    d="M20 11a8 8 0 1 0-2.34 6M20 5v6h-6"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            )}
             <button
               onClick={() => setOpen(false)}
               aria-label={t.chat.close}

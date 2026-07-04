@@ -23,6 +23,7 @@ export const en: typeof fr = {
   chat: {
     open: "Open the conversation",
     close: "Close the conversation",
+    reset: "New conversation",
     title: "Léa",
     subtitle: "Online",
     intro:

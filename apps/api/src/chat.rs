@@ -82,6 +82,7 @@ struct ChatPropertyRow {
     bedrooms: i32,
     arrival_instructions: String,
     house_rules: String,
+    chatbot_extra_context: String,
     deposit_pct: i32,
     caution_cents: i64,
     tourist_tax_cents: i64,
@@ -113,7 +114,7 @@ fn euros(cents: i64) -> String {
 async fn build_grounding(pool: &PgPool, lang: i18n::Lang) -> Result<Grounding, AppError> {
     let mut p = sqlx::query_as::<_, ChatPropertyRow>(
         "select name, location_label, description, surface_label, capacity, bedrooms, \
-                arrival_instructions, house_rules, deposit_pct, caution_cents, \
+                arrival_instructions, house_rules, chatbot_extra_context, deposit_pct, caution_cents, \
                 tourist_tax_cents, tourist_tax_included, online_booking_enabled, \
                 pay_card_enabled, pay_cheque_enabled, pay_virement_enabled, \
                 amenities, translations \
@@ -330,6 +331,19 @@ async fn build_grounding(pool: &PgPool, lang: i18n::Lang) -> Result<Grounding, A
         ("LE LOGEMENT", "INFOS PRATIQUES", "PRESTATIONS EN OPTION", "DISPONIBILITÉS ET TARIFS (à la semaine)")
     };
 
+    // Contexte libre saisi par le gestionnaire (recommandations locales…),
+    // stocké en français : en anglais, Léa traduit à la volée.
+    let extra = p.chatbot_extra_context.trim();
+    let extra_section = if extra.is_empty() {
+        String::new()
+    } else if en {
+        format!(
+            "\n\n=== TEAM TIPS AND RECOMMENDATIONS (written in French — translate naturally when you use them) ===\n{extra}"
+        )
+    } else {
+        format!("\n\n=== BON À SAVOIR — CONSEILS DE L'ÉQUIPE ===\n{extra}")
+    };
+
     let system_prompt = format!(
         "{persona}\n\n{guardrails}\n\n\
          === {h_lodging} ===\n\
@@ -347,7 +361,8 @@ async fn build_grounding(pool: &PgPool, lang: i18n::Lang) -> Result<Grounding, A
          === {h_extras} ===\n\
          {products_section}\n\n\
          === {h_weeks} ===\n\
-         {weeks_section}",
+         {weeks_section}\
+         {extra_section}",
         persona = persona,
         guardrails = guardrails,
         h_lodging = h_lodging,
@@ -391,6 +406,7 @@ async fn build_grounding(pool: &PgPool, lang: i18n::Lang) -> Result<Grounding, A
         products_section = products_section,
         h_weeks = h_weeks,
         weeks_section = weeks_section,
+        extra_section = extra_section,
     );
 
     Ok(Grounding {

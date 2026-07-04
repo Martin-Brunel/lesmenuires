@@ -25,6 +25,7 @@ export const fr = {
   chat: {
     open: "Ouvrir la conversation",
     close: "Fermer la conversation",
+    reset: "Nouvelle conversation",
     title: "Léa",
     subtitle: "En ligne",
     intro:

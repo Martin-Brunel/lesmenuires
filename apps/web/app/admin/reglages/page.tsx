@@ -19,6 +19,9 @@ export default function ReglagesPage() {
   const [instrVirement, setInstrVirement] = useState("");
   const [instrCheque, setInstrCheque] = useState("");
   const [instrBusy, setInstrBusy] = useState(false);
+  // Brouillon local du contexte libre de l'assistant (sauvegarde explicite).
+  const [chatContext, setChatContext] = useState("");
+  const [chatContextBusy, setChatContextBusy] = useState(false);
 
   useEffect(() => {
     adminApi
@@ -27,6 +30,7 @@ export default function ReglagesPage() {
         setSettings(s);
         setInstrVirement(s.instructionsVirement);
         setInstrCheque(s.instructionsCheque);
+        setChatContext(s.chatbotExtraContext);
       })
       .catch(() => setError(true));
   }, []);
@@ -121,6 +125,21 @@ export default function ReglagesPage() {
     const next = !settings.chatbotEnabled;
     if (await apply({ chatbotEnabled: next }))
       toast.success(next ? "Assistant IA activé." : "Assistant IA désactivé.");
+  };
+
+  const saveChatContext = async () => {
+    if (!settings || chatContextBusy) return;
+    setChatContextBusy(true);
+    try {
+      const s = await adminApi.updateSettings({ chatbotExtraContext: chatContext });
+      setSettings(s);
+      setChatContext(s.chatbotExtraContext);
+      toast.success("Connaissances de l'assistant enregistrées.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      setChatContextBusy(false);
+    }
   };
 
   const saveInstructions = async () => {
@@ -230,6 +249,34 @@ export default function ReglagesPage() {
             serveur — sans clé, le widget reste masqué même si le réglage est actif. Les
             conversations sont consultables dans l&apos;onglet Conversations.
           </p>
+          <div className="space-y-1.5 border-t pt-4">
+            <Label htmlFor="chat-context">
+              Connaissances complémentaires de l&apos;assistant
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              Tout ce que Léa doit savoir en plus des données du logement :
+              restaurants à recommander, cours de ski, navettes, commerces, bons
+              plans locaux… Texte libre, en français (traduit automatiquement pour
+              les visiteurs anglophones). Pris en compte immédiatement.
+            </p>
+            <textarea
+              id="chat-context"
+              className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+              rows={7}
+              placeholder={"Exemples :\nRestaurants : La Marmite (savoyard, réserver le soir), l'Ours Blanc aux Bruyères.\nCours de ski : ESF des Ménuires, réserver sur esf-lesmenuires.fr dès novembre pour les vacances scolaires.\nNavette gratuite toutes les 20 min entre les quartiers."}
+              value={chatContext}
+              onChange={(e) => setChatContext(e.target.value)}
+            />
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                onClick={saveChatContext}
+                disabled={chatContextBusy || chatContext === settings.chatbotExtraContext}
+              >
+                {chatContextBusy ? "…" : "Enregistrer les connaissances"}
+              </Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
 

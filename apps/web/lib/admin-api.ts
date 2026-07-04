@@ -584,6 +584,7 @@ export type GlobalSettings = {
   reviewsEnabled: boolean;
   englishEnabled: boolean;
   chatbotEnabled: boolean;
+  chatbotExtraContext: string;
 };
 
 export type ChatConversation = {

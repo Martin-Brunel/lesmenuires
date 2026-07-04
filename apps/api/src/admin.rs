@@ -3149,12 +3149,13 @@ struct GlobalSettings {
     reviews_enabled: bool,
     english_enabled: bool,
     chatbot_enabled: bool,
+    chatbot_extra_context: String,
 }
 
 const SETTINGS_COLS: &str = "transactional_emails_enabled, online_booking_enabled, \
     pay_card_enabled, pay_cheque_enabled, pay_virement_enabled, \
     instructions_cheque, instructions_virement, reviews_enabled, english_enabled, \
-    chatbot_enabled";
+    chatbot_enabled, chatbot_extra_context";
 
 /// Réglages globaux (plateforme mono-propriété : portés par la propriété).
 async fn get_settings(State(st): State<AppState>) -> Result<Json<GlobalSettings>, AppError> {
@@ -3180,6 +3181,7 @@ struct SettingsUpdate {
     reviews_enabled: Option<bool>,
     english_enabled: Option<bool>,
     chatbot_enabled: Option<bool>,
+    chatbot_extra_context: Option<String>,
 }
 
 async fn update_settings(
@@ -3213,7 +3215,8 @@ async fn update_settings(
             instructions_virement = coalesce($7, instructions_virement), \
             reviews_enabled = coalesce($8, reviews_enabled), \
             english_enabled = coalesce($9, english_enabled), \
-            chatbot_enabled = coalesce($10, chatbot_enabled) \
+            chatbot_enabled = coalesce($10, chatbot_enabled), \
+            chatbot_extra_context = coalesce($11, chatbot_extra_context) \
          returning {SETTINGS_COLS}"
     ))
     .bind(body.transactional_emails_enabled)
@@ -3226,6 +3229,7 @@ async fn update_settings(
     .bind(body.reviews_enabled)
     .bind(body.english_enabled)
     .bind(body.chatbot_enabled)
+    .bind(body.chatbot_extra_context)
     .fetch_one(&st.pool)
     .await?;
     Ok(Json(s))
