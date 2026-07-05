@@ -34,3 +34,6 @@ yarn-error.log*
 *.swp
 .idea/
 .vscode/
+
+# --- Documents de travail (non versionnés) ---------------------------------
+/docs/*.pdf
