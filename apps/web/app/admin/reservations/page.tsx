@@ -71,8 +71,21 @@ export default function ReservationsPage() {
   const [sigTarget, setSigTarget] = useState<{ ref: string; info: SignatureInfo | null }>();
   const [pending, setPending] = useState<string | null>(null);
   const [showManual, setShowManual] = useState(false);
+  // Semaine à présélectionner dans la modale (action rapide « ajouter la
+  // réservation » depuis Dispos & tarifs : ?semaine=<id>).
+  const [manualWeekId, setManualWeekId] = useState<string | undefined>();
   const confirm = useConfirm();
   const prompt = usePrompt();
+
+  useEffect(() => {
+    const wanted = new URLSearchParams(window.location.search).get("semaine");
+    if (wanted) {
+      setManualWeekId(wanted);
+      setShowManual(true);
+      // Nettoie l'URL pour ne pas rouvrir la modale au rechargement.
+      window.history.replaceState(null, "", "/admin/reservations");
+    }
+  }, []);
 
   const viewSignature = async (ref: string) => {
     setSigTarget({ ref, info: null });
@@ -550,9 +563,14 @@ export default function ReservationsPage() {
 
       {showManual && (
         <ManualBookingDialog
-          onClose={() => setShowManual(false)}
+          initialWeekId={manualWeekId}
+          onClose={() => {
+            setShowManual(false);
+            setManualWeekId(undefined);
+          }}
           onDone={() => {
             setShowManual(false);
+            setManualWeekId(undefined);
             reload();
           }}
         />
@@ -599,14 +617,17 @@ export default function ReservationsPage() {
 }
 
 function ManualBookingDialog({
+  initialWeekId,
   onClose,
   onDone,
 }: {
+  /** Semaine à présélectionner (action rapide depuis Dispos & tarifs). */
+  initialWeekId?: string;
   onClose: () => void;
   onDone: () => void;
 }) {
   const [weeks, setWeeks] = useState<AdminWeek[] | null>(null);
-  const [weekId, setWeekId] = useState("");
+  const [weekId, setWeekId] = useState(initialWeekId ?? "");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
@@ -631,18 +652,28 @@ function ManualBookingDialog({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Seules les semaines encore disponibles de la saison active ont un sens
-    // pour une réservation manuelle (pas les saisons passées ni écoulées).
+    // Semaines proposées : les disponibles à venir de la saison active, plus
+    // les semaines marquées réservées à la main sans dossier (à régulariser,
+    // même passées). Si une semaine précise est demandée (action rapide depuis
+    // Dispos & tarifs), on charge toutes les saisons pour être sûr de l'avoir.
     const today = todayIso();
-    adminApi
-      .listSeasons("ladret")
-      .then((ss) => {
-        const active = ss.find((s) => s.isActive) ?? ss[0];
-        return adminApi.listWeeks("ladret", active?.id);
+    const proposable = (x: AdminWeek) =>
+      (x.status === "available" && x.startDate >= today) ||
+      (x.status === "booked" && !x.bookingReference);
+    (initialWeekId
+      ? adminApi.listWeeks("ladret")
+      : adminApi.listSeasons("ladret").then((ss) => {
+          const active = ss.find((s) => s.isActive) ?? ss[0];
+          return adminApi.listWeeks("ladret", active?.id);
+        })
+    )
+      .then((w) => {
+        const list = w.filter(proposable);
+        setWeeks(list);
+        // Semaine demandée devenue introuvable (dossier créé entre-temps…) :
+        // retour au placeholder plutôt qu'une valeur fantôme.
+        if (initialWeekId && !list.some((x) => x.id === initialWeekId)) setWeekId("");
       })
-      .then((w) =>
-        setWeeks(w.filter((x) => x.status === "available" && x.startDate >= today)),
-      )
       .catch(() => setWeeks([]));
     adminApi
       .listContacts()
@@ -652,7 +683,8 @@ function ManualBookingDialog({
         ),
       )
       .catch(() => {});
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialWeekId]);
 
   const pickContact = async (id: string) => {
     setContactId(id);
@@ -726,11 +758,18 @@ function ManualBookingDialog({
                 {(weeks ?? []).map((w) => (
                   <option key={w.id} value={w.id}>
                     {w.rangeLabel} · {fmtEur(w.priceCents)}
+                    {w.status === "booked" ? " · réservé sans dossier" : ""}
                   </option>
                 ))}
               </select>
               {weeks && weeks.length === 0 && (
                 <p className="mt-1 text-xs text-muted-foreground">Aucune semaine disponible.</p>
+              )}
+              {weeks?.find((w) => w.id === weekId)?.status === "booked" && (
+                <p className="mt-1 text-xs text-amber-600">
+                  Cette semaine est marquée réservée sans dossier : la réservation créée vient la
+                  régulariser.
+                </p>
               )}
             </div>
             <div className="grid grid-cols-2 gap-2">

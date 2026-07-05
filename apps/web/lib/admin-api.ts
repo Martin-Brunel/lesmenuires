@@ -63,6 +63,9 @@ export type AdminWeek = {
   tierKey: string | null;
   bookingReference: string | null;
   bookingCustomer: string | null;
+  // Statut du dossier qui tient la semaine (pending_payment/confirmed/balance_paid).
+  // Une semaine `booked` sans bookingReference est marquée réservée sans dossier.
+  bookingStatus: string | null;
   blockedSource: string | null;
 };
 

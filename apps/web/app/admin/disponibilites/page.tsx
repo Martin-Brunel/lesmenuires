@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Trash2 } from "lucide-react";
+import { CalendarPlus, Trash2 } from "lucide-react";
 import {
   adminApi,
   type AdminSeason,
@@ -16,7 +16,7 @@ import { frLong, frShort } from "@/lib/dates";
 import { useConfirm } from "@/components/admin/dialogs";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -265,7 +265,7 @@ export default function DisponibilitesPage() {
               <TableHead className="w-[120px]">Prix / sem.</TableHead>
               <TableHead>Mention</TableHead>
               <TableHead className="w-[120px]">Statut</TableHead>
-              <TableHead className="w-[60px] text-right" />
+              <TableHead className="w-[90px] text-right" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -619,6 +619,10 @@ function WeekRow({
     );
   };
 
+  // Badge « réservé » posé à la main sans dossier sur la plateforme :
+  // signaler et proposer de créer la réservation manquante.
+  const orphanBooked = week.status === "booked" && !week.bookingReference;
+
   return (
     <TableRow className={dirty ? "bg-amber-50" : undefined}>
       <TableCell className={cn("font-medium whitespace-nowrap border-l-4", statusBorder)}>
@@ -632,7 +636,21 @@ function WeekRow({
             className="mt-0.5 block text-xs font-normal text-primary underline underline-offset-2 hover:text-foreground"
           >
             {week.bookingCustomer ?? week.bookingReference}
+            {week.bookingStatus === "pending_payment" && (
+              <span className="text-amber-600"> · en attente de règlement</span>
+            )}
           </Link>
+        )}
+        {orphanBooked && (
+          <div className="mt-0.5 text-xs font-normal text-amber-600">
+            Réservé sans dossier —{" "}
+            <Link
+              href={`/admin/reservations?semaine=${week.id}`}
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              ajouter la réservation
+            </Link>
+          </div>
         )}
         {week.status === "blocked" && week.blockedSource && (
           <div className="mt-0.5 text-xs font-normal text-rose-500">
@@ -686,15 +704,26 @@ function WeekRow({
         </select>
       </TableCell>
       <TableCell className="text-right">
-        <Button
-          size="icon"
-          variant="ghost"
-          className="h-8 w-8"
-          onClick={onDelete}
-          title="Supprimer la semaine"
-        >
-          <Trash2 className="size-4 text-destructive" />
-        </Button>
+        <div className="flex items-center justify-end gap-1">
+          {orphanBooked && (
+            <Link
+              href={`/admin/reservations?semaine=${week.id}`}
+              title="Réservé sans dossier — ajouter la réservation"
+              className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-8 w-8")}
+            >
+              <CalendarPlus className="size-4 text-amber-600" />
+            </Link>
+          )}
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8"
+            onClick={onDelete}
+            title="Supprimer la semaine"
+          >
+            <Trash2 className="size-4 text-destructive" />
+          </Button>
+        </div>
       </TableCell>
     </TableRow>
   );

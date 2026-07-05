@@ -863,19 +863,31 @@ struct AdminWeekDto {
     season_id: Option<Uuid>,
     tier_key: Option<String>,
     /// Référence + client de la réservation qui tient la semaine (si réservée).
+    /// Une semaine `booked` sans référence est marquée réservée à la main,
+    /// sans dossier : à régulariser via une réservation manuelle.
     booking_reference: Option<String>,
     booking_customer: Option<String>,
+    /// Statut du dossier qui tient la semaine (pending_payment / confirmed /
+    /// balance_paid) — permet d'annoter les options chèque/virement en attente.
+    booking_status: Option<String>,
     /// Nom du flux iCal externe qui a bloqué la semaine (null = blocage manuel).
     blocked_source: Option<String>,
 }
 
-/// Sous-requêtes réf + client de la réservation confirmée qui tient la semaine.
+/// Sous-requêtes réf + client + statut de la réservation active qui tient la
+/// semaine. Une option chèque/virement (pending_payment) tient la semaine au
+/// même titre qu'un dossier confirmé (cf. index booking_one_active_per_week).
 const WEEK_BOOKING_COLS: &str = ", \
     (select b.reference from booking b where b.week_id = aw.id \
-        and b.status in ('confirmed','balance_paid') order by b.created_at desc limit 1) as booking_reference, \
+        and b.status in ('pending_payment','confirmed','balance_paid') \
+        order by b.created_at desc limit 1) as booking_reference, \
     (select nullif(trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')), '') \
         from booking b left join customer c on c.id = b.customer_id where b.week_id = aw.id \
-        and b.status in ('confirmed','balance_paid') order by b.created_at desc limit 1) as booking_customer, \
+        and b.status in ('pending_payment','confirmed','balance_paid') \
+        order by b.created_at desc limit 1) as booking_customer, \
+    (select b.status from booking b where b.week_id = aw.id \
+        and b.status in ('pending_payment','confirmed','balance_paid') \
+        order by b.created_at desc limit 1) as booking_status, \
     (select f.name from ical_feed f where f.id = aw.blocked_by_feed) as blocked_source";
 
 /// Relit une semaine avec ses colonnes calculées (réf/client/source iCal).
@@ -2808,6 +2820,8 @@ struct ManualWeekRow {
     price_cents: i64,
     status: String,
     range_label: String,
+    /// Un dossier pending_payment / confirmed / balance_paid tient la semaine.
+    has_active_booking: bool,
 }
 
 async fn create_manual_booking(
@@ -2831,16 +2845,25 @@ async fn create_manual_booking(
     }
 
     let week = sqlx::query_as::<_, ManualWeekRow>(
-        "select price_cents, status, range_label from availability_week where id = $1",
+        "select price_cents, status, range_label, \
+                exists(select 1 from booking b where b.week_id = availability_week.id \
+                    and b.status in ('pending_payment','confirmed','balance_paid')) \
+                    as has_active_booking \
+         from availability_week where id = $1",
     )
     .bind(input.week_id)
     .fetch_optional(&st.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("semaine".into()))?;
-    if week.status != "available" {
-        return Err(AppError::BadRequest(
-            "Cette semaine n'est pas disponible.".into(),
-        ));
+    // Réservable : disponible, ou marquée réservée à la main sans dossier —
+    // la réservation manuelle vient alors régulariser la semaine orpheline.
+    let orphan_booked = week.status == "booked" && !week.has_active_booking;
+    if week.status != "available" && !orphan_booked {
+        return Err(AppError::BadRequest(if week.status == "booked" {
+            "Cette semaine est déjà tenue par une réservation.".into()
+        } else {
+            "Cette semaine n'est pas disponible.".into()
+        }));
     }
     let prop = sqlx::query_as::<_, ManualPropRow>(
         "select p.id, p.deposit_pct, p.caution_cents, p.tourist_tax_cents, p.tourist_tax_included \
@@ -2865,9 +2888,16 @@ async fn create_manual_booking(
     );
 
     let mut tx = st.pool.begin().await?;
-    // Claim the week atomically (available -> booked).
+    // Claim the week atomically: available -> booked, or re-claim of an orphan
+    // 'booked' week (badge posé à la main, aucun dossier actif). The not-exists
+    // re-check inside the update keeps the guard atomic against a concurrent
+    // booking landing between the pre-check above and this claim.
     let claimed = sqlx::query(
-        "update availability_week set status = 'booked' where id = $1 and status = 'available'",
+        "update availability_week set status = 'booked' \
+         where id = $1 and (status = 'available' \
+            or (status = 'booked' and not exists ( \
+                select 1 from booking b where b.week_id = $1 \
+                  and b.status in ('pending_payment','confirmed','balance_paid'))))",
     )
     .bind(input.week_id)
     .execute(&mut *tx)
