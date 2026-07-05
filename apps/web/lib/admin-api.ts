@@ -16,6 +16,7 @@ export type AdminAccount = {
 };
 
 export type AuditEntry = {
+  id: string;
   adminId: string | null;
   adminName: string;
   method: string;
@@ -886,7 +887,15 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify({ currentPassword, newPassword }),
     }),
-  listAudit: () => req<AuditEntry[]>("/audit"),
+  listAudit: (cursor?: { before: string; beforeId: string }) => {
+    const q = new URLSearchParams();
+    if (cursor) {
+      q.set("before", cursor.before);
+      q.set("beforeId", cursor.beforeId);
+    }
+    const s = q.toString();
+    return req<AuditEntry[]>(`/audit${s ? `?${s}` : ""}`);
+  },
   emailStats: () =>
     req<{ kind: string; sent: number; delivered: number; opened: number; failed: number }[]>(
       "/email-stats",

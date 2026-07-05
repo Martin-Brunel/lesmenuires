@@ -2258,6 +2258,7 @@ async fn change_my_password(
 #[derive(Serialize, FromRow)]
 #[serde(rename_all = "camelCase")]
 struct AuditEntryDto {
+    id: Uuid,
     admin_id: Option<Uuid>,
     admin_name: String,
     method: String,
@@ -2265,13 +2266,43 @@ struct AuditEntryDto {
     created_at: DateTime<Utc>,
 }
 
-async fn list_audit(State(st): State<AppState>) -> Result<Json<Vec<AuditEntryDto>>, AppError> {
-    let rows = sqlx::query_as::<_, AuditEntryDto>(
-        "select admin_id, admin_name, method, path, created_at \
-         from admin_audit order by created_at desc limit 150",
-    )
-    .fetch_all(&st.pool)
-    .await?;
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AuditQuery {
+    #[serde(default)]
+    before: Option<DateTime<Utc>>,
+    #[serde(default)]
+    before_id: Option<Uuid>,
+}
+
+const AUDIT_PAGE_SIZE: i64 = 100;
+
+async fn list_audit(
+    State(st): State<AppState>,
+    Query(q): Query<AuditQuery>,
+) -> Result<Json<Vec<AuditEntryDto>>, AppError> {
+    // Curseur composite (created_at, id) : l'id départage les actions
+    // partageant le même horodatage, sans doublon ni trou entre pages.
+    let rows = if let (Some(before), Some(before_id)) = (q.before, q.before_id) {
+        sqlx::query_as::<_, AuditEntryDto>(
+            "select id, admin_id, admin_name, method, path, created_at \
+             from admin_audit where (created_at, id) < ($1, $2) \
+             order by created_at desc, id desc limit $3",
+        )
+        .bind(before)
+        .bind(before_id)
+        .bind(AUDIT_PAGE_SIZE)
+        .fetch_all(&st.pool)
+        .await?
+    } else {
+        sqlx::query_as::<_, AuditEntryDto>(
+            "select id, admin_id, admin_name, method, path, created_at \
+             from admin_audit order by created_at desc, id desc limit $1",
+        )
+        .bind(AUDIT_PAGE_SIZE)
+        .fetch_all(&st.pool)
+        .await?
+    };
     Ok(Json(rows))
 }
 

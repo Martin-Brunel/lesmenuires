@@ -3,8 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { adminApi, type AuditEntry } from "@/lib/admin-api";
 import { Avatar } from "@/components/admin/Avatar";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+
+const PAGE_SIZE = 100; // aligné sur AUDIT_PAGE_SIZE côté API
 
 const dt = (iso: string) =>
   new Date(iso).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
@@ -69,12 +72,35 @@ function humanize(e: AuditEntry): string {
 
 export default function JournalPage() {
   const [audit, setAudit] = useState<AuditEntry[] | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(false);
   const [query, setQuery] = useState("");
 
   useEffect(() => {
-    adminApi.listAudit().then(setAudit).catch(() => setError(true));
+    adminApi
+      .listAudit()
+      .then((rows) => {
+        setAudit(rows);
+        setHasMore(rows.length === PAGE_SIZE);
+      })
+      .catch(() => setError(true));
   }, []);
+
+  const loadMore = async () => {
+    if (!audit || audit.length === 0 || loadingMore) return;
+    const last = audit[audit.length - 1];
+    setLoadingMore(true);
+    try {
+      const rows = await adminApi.listAudit({ before: last.createdAt, beforeId: last.id });
+      setAudit([...audit, ...rows]);
+      setHasMore(rows.length === PAGE_SIZE);
+    } catch {
+      setError(true);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const rows = useMemo(() => {
     if (!audit) return [];
@@ -114,8 +140,8 @@ export default function JournalPage() {
             </p>
           ) : (
             <ul className="divide-y">
-              {rows.map((e, i) => (
-                <li key={i} className="flex items-center gap-3 py-2 text-sm">
+              {rows.map((e) => (
+                <li key={e.id} className="flex items-center gap-3 py-2 text-sm">
                   <Avatar name={e.adminName} size={26} />
                   <span className="font-medium">{e.adminName}</span>
                   <span className="text-muted-foreground min-w-0 flex-1 truncate">
@@ -125,6 +151,13 @@ export default function JournalPage() {
                 </li>
               ))}
             </ul>
+          )}
+          {hasMore && (
+            <div className="flex justify-center pt-3">
+              <Button variant="outline" size="sm" onClick={loadMore} disabled={loadingMore}>
+                {loadingMore ? "Chargement…" : "Charger plus"}
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>
