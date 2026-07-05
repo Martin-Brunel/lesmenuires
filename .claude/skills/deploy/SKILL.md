@@ -48,7 +48,8 @@ curl -s -o /dev/null -w '%{http_code}' https://location-t2-lesmenuires.fr/      
 curl -s -o /dev/null -w '%{http_code}' https://location-t2-lesmenuires.fr/admin/login  # 200
 ```
 
-Tous les services doivent être `Up` (api/web `healthy`). En cas de souci :
+Tous les services doivent être `Up` (api et postgres affichent `(healthy)` ; web et caddy
+n'ont pas de healthcheck, `Up` suffit). En cas de souci :
 `docker compose -f infra/docker-compose.prod.yml --env-file .env logs -f api` (ou `web`, `caddy`).
 
 ## 4. Annoncer
