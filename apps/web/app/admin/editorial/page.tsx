@@ -16,14 +16,14 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Trash2 } from "lucide-react";
+import { ExternalLink, GripVertical, Trash2 } from "lucide-react";
 import {
   adminApi,
   type AdminProperty,
   type GlobalSettings,
   type PropertyTranslations,
 } from "@/lib/admin-api";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
@@ -123,11 +123,35 @@ export default function EditorialPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Contenu éditorial</h1>
-        <p className="text-sm text-muted-foreground">
-          Informations du logement : site public, espace client et conditions financières.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Contenu éditorial</h1>
+          <p className="text-sm text-muted-foreground">
+            Informations du logement : site public, espace client et conditions financières.
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2 pt-1">
+          <a
+            href="/"
+            target="_blank"
+            rel="noopener"
+            className={buttonVariants({ variant: "outline", size: "sm" })}
+          >
+            <ExternalLink className="size-4" />
+            Voir le site
+          </a>
+          {englishEnabled && (
+            <a
+              href="/en"
+              target="_blank"
+              rel="noopener"
+              className={buttonVariants({ variant: "outline", size: "sm" })}
+            >
+              <ExternalLink className="size-4" />
+              English
+            </a>
+          )}
+        </div>
       </div>
 
       <div className="flex gap-1 border-b overflow-x-auto">

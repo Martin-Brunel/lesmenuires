@@ -7,6 +7,7 @@ import {
   CalendarDays,
   CalendarRange,
   ClipboardList,
+  ExternalLink,
   FileText,
   History,
   LayoutDashboard,
@@ -143,6 +144,15 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             {site.name}
           </span>
           <span className="ml-2 text-xs text-muted-foreground">admin</span>
+          <a
+            href="/"
+            target="_blank"
+            rel="noopener"
+            title="Voir le site public (nouvel onglet)"
+            className="ml-auto inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          >
+            <ExternalLink className="size-4" />
+          </a>
         </div>
         <nav className="flex-1 overflow-y-auto p-3 space-y-3">
           {NAV_GROUPS.map((g) => (
