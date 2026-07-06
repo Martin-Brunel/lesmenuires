@@ -140,10 +140,14 @@ async fn build_grounding(pool: &PgPool, lang: i18n::Lang) -> Result<Grounding, A
     p.arrival_instructions = crate::email::html_to_text(&p.arrival_instructions);
     p.house_rules = crate::email::html_to_text(&p.house_rules);
 
-    let weeks_rows = sqlx::query_as::<_, (NaiveDate, NaiveDate, i64, String)>(
-        "select aw.start_date, aw.end_date, aw.price_cents, aw.status \
+    // Une semaine sous le délai minimal de réservation est présentée comme
+    // indisponible (même règle que le tunnel public).
+    let weeks_rows = sqlx::query_as::<_, (NaiveDate, NaiveDate, i64, String, bool)>(
+        "select aw.start_date, aw.end_date, aw.price_cents, aw.status, \
+                (aw.start_date < current_date + p.min_booking_lead_days) as too_soon \
          from availability_week aw \
          join season s on s.id = aw.season_id \
+         join property p on p.id = aw.property_id \
          where s.is_active and aw.status <> 'blocked' \
          order by aw.start_date, aw.position",
     )
@@ -151,11 +155,11 @@ async fn build_grounding(pool: &PgPool, lang: i18n::Lang) -> Result<Grounding, A
     .await?;
     let weeks: Vec<WeekInfo> = weeks_rows
         .into_iter()
-        .map(|(start, end, price_cents, status)| WeekInfo {
+        .map(|(start, end, price_cents, status, too_soon)| WeekInfo {
             start,
             end,
             price_cents,
-            available: status == "available",
+            available: status == "available" && !too_soon,
         })
         .collect();
 

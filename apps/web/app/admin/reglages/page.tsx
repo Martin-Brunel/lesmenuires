@@ -22,6 +22,9 @@ export default function ReglagesPage() {
   // Brouillon local du contexte libre de l'assistant (sauvegarde explicite).
   const [chatContext, setChatContext] = useState("");
   const [chatContextBusy, setChatContextBusy] = useState(false);
+  // Brouillon local du délai minimal de réservation (sauvegarde explicite).
+  const [leadDays, setLeadDays] = useState("0");
+  const [leadBusy, setLeadBusy] = useState(false);
 
   useEffect(() => {
     adminApi
@@ -31,6 +34,7 @@ export default function ReglagesPage() {
         setInstrVirement(s.instructionsVirement);
         setInstrCheque(s.instructionsCheque);
         setChatContext(s.chatbotExtraContext);
+        setLeadDays(String(s.minBookingLeadDays));
       })
       .catch(() => setError(true));
   }, []);
@@ -139,6 +143,30 @@ export default function ReglagesPage() {
       toast.error(e instanceof Error ? e.message : "Erreur");
     } finally {
       setChatContextBusy(false);
+    }
+  };
+
+  const saveLeadDays = async () => {
+    if (!settings || leadBusy) return;
+    const n = Number(leadDays);
+    if (!Number.isInteger(n) || n < 0 || n > 365) {
+      toast.error("Le délai doit être un nombre entier entre 0 et 365 jours.");
+      return;
+    }
+    setLeadBusy(true);
+    try {
+      const s = await adminApi.updateSettings({ minBookingLeadDays: n });
+      setSettings(s);
+      setLeadDays(String(s.minBookingLeadDays));
+      toast.success(
+        n === 0
+          ? "Délai minimal supprimé : réservation possible jusqu'au jour d'arrivée."
+          : `Délai minimal enregistré : ${n} jour${n > 1 ? "s" : ""} avant l'arrivée.`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      setLeadBusy(false);
     }
   };
 
@@ -308,6 +336,34 @@ export default function ReglagesPage() {
               refuse les nouvelles réservations.
             </p>
           )}
+          <div className="space-y-1.5 border-t pt-4">
+            <Label htmlFor="lead-days">Délai minimal avant l&apos;arrivée</Label>
+            <p className="text-xs text-muted-foreground">
+              Nombre de jours minimum entre la réservation et le début du séjour. Une semaine
+              plus proche apparaît comme indisponible sur le site (et pour l&apos;assistant IA).
+              0 = réservation possible jusqu&apos;au jour d&apos;arrivée. Ne concerne pas les
+              réservations créées depuis l&apos;admin.
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                id="lead-days"
+                type="number"
+                min={0}
+                max={365}
+                className="w-24 rounded-md border bg-background px-3 py-2 text-sm"
+                value={leadDays}
+                onChange={(e) => setLeadDays(e.target.value)}
+              />
+              <span className="text-sm text-muted-foreground">jour(s)</span>
+              <Button
+                size="sm"
+                onClick={saveLeadDays}
+                disabled={leadBusy || leadDays === String(settings.minBookingLeadDays)}
+              >
+                {leadBusy ? "…" : "Enregistrer"}
+              </Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
 

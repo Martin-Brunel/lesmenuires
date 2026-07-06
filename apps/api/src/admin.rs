@@ -3219,12 +3219,13 @@ struct GlobalSettings {
     english_enabled: bool,
     chatbot_enabled: bool,
     chatbot_extra_context: String,
+    min_booking_lead_days: i32,
 }
 
 const SETTINGS_COLS: &str = "transactional_emails_enabled, online_booking_enabled, \
     pay_card_enabled, pay_cheque_enabled, pay_virement_enabled, \
     instructions_cheque, instructions_virement, reviews_enabled, english_enabled, \
-    chatbot_enabled, chatbot_extra_context";
+    chatbot_enabled, chatbot_extra_context, min_booking_lead_days";
 
 /// Réglages globaux (plateforme mono-propriété : portés par la propriété).
 async fn get_settings(State(st): State<AppState>) -> Result<Json<GlobalSettings>, AppError> {
@@ -3251,6 +3252,7 @@ struct SettingsUpdate {
     english_enabled: Option<bool>,
     chatbot_enabled: Option<bool>,
     chatbot_extra_context: Option<String>,
+    min_booking_lead_days: Option<i32>,
 }
 
 async fn update_settings(
@@ -3273,6 +3275,13 @@ async fn update_settings(
             "Activez au moins un moyen de règlement (ou fermez la réservation en ligne).".into(),
         ));
     }
+    if let Some(d) = body.min_booking_lead_days {
+        if !(0..=365).contains(&d) {
+            return Err(AppError::BadRequest(
+                "Le délai minimal de réservation doit être compris entre 0 et 365 jours.".into(),
+            ));
+        }
+    }
     let s = sqlx::query_as::<_, GlobalSettings>(&format!(
         "update property set \
             transactional_emails_enabled = coalesce($1, transactional_emails_enabled), \
@@ -3285,7 +3294,8 @@ async fn update_settings(
             reviews_enabled = coalesce($8, reviews_enabled), \
             english_enabled = coalesce($9, english_enabled), \
             chatbot_enabled = coalesce($10, chatbot_enabled), \
-            chatbot_extra_context = coalesce($11, chatbot_extra_context) \
+            chatbot_extra_context = coalesce($11, chatbot_extra_context), \
+            min_booking_lead_days = coalesce($12, min_booking_lead_days) \
          returning {SETTINGS_COLS}"
     ))
     .bind(body.transactional_emails_enabled)
@@ -3299,6 +3309,7 @@ async fn update_settings(
     .bind(body.english_enabled)
     .bind(body.chatbot_enabled)
     .bind(body.chatbot_extra_context)
+    .bind(body.min_booking_lead_days)
     .fetch_one(&st.pool)
     .await?;
     Ok(Json(s))

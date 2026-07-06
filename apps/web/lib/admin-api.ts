@@ -589,6 +589,7 @@ export type GlobalSettings = {
   englishEnabled: boolean;
   chatbotEnabled: boolean;
   chatbotExtraContext: string;
+  minBookingLeadDays: number;
 };
 
 export type ChatConversation = {

@@ -425,11 +425,14 @@ async fn booking_context(
         match &active {
             Some(a) => sqlx::query_as::<_, WeekDto>(
                 "select aw.id, aw.start_date, aw.range_label as \"range\", aw.sub_label as sub, \
-                        aw.price_cents, aw.status, (aw.status = 'booked') as booked, \
+                        aw.price_cents, aw.status, \
+                        (aw.status = 'booked' \
+                         or aw.start_date < current_date + p.min_booking_lead_days) as booked, \
                         aw.arrival_label as arrival, aw.arrival_short as arr_short, \
                         aw.depart_short as dep_short, aw.balance_due_label as balance_due, \
                         aw.end_date, aw.tier_key \
                  from availability_week aw \
+                 join property p on p.id = aw.property_id \
                  where aw.season_id = $1 and aw.status <> 'blocked' \
                  order by aw.start_date, aw.position",
             )
@@ -573,6 +576,8 @@ struct WeekRow {
     price_cents: i64,
     status: String,
     range_label: String,
+    /// Semaine trop proche pour être réservée en ligne (délai minimal réglable).
+    too_soon: bool,
 }
 
 #[derive(FromRow)]
@@ -622,8 +627,10 @@ async fn create_booking(
     .ok_or_else(|| AppError::NotFound("propriété".into()))?;
 
     let week = sqlx::query_as::<_, WeekRow>(
-        "select id, price_cents, status, range_label \
-         from availability_week where id = $1 and property_id = $2",
+        "select aw.id, aw.price_cents, aw.status, aw.range_label, \
+                (aw.start_date < current_date + p.min_booking_lead_days) as too_soon \
+         from availability_week aw join property p on p.id = aw.property_id \
+         where aw.id = $1 and aw.property_id = $2",
     )
     .bind(req.week_id)
     .bind(prop.id)
@@ -634,6 +641,13 @@ async fn create_booking(
     if week.status != "available" {
         return Err(AppError::BadRequest(
             "Cette semaine n'est plus disponible.".into(),
+        ));
+    }
+    if week.too_soon {
+        return Err(AppError::BadRequest(
+            "Cette semaine ne peut plus être réservée en ligne (arrivée trop proche). \
+             Contactez-nous directement."
+                .into(),
         ));
     }
 
