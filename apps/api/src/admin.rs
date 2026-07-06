@@ -959,6 +959,26 @@ async fn update_week(
     if w.price_cents < 0 {
         return Err(AppError::BadRequest("Prix négatif.".into()));
     }
+    // Une semaine tenue par un dossier actif ne peut pas quitter 'booked' :
+    // la rouvrir la remettrait en vente (double réservation, acompte débité
+    // puis 500 sur l'index booking_one_active_per_week) et désynchroniserait
+    // planning et finances du dossier toujours vivant.
+    if w.status != "booked" {
+        let held: bool = sqlx::query_scalar(
+            "select exists(select 1 from booking b \
+             where b.week_id = $1 and b.status in ('confirmed', 'balance_paid'))",
+        )
+        .bind(id)
+        .fetch_one(&st.pool)
+        .await?;
+        if held {
+            return Err(AppError::BadRequest(
+                "Cette semaine porte une réservation active — annulez d'abord le dossier \
+                 pour la libérer."
+                    .into(),
+            ));
+        }
+    }
     let updated: Option<Uuid> = sqlx::query_scalar(
         // Un changement de statut hors 'blocked' efface la source iCal : la
         // semaine redevient pilotée à la main (sinon la synchro suivante la
@@ -1836,9 +1856,14 @@ async fn delete_email_override(
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PreviewInput {
     subject: String,
     body: String,
+    /// Bouton affiché dans l'aperçu : absent = « Mon espace » (envoi client),
+    /// chaîne vide = pas de bouton (ex. e-mail prestataire, invitation admin).
+    /// L'aperçu doit montrer le même CTA que l'envoi réel du gabarit.
+    cta_label: Option<String>,
 }
 
 /// Aperçu d'un transactionnel : même moteur de rendu que l'envoi réel
@@ -1879,14 +1904,13 @@ async fn preview_email_automation(
     ]);
     let subject = crate::email::render_template(&p.subject, &vars, false);
     let body = crate::email::render_email_body(&p.body, &vars);
-    let html = crate::email::template(
-        &site,
-        &location,
-        &subject,
-        &body,
-        "Mon espace",
-        &format!("{}/espace", crate::email::front_url()),
-    );
+    let cta_label = p.cta_label.unwrap_or_else(|| "Mon espace".into());
+    let cta_url = if cta_label.is_empty() {
+        String::new()
+    } else {
+        format!("{}/espace", crate::email::front_url())
+    };
+    let html = crate::email::template(&site, &location, &subject, &body, &cta_label, &cta_url);
     Ok(Json(
         serde_json::json!({ "subject": subject, "html": html }),
     ))
@@ -2942,7 +2966,8 @@ async fn create_manual_booking(
              week_price_cents, extras_total_cents, total_cents, deposit_pct, deposit_cents, \
              balance_cents, caution_cents, tourist_tax_cents, payment_method, caution_method, \
              admin_notes, deposit_paid_at, balance_paid_at, emails_muted) \
-         values ($1,$2,$3,$4,'confirmed','manual',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, \
+         values ($1,$2,$3,$4, case when $19 then 'balance_paid' else 'confirmed' end, \
+             'manual',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, \
              case when $18 then now() end, case when $19 then now() end, true) returning id",
     )
     .bind(&reference)
@@ -3660,15 +3685,38 @@ async fn cancel_booking(
     } else {
         0
     };
-    if body.refund_deposit_cents < 0 || body.refund_deposit_cents > deposit_paid {
-        return Err(AppError::BadRequest(
-            "Remboursement d'acompte invalide (supérieur au montant réglé).".into(),
-        ));
+    // Bornes nettes des remboursements antérieurs (même calcul que
+    // perform_refund) : valider sur le montant réglé brut accepterait un
+    // montant que perform_refund rejettera ensuite, faisant échouer toute
+    // l'annulation avec un message obscur.
+    let already: Vec<(String, i64)> = sqlx::query_as(
+        "select raw->>'source', coalesce(sum(amount_cents), 0)::bigint from payment \
+         where booking_id = $1 and type = 'refund' and raw->>'source' is not null \
+         group by raw->>'source'",
+    )
+    .bind(b.id)
+    .fetch_all(&st.pool)
+    .await?;
+    let refunded = |ptype: &str| {
+        already
+            .iter()
+            .find(|(t, _)| t == ptype)
+            .map(|(_, c)| *c)
+            .unwrap_or(0)
+    };
+    let deposit_refundable = (deposit_paid - refunded("deposit")).max(0);
+    let balance_refundable = (balance_paid - refunded("balance")).max(0);
+    if body.refund_deposit_cents < 0 || body.refund_deposit_cents > deposit_refundable {
+        return Err(AppError::BadRequest(format!(
+            "Remboursement d'acompte invalide : reste {:.2} € remboursable.",
+            deposit_refundable as f64 / 100.0
+        )));
     }
-    if body.refund_balance_cents < 0 || body.refund_balance_cents > balance_paid {
-        return Err(AppError::BadRequest(
-            "Remboursement de solde invalide (supérieur au montant réglé).".into(),
-        ));
+    if body.refund_balance_cents < 0 || body.refund_balance_cents > balance_refundable {
+        return Err(AppError::BadRequest(format!(
+            "Remboursement de solde invalide : reste {:.2} € remboursable.",
+            balance_refundable as f64 / 100.0
+        )));
     }
 
     // Persist everything atomically: refunds (which lock the booking row and record
@@ -4183,8 +4231,11 @@ async fn upload_media(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateMedia {
-    alt: String,
-    position: i32,
+    // Optionnels et indépendants : le blur du champ alt et le réordonnancement
+    // par glisser-déposer peuvent s'exécuter en concurrence — chacun n'écrit
+    // que son champ, sans écraser l'autre avec une valeur périmée.
+    alt: Option<String>,
+    position: Option<i32>,
 }
 
 async fn update_media(
@@ -4193,7 +4244,8 @@ async fn update_media(
     Json(m): Json<UpdateMedia>,
 ) -> Result<Json<AdminMediaDto>, AppError> {
     let dto = sqlx::query_as::<_, AdminMediaDto>(
-        "update property_media set alt = $2, position = $3 where id = $1 \
+        "update property_media set alt = coalesce($2, alt), position = coalesce($3, position) \
+         where id = $1 \
          returning id, '/media/' || filename as url, alt, position",
     )
     .bind(id)

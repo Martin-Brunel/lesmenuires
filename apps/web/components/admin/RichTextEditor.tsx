@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import {
@@ -38,6 +39,16 @@ export function RichTextEditor({
       attributes: { class: "tiptap min-h-[160px] px-3 py-2.5 focus:outline-none" },
     },
   });
+
+  // Resynchronise l'éditeur quand `value` change de l'extérieur (ex. HTML
+  // re-sanitisé renvoyé par le serveur après sauvegarde) — jamais pendant la
+  // frappe : les updates internes passent par onUpdate et laissent value ===
+  // getHTML(), et on ne touche pas à un éditeur focalisé.
+  useEffect(() => {
+    if (editor && !editor.isFocused && editor.getHTML() !== (value || "<p></p>")) {
+      editor.commands.setContent(value || "");
+    }
+  }, [editor, value]);
 
   if (!editor) return null;
 

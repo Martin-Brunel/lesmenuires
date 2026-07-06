@@ -68,15 +68,20 @@ export default function EditorialPage() {
   const [loadError, setLoadError] = useState(false);
   const [tab, setTab] = useState<Tab>("presentation");
   const [tr, setTr] = useState<EnFields | null>(null);
+  const [trError, setTrError] = useState(false);
   const [settings, setSettings] = useState<GlobalSettings | null>(null);
 
   useEffect(() => {
     adminApi.getProperty(SLUG).then(setP).catch(() => setLoadError(true));
     adminApi.getSettings().then(setSettings).catch(() => {});
+    // En cas d'échec, tr reste null : l'onglet English est masqué et la
+    // sauvegarde n'envoie pas de traductions. Un `{}` de repli écraserait
+    // toute la version anglaise en base au prochain « Enregistrer » (le
+    // serveur remplace la colonne translations en bloc).
     adminApi
       .getPropertyTranslations(SLUG)
       .then((t) => setTr(t.en ?? {}))
-      .catch(() => setTr({}));
+      .catch(() => setTrError(true));
   }, []);
 
   useEffect(() => {
@@ -91,6 +96,12 @@ export default function EditorialPage() {
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!p) return;
+    // Un input number vidé vaut 0 côté state : bloquer avant d'écraser la
+    // capacité (0 voyageur = plus aucune réservation possible).
+    if (!Number.isInteger(p.capacity) || p.capacity < 1) {
+      setError("Voyageurs : indiquez au moins 1.");
+      return;
+    }
     setSaving(true);
     setError(null);
     setSaved(false);
@@ -119,7 +130,7 @@ export default function EditorialPage() {
     return <div className="text-sm text-muted-foreground">Chargement…</div>;
   }
   const englishEnabled = settings?.englishEnabled ?? true;
-  const tabs = englishEnabled ? TABS : TABS.filter((t) => t.key !== "english");
+  const tabs = TABS.filter((t) => t.key !== "english" || (englishEnabled && tr !== null));
 
   return (
     <div className="space-y-6">
@@ -154,6 +165,12 @@ export default function EditorialPage() {
         </div>
       </div>
 
+      {trError && englishEnabled && (
+        <p className="text-sm text-destructive">
+          Traductions anglaises impossibles à charger — l&apos;onglet English est masqué pour ne
+          pas risquer d&apos;écraser le contenu existant. Rechargez la page pour réessayer.
+        </p>
+      )}
       <div className="flex gap-1 border-b overflow-x-auto">
         {tabs.map((t) => (
           <button

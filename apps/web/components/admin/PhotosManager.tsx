@@ -50,10 +50,13 @@ export function PhotosManager({ slug }: { slug: string }) {
     setError(null);
     try {
       for (const f of Array.from(files)) await adminApi.uploadMedia(slug, f);
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur");
     } finally {
+      // Toujours recharger : si le 2e fichier d'un lot échoue, les précédents
+      // sont déjà en base — sans reload ils resteraient invisibles et
+      // l'admin les re-uploaderait en doublon.
+      await load();
       setBusy(false);
       if (fileRef.current) fileRef.current.value = "";
     }
@@ -70,7 +73,7 @@ export function PhotosManager({ slug }: { slug: string }) {
     setError(null);
     try {
       await Promise.all(
-        changed.map(({ m, idx }) => adminApi.updateMedia(m.id, { alt: m.alt, position: idx })),
+        changed.map(({ m, idx }) => adminApi.updateMedia(m.id, { position: idx })),
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur");
@@ -92,7 +95,7 @@ export function PhotosManager({ slug }: { slug: string }) {
   const saveAlt = async (m: AdminMedia, alt: string) => {
     if (alt === m.alt) return;
     try {
-      await adminApi.updateMedia(m.id, { alt, position: m.position });
+      await adminApi.updateMedia(m.id, { alt });
       setMedia((ms) => ms.map((x) => (x.id === m.id ? { ...x, alt } : x)));
     } catch {
       /* ignore */

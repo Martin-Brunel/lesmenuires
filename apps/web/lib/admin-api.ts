@@ -913,10 +913,11 @@ export const adminApi = {
     }),
   resetSystemEmail: (kind: string, locale = "fr") =>
     req<void>(`/email-overrides/${kind}?locale=${locale}`, { method: "DELETE" }),
-  previewEmailAutomation: (subject: string, body: string) =>
+  /** ctaLabel : non fourni = « Mon espace » (envoi client), "" = pas de bouton. */
+  previewEmailAutomation: (subject: string, body: string, ctaLabel?: string) =>
     req<{ subject: string; html: string }>("/email-automations/preview", {
       method: "POST",
-      body: JSON.stringify({ subject, body }),
+      body: JSON.stringify({ subject, body, ctaLabel }),
     }),
   getSignature: (reference: string) =>
     req<SignatureInfo>(`/bookings/${reference}/signature`),
@@ -975,7 +976,7 @@ export const adminApi = {
     }
     return res.json();
   },
-  updateMedia: (id: string, data: { alt: string; position: number }) =>
+  updateMedia: (id: string, data: { alt?: string; position?: number }) =>
     req<AdminMedia>(`/media/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteMedia: (id: string) => req<void>(`/media/${id}`, { method: "DELETE" }),
 

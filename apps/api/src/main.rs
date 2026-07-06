@@ -1584,9 +1584,16 @@ async fn try_claim_week(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     booking_id: Uuid,
 ) -> Result<bool, AppError> {
+    // The `not exists` mirrors the partial unique index: a week should never be
+    // 'available' while an active booking holds it, but if that state ever
+    // arises (admin data surgery), fail the claim → clean refund, not a 500.
     let claimed = sqlx::query(
         "update availability_week set status = 'booked' \
-         where id = (select week_id from booking where id = $1) and status = 'available'",
+         where id = (select week_id from booking where id = $1) and status = 'available' \
+           and not exists ( \
+             select 1 from booking b2 \
+             where b2.week_id = availability_week.id and b2.id <> $1 \
+               and b2.status in ('confirmed', 'balance_paid'))",
     )
     .bind(booking_id)
     .execute(&mut **tx)

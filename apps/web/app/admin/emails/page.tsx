@@ -85,6 +85,7 @@ export default function EmailsPage() {
   const [stats, setStats] = useState<EmailStat[]>([]);
   const [settings, setSettings] = useState<GlobalSettings | null>(null);
   const [settingsBusy, setSettingsBusy] = useState(false);
+  const [toggleBusy, setToggleBusy] = useState<string | null>(null);
   const [error, setError] = useState(false);
   // null = fermé ; "new" = création ; sinon l'automatisation en édition.
   const [editing, setEditing] = useState<EmailAutomation | "new" | null>(null);
@@ -158,11 +159,15 @@ export default function EmailsPage() {
   };
 
   const toggleActive = async (a: EmailAutomation) => {
+    if (toggleBusy) return;
+    setToggleBusy(a.id);
     try {
       await adminApi.updateEmailAutomation(a.id, { ...a, active: !a.active });
       reload();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      setToggleBusy(null);
     }
   };
 
@@ -494,7 +499,9 @@ function SystemEmailDialog({
     if (previewBusy) return;
     setPreviewBusy(true);
     try {
-      setPreview(await adminApi.previewEmailAutomation(subject, body));
+      // item.ctaLabel = "" pour les gabarits sans bouton : l'aperçu doit
+      // refléter le CTA réel du gabarit, pas « Mon espace » systématique.
+      setPreview(await adminApi.previewEmailAutomation(subject, body, item.ctaLabel));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erreur");
     } finally {
@@ -623,7 +630,14 @@ function AutomationDialog({
     }
     setPreviewBusy(true);
     try {
-      setPreview(await adminApi.previewEmailAutomation(form.subject, form.body));
+      // Destinataire fixe (prestataire) : l'envoi réel n'a pas de bouton.
+      setPreview(
+        await adminApi.previewEmailAutomation(
+          form.subject,
+          form.body,
+          form.recipientEmail.trim() ? "" : undefined,
+        ),
+      );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erreur");
     } finally {
