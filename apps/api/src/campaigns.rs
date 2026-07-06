@@ -370,9 +370,13 @@ async fn send_campaign(
     .fetch_optional(&st.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("campagne".into()))?;
+    // Réclamation atomique des destinataires : deux requêtes concurrentes
+    // (double-clic, rejeu) ne peuvent pas envoyer aux mêmes contacts — la
+    // seconde ne récupère aucune ligne.
     let pending = sqlx::query_as::<_, (Uuid, String, String, String)>(
-        "select id, email, first_name, last_name from email_campaign_recipient \
-         where campaign_id = $1 and status = 'pending' order by lower(email)",
+        "update email_campaign_recipient set status = 'sent', sent_at = now() \
+         where campaign_id = $1 and status = 'pending' \
+         returning id, email, first_name, last_name",
     )
     .bind(id)
     .fetch_all(&st.pool)
@@ -385,7 +389,7 @@ async fn send_campaign(
 
     let (site, location) = email::brand(&st.pool).await;
     let mut sent = 0i64;
-    for (rid, to, first_name, last_name) in pending {
+    for (_rid, to, first_name, last_name) in pending {
         let vars: Vec<(&str, String)> = vec![
             ("bonjour", email::bonjour(Some(&first_name))),
             ("prenom", first_name.clone()),
@@ -396,12 +400,6 @@ async fn send_campaign(
         let heading = subject.clone();
         let html = email::template(&site, &location, &heading, &body_html, "", "");
         email::spawn(st.pool.clone(), None, "campaign", to, subject, html);
-        sqlx::query(
-            "update email_campaign_recipient set status = 'sent', sent_at = now() where id = $1",
-        )
-        .bind(rid)
-        .execute(&st.pool)
-        .await?;
         sent += 1;
     }
     sqlx::query(

@@ -244,7 +244,21 @@ export default function DisponibilitesPage() {
           <select
             aria-label="Saison affichée"
             value={seasonId}
-            onChange={(e) => setSeasonId(e.target.value)}
+            onChange={async (e) => {
+              const next = e.target.value;
+              // Changer de saison recharge la grille et jette les brouillons.
+              if (
+                dirtyWeeks.length > 0 &&
+                !(await confirm({
+                  title: "Changer de saison ?",
+                  description: `${dirtyWeeks.length} semaine${dirtyWeeks.length > 1 ? "s" : ""} modifiée${dirtyWeeks.length > 1 ? "s" : ""} non enregistrée${dirtyWeeks.length > 1 ? "s" : ""} — ces changements seront perdus.`,
+                  danger: true,
+                  confirmLabel: "Changer sans enregistrer",
+                }))
+              )
+                return;
+              setSeasonId(next);
+            }}
             className={cn(selectBase, "h-9 w-auto min-w-[220px]")}
           >
             {seasons.length === 0 && <option value="">—</option>}

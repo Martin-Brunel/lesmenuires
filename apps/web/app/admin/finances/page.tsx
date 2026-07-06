@@ -56,7 +56,7 @@ export default function FinancesPage() {
     { label: "Encaissé net", value: fmtEur(s.netCollectedCents), hint: "Acomptes + soldes + cautions débitées − remboursements" },
     { label: "Acomptes réglés", value: fmtEur(s.depositsPaidCents) },
     { label: "Soldes réglés", value: fmtEur(s.balancesPaidCents) },
-    { label: "Remboursements", value: `− ${fmtEur(s.refundsCents)}` },
+    { label: "Remboursements", value: s.refundsCents ? `− ${fmtEur(s.refundsCents)}` : fmtEur(0) },
     { label: "Soldes à venir", value: fmtEur(s.upcomingBalancesCents), hint: `${s.upcomingCount} réservation(s) confirmée(s) non soldée(s)` },
     { label: "Cautions débitées (dégâts)", value: fmtEur(s.cautionCapturedCents), hint: "Débits sur carte enregistrée en cas de dégâts" },
     { label: "Taxe de séjour collectée", value: fmtEur(s.touristTaxCollectedCents), hint: "À reverser à la commune" },

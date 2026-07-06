@@ -71,7 +71,7 @@ pub async fn transactional_emails_enabled(pool: &PgPool) -> bool {
 /// the whole cluster (the periodic loop and the admin "run now" button, or two replicas):
 /// the jobs are not concurrency-safe (they'd insert duplicate `payment` rows for a single
 /// real charge → doubled finances/ledger). Arbitrary but fixed.
-const TICK_LOCK_KEY: i64 = 0x6C65736D_656E7500; // "lesmen\0"
+pub const TICK_LOCK_KEY: i64 = 0x6C65736D_656E7500; // "lesmen\0"
 
 pub async fn run_tick(pool: &PgPool, payments: &Arc<dyn PaymentProvider>) -> TickReport {
     let mut r = TickReport::default();

@@ -147,9 +147,15 @@ export async function getPublicSettings(): Promise<{
   englishEnabled: boolean;
   chatbotEnabled: boolean;
 }> {
-  const res = await fetch(`${API_URL}/api/public-settings`, { cache: "no-store" });
-  if (!res.ok) return { englishEnabled: true, chatbotEnabled: false };
-  return res.json();
+  // Appelé depuis le layout racine à chaque requête : une API injoignable ne
+  // doit jamais mettre le site public en 500 (pages légales incluses).
+  try {
+    const res = await fetch(`${API_URL}/api/public-settings`, { cache: "no-store" });
+    if (!res.ok) return { englishEnabled: true, chatbotEnabled: false };
+    return await res.json();
+  } catch {
+    return { englishEnabled: true, chatbotEnabled: false };
+  }
 }
 
 export async function sendChatMessage(input: {

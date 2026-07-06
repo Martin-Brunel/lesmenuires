@@ -26,6 +26,9 @@ pub fn variant_filename(original: &str, width: u32) -> String {
 /// Décode, redimensionne et écrit les variantes d'un fichier déjà présent dans
 /// `media_dir`. Retourne les largeurs générées (triées). Erreur = original
 /// illisible (pas une image) ; une variante individuelle qui échoue est ignorée.
+/// Une image trop petite pour toute variante retourne `{0}` (« traitée, rien à
+/// générer ») : `'{}'` est la sentinelle de backfill et la re-sélectionnerait
+/// à chaque démarrage.
 pub async fn generate_variants(media_dir: &Path, filename: &str) -> anyhow::Result<Vec<i32>> {
     let dir: PathBuf = media_dir.to_path_buf();
     let name = filename.to_string();
@@ -59,6 +62,9 @@ pub async fn generate_variants(media_dir: &Path, filename: &str) -> anyhow::Resu
                     let _ = std::fs::remove_file(&out);
                 }
             }
+        }
+        if widths.is_empty() {
+            widths.push(0);
         }
         Ok(widths)
     })

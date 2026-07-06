@@ -1379,9 +1379,9 @@ pub async fn sync_ledger(pool: &PgPool) -> Result<i64, AppError> {
     }
 
     // 3) Avoirs d'annulation : la créance restante (facture − encaissé net) est
-    //    annulée, imputée d'abord sur la taxe de séjour non collectée, puis les
-    //    prestations, puis le loyer. Après l'avoir, le compte client du dossier
-    //    revient à zéro.
+    //    annulée, imputée d'abord sur la taxe de séjour (jamais due sans
+    //    séjour), puis les prestations, puis le loyer. Après l'avoir, le
+    //    compte client du dossier revient à zéro.
     #[derive(FromRow)]
     struct CancelRow {
         id: Uuid,
@@ -1391,11 +1391,10 @@ pub async fn sync_ledger(pool: &PgPool) -> Result<i64, AppError> {
         tourist_tax_cents: i64,
         cancelled_at: chrono::DateTime<Utc>,
         paid_net_cents: i64,
-        balance_paid: bool,
     }
     let cancels = sqlx::query_as::<_, CancelRow>(
         "select b.id, b.reference, b.week_price_cents, b.extras_total_cents, b.tourist_tax_cents, \
-                b.cancelled_at, (b.balance_paid_at is not null) as balance_paid, \
+                b.cancelled_at, \
                 coalesce((select sum(case when p.type in ('deposit','balance') and p.status='succeeded' \
                                           then p.amount_cents \
                                           when p.type='refund' and p.status <> 'failed' \
@@ -1423,8 +1422,12 @@ pub async fn sync_ledger(pool: &PgPool) -> Result<i64, AppError> {
         let taxe = account_id_by_code(&mut tx, ACC_TAXE_SEJOUR).await?;
         let credit_total = remaining;
         let mut lines: Vec<LineSpec> = Vec::new();
-        // La taxe de séjour n'est due que si elle a été collectée (solde payé).
-        if !b.balance_paid && b.tourist_tax_cents > 0 {
+        // Séjour annulé = pas de taxe de séjour due : l'avoir impute la taxe
+        // en premier, quel que soit l'état d'encaissement (sinon, un solde
+        // encaissé puis remboursé laisserait une taxe fantôme au passif et un
+        // loyer négatif). Ce que le propriétaire conserve reste qualifié en
+        // loyers/prestations — une indemnité d'annulation, pas de la taxe.
+        if b.tourist_tax_cents > 0 {
             let part = remaining.min(b.tourist_tax_cents);
             if part > 0 {
                 lines.push(LineSpec::debit(taxe, part).with_booking(b.id));
@@ -1459,8 +1462,26 @@ pub async fn sync_ledger(pool: &PgPool) -> Result<i64, AppError> {
 }
 
 async fn sync_now(State(st): State<AppState>) -> Result<Json<serde_json::Value>, AppError> {
-    let created = sync_ledger(&st.pool).await?;
-    Ok(Json(serde_json::json!({ "created": created })))
+    // Même verrou que le tick du scheduler : une sync manuelle lancée pendant
+    // un tick ferait itérer deux passes sur les mêmes flux non comptabilisés
+    // (l'unicité source_type/source_id protège les livres, mais la seconde
+    // passe échouerait en plein milieu avec une erreur brute).
+    let mut lock_conn = st.pool.acquire().await?;
+    let got: bool = sqlx::query_scalar("select pg_try_advisory_lock($1)")
+        .bind(crate::scheduler::TICK_LOCK_KEY)
+        .fetch_one(&mut *lock_conn)
+        .await?;
+    if !got {
+        return Err(AppError::BadRequest(
+            "Une synchronisation est déjà en cours — réessayez dans quelques secondes.".into(),
+        ));
+    }
+    let res = sync_ledger(&st.pool).await;
+    let _ = sqlx::query("select pg_advisory_unlock($1)")
+        .bind(crate::scheduler::TICK_LOCK_KEY)
+        .execute(&mut *lock_conn)
+        .await;
+    Ok(Json(serde_json::json!({ "created": res? })))
 }
 
 // ---------------------------------------------------------------------------

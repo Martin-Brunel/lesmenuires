@@ -128,7 +128,13 @@ async fn sync_feed(pool: &PgPool, client: &reqwest::Client, feed: &FeedRow) -> F
         }
     };
 
-    match apply_busy_ranges(pool, feed, &busy).await {
+    // Une semaine que CE flux ne voit plus occupée peut l'être encore sur un
+    // autre flux (même réservation visible sur deux canaux, channel manager…).
+    // Avant de rouvrir quoi que ce soit, on récupère — si nécessaire — les
+    // plages des autres flux pour réaffecter le blocage au lieu de le lever.
+    let others = other_feeds_busy(pool, client, feed).await;
+
+    match apply_busy_ranges(pool, feed, &busy, &others).await {
         Ok((blocked, unblocked, warning)) => {
             out.blocked = blocked;
             out.unblocked = unblocked;
@@ -146,12 +152,55 @@ async fn sync_feed(pool: &PgPool, client: &reqwest::Client, feed: &FeedRow) -> F
     out
 }
 
+/// Plages occupées des autres flux de la même propriété, récupérées uniquement
+/// si ce flux bloque au moins une semaine (sinon aucun déblocage possible et
+/// le téléchargement serait inutile). Un flux illisible contribue pour rien :
+/// on retombe alors sur le comportement historique (déblocage), plutôt que de
+/// laisser des semaines bloquées à jamais par un flux mort.
+async fn other_feeds_busy(
+    pool: &PgPool,
+    client: &reqwest::Client,
+    feed: &FeedRow,
+) -> Vec<(Uuid, Vec<(NaiveDate, NaiveDate)>)> {
+    let has_blocks: bool = sqlx::query_scalar(
+        "select exists(select 1 from availability_week \
+         where blocked_by_feed = $1 and status = 'blocked')",
+    )
+    .bind(feed.id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+    if !has_blocks {
+        return vec![];
+    }
+    let others: Vec<FeedRow> = sqlx::query_as(
+        "select id, property_id, name, url from ical_feed \
+         where property_id = $1 and id <> $2",
+    )
+    .bind(feed.property_id)
+    .bind(feed.id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    let mut res = Vec::with_capacity(others.len());
+    for f in others {
+        match fetch_busy_ranges(client, &f.url).await {
+            Ok(b) => res.push((f.id, b)),
+            Err(e) => {
+                tracing::warn!("ical «{}»: lecture pour réaffectation impossible — {e}", f.name)
+            }
+        }
+    }
+    res
+}
+
 /// Applique les plages occupées aux semaines de la propriété, dans une
 /// transaction. Retourne (bloquées, débloquées, avertissement conflit).
 async fn apply_busy_ranges(
     pool: &PgPool,
     feed: &FeedRow,
     busy: &[(NaiveDate, NaiveDate)],
+    others: &[(Uuid, Vec<(NaiveDate, NaiveDate)>)],
 ) -> Result<(i64, i64, Option<String>), sqlx::Error> {
     let today = crate::paris_today();
     let mut tx = pool.begin().await?;
@@ -191,16 +240,32 @@ async fn apply_busy_ranges(
                 .await?;
                 blocked += 1;
             }
-            // Bloquée par CE flux mais plus occupée → on rouvre.
+            // Bloquée par CE flux mais plus occupée ici : encore occupée sur un
+            // autre flux → on réaffecte le blocage ; sinon → on rouvre.
             ("blocked", Some(src), false) if src == feed.id => {
-                sqlx::query(
-                    "update availability_week set status = 'available', blocked_by_feed = null \
-                     where id = $1",
-                )
-                .bind(w.id)
-                .execute(&mut *tx)
-                .await?;
-                unblocked += 1;
+                let still_busy_on = others.iter().find(|(_, ranges)| {
+                    ranges
+                        .iter()
+                        .any(|(s, e)| *s < w.end_date && w.start_date < *e)
+                });
+                if let Some((other_id, _)) = still_busy_on {
+                    sqlx::query(
+                        "update availability_week set blocked_by_feed = $2 where id = $1",
+                    )
+                    .bind(w.id)
+                    .bind(other_id)
+                    .execute(&mut *tx)
+                    .await?;
+                } else {
+                    sqlx::query(
+                        "update availability_week set status = 'available', blocked_by_feed = null \
+                         where id = $1",
+                    )
+                    .bind(w.id)
+                    .execute(&mut *tx)
+                    .await?;
+                    unblocked += 1;
+                }
             }
             // Réservée en direct ET occupée côté externe : double réservation
             // inter-canaux — on signale, on ne touche pas.
@@ -238,13 +303,21 @@ async fn fetch_busy_ranges(
     if !resp.status().is_success() {
         return Err(format!("le serveur distant a répondu {}", resp.status()));
     }
-    let body = resp
-        .text()
+    // Lecture en flux avec plafond : la limite doit s'appliquer PENDANT le
+    // téléchargement, pas après avoir bufferisé un corps arbitrairement gros.
+    let mut resp = resp;
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp
+        .chunk()
         .await
-        .map_err(|e| format!("lecture impossible : {e}"))?;
-    if body.len() > MAX_ICS_BYTES {
-        return Err("fichier .ics trop volumineux".into());
+        .map_err(|e| format!("lecture impossible : {e}"))?
+    {
+        if buf.len() + chunk.len() > MAX_ICS_BYTES {
+            return Err("fichier .ics trop volumineux".into());
+        }
+        buf.extend_from_slice(&chunk);
     }
+    let body = String::from_utf8_lossy(&buf);
     if !body.contains("BEGIN:VCALENDAR") {
         return Err("le contenu n'est pas un calendrier iCal".into());
     }

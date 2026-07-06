@@ -250,7 +250,7 @@ function YearView({ r }: { r: YearReport }) {
         />
         <Kpi
           label="Trésorerie de l'année"
-          value={`${fmtEur(r.inCents)} / − ${fmtEur(r.outCents)}`}
+          value={`${fmtEur(r.inCents)} / ${r.outCents ? `− ${fmtEur(r.outCents)}` : fmtEur(0)}`}
           hint="Entré / sorti des comptes (hors virements internes)"
         />
       </div>

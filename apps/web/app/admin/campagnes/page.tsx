@@ -78,12 +78,24 @@ export default function CampagnesPage() {
   } | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
 
-  // ?contacts=id1,id2 (page Contacts) → ouvre la création en mode manuel, puis nettoie l'URL.
-  // Lecture via window.location pour éviter useSearchParams (et son <Suspense> obligatoire).
+  // ?contacts=selection (page Contacts) → ouvre la création en mode manuel avec
+  // les IDs déposés en sessionStorage (une grosse sélection ne tient pas dans
+  // l'URL), puis nettoie l'URL. Lecture via window.location pour éviter
+  // useSearchParams (et son <Suspense> obligatoire).
   useEffect(() => {
     const raw = new URLSearchParams(window.location.search).get("contacts");
     if (!raw) return;
-    const ids = raw.split(",").map((s) => s.trim()).filter(Boolean);
+    let ids: string[] = [];
+    if (raw === "selection") {
+      try {
+        ids = JSON.parse(sessionStorage.getItem("campaignContacts") ?? "[]");
+      } catch {
+        ids = [];
+      }
+      sessionStorage.removeItem("campaignContacts");
+    } else {
+      ids = raw.split(",").map((s) => s.trim()).filter(Boolean);
+    }
     if (ids.length > 0) setEditModal({ id: null, customerIds: ids });
     router.replace("/admin/campagnes");
   }, [router]);

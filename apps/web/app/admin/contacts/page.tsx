@@ -249,9 +249,15 @@ export default function ContactsPage() {
               Tout désélectionner
             </Button>
             <Button
-              onClick={() =>
-                router.push(`/admin/campagnes?contacts=${Array.from(selected).join(",")}`)
-              }
+              onClick={() => {
+                // Les IDs passent par sessionStorage : dans l'URL, une grosse
+                // sélection dépasserait la limite et serait tronquée en silence.
+                sessionStorage.setItem(
+                  "campaignContacts",
+                  JSON.stringify(Array.from(selected)),
+                );
+                router.push("/admin/campagnes?contacts=selection");
+              }}
             >
               Créer une campagne
             </Button>
