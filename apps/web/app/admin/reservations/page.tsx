@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { adminApi, fmtEur, PAYMENT_FLAG_LABEL, type AdminBooking, type AdminSeason, type AdminWeek, type Contact, type SignatureInfo } from "@/lib/admin-api";
+import { adminApi, eurosInput, fmtEur, PAYMENT_FLAG_LABEL, type AdminBooking, type AdminSeason, type AdminWeek, type Contact, type SignatureInfo } from "@/lib/admin-api";
 import { csvDate, csvEur, downloadCsv } from "@/lib/csv";
 import { todayIso } from "@/lib/dates";
 import { Badge } from "@/components/ui/badge";
@@ -139,7 +139,7 @@ export default function ReservationsPage() {
   };
 
   const captureCaution = async (b: AdminBooking) => {
-    const max = (b.cautionCents / 100).toFixed(0);
+    const max = eurosInput(b.cautionCents);
     const amount = parseEuros(
       await prompt({
         title: "Débiter des dégâts",
@@ -185,7 +185,7 @@ export default function ReservationsPage() {
       await prompt({
         title: "Montant à rembourser",
         label: "Montant (€)",
-        defaultValue: (maxCents / 100).toFixed(0),
+        defaultValue: eurosInput(maxCents),
         confirmLabel: "Rembourser",
       }),
     );
@@ -697,7 +697,7 @@ function ManualBookingDialog({
       setAddressLine("");
       setPostalCode("");
       setCity("");
-      setCountry("France");
+      setCountry("FR");
       return;
     }
     try {
@@ -709,7 +709,7 @@ function ManualBookingDialog({
       setAddressLine(d.contact.addressLine);
       setPostalCode(d.contact.postalCode);
       setCity(d.contact.city);
-      setCountry(d.contact.country || "France");
+      setCountry(d.contact.country || "FR");
     } catch {
       toast.error("Impossible de charger ce contact.");
     }

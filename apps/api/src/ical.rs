@@ -11,7 +11,7 @@
 //!   (double réservation entre canaux) : signalé dans `last_error`, jamais modifié ;
 //! - un échec de téléchargement/parse ne débloque rien (on garde l'état connu).
 
-use chrono::{Duration, NaiveDate, Utc};
+use chrono::{Duration, NaiveDate};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -153,7 +153,7 @@ async fn apply_busy_ranges(
     feed: &FeedRow,
     busy: &[(NaiveDate, NaiveDate)],
 ) -> Result<(i64, i64, Option<String>), sqlx::Error> {
-    let today = Utc::now().date_naive();
+    let today = crate::paris_today();
     let mut tx = pool.begin().await?;
 
     // Semaines à venir de la propriété (le passé ne bouge plus).

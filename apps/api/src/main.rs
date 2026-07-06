@@ -30,6 +30,17 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
+/// Date « métier » d'un instant : le calendrier de la propriété vit en
+/// Europe/Paris alors que le serveur (et les timestamptz) sont en UTC.
+pub fn paris_date(ts: DateTime<Utc>) -> NaiveDate {
+    ts.with_timezone(&chrono_tz::Europe::Paris).date_naive()
+}
+
+/// Aujourd'hui en heure locale de la propriété (Europe/Paris).
+pub fn paris_today() -> NaiveDate {
+    paris_date(Utc::now())
+}
+
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) pool: PgPool,
@@ -53,6 +64,17 @@ async fn main() -> anyhow::Result<()> {
 
     let pool = PgPoolOptions::new()
         .max_connections(5)
+        // Le calendrier métier vit en Europe/Paris : current_date et les casts
+        // ::date doivent raisonner en heure locale de la propriété, pas en UTC
+        // (sinon le système reste « la veille » entre minuit et 1-2 h du matin).
+        // Les timestamptz restent stockés/décodés en UTC, seule l'interprétation
+        // des dates change.
+        .after_connect(|conn, _meta| {
+            Box::pin(async move {
+                sqlx::Executor::execute(&mut *conn, "set time zone 'Europe/Paris'").await?;
+                Ok(())
+            })
+        })
         .connect(&database_url)
         .await?;
 

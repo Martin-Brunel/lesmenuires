@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
   adminApi,
+  eurosInput,
   fmtEur,
   PAYMENT_FLAG_LABEL,
   type BookingDetail,
@@ -154,7 +155,7 @@ export default function ReservationDetailPage() {
   };
 
   const captureCaution = async () => {
-    const max = (b.cautionCents / 100).toFixed(0);
+    const max = eurosInput(b.cautionCents);
     const amount = parseEuros(
       await prompt({ title: "Débiter des dégâts", description: `Max ${max} €.`, label: "Montant (€)", defaultValue: max }),
     );
@@ -178,7 +179,7 @@ export default function ReservationDetailPage() {
     const t = type.trim().toLowerCase();
     if (t !== "deposit" && t !== "balance") return toast.error("Type invalide.");
     const maxCents = t === "balance" ? b.balanceCents : b.depositCents;
-    const amount = parseEuros(await prompt({ title: "Montant à rembourser", label: "Montant (€)", defaultValue: (maxCents / 100).toFixed(0) }));
+    const amount = parseEuros(await prompt({ title: "Montant à rembourser", label: "Montant (€)", defaultValue: eurosInput(maxCents) }));
     if (amount === null) return;
     run(async () => {
       await adminApi.refundPayment(reference, amount, t);

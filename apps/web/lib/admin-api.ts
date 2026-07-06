@@ -1085,8 +1085,18 @@ export const adminApi = {
     req<SeasonReport>(`/accounting/report/season?seasonId=${seasonId}`),
 };
 
-/** Format cents as euros, French style: 119000 -> "1 190 €". */
-export const fmtEur = (cents: number) => (cents / 100).toLocaleString("fr-FR") + " €";
+/** Valeur exacte en euros pour préremplir un champ de saisie (parseable par
+ *  parseFloat après remplacement de la virgule) : 32250 -> "322,50", 100000 -> "1000". */
+export const eurosInput = (cents: number) =>
+  cents % 100 === 0 ? String(cents / 100) : (cents / 100).toFixed(2).replace(".", ",");
+
+/** Format cents as euros, French style: 119000 -> "1 190 €", 32250 -> "322,50 €".
+ *  Même règle que money() (lib/i18n) : 2 décimales dès que le montant a des centimes. */
+export const fmtEur = (cents: number) =>
+  (cents / 100).toLocaleString("fr-FR", {
+    minimumFractionDigits: cents % 100 !== 0 ? 2 : 0,
+    maximumFractionDigits: 2,
+  }) + " €";
 
 /** Labels for booking.paymentFlag (webhook-raised Stripe events). Shared so the
  *  dashboard and reservations list never diverge. */

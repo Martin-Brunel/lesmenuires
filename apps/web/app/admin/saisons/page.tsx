@@ -93,8 +93,13 @@ function SeasonCard({
   const [startDate, setStart] = useState(season.startDate);
   const [endDate, setEnd] = useState(season.endDate);
   const [isActive, setActive] = useState(season.isActive);
-  const [tiers, setTiers] = useState<{ label: string; labelEn: string; euros: string }[]>(
+  // `key` d'origine conservée : les semaines référencent le palier par sa clé
+  // (tierKey) — la régénérer depuis le libellé orphelinerait ces semaines.
+  const [tiers, setTiers] = useState<
+    { key?: string; label: string; labelEn: string; euros: string }[]
+  >(
     season.rateTiers.map((t) => ({
+      key: t.key,
       label: t.label,
       labelEn: t.labelEn ?? "",
       euros: (t.priceCents / 100).toString(),
@@ -122,7 +127,7 @@ function SeasonCard({
       const rateTiers: RateTier[] = tiers
         .filter((t) => t.label.trim() !== "")
         .map((t) => {
-          let key = slugify(t.label);
+          let key = t.key || slugify(t.label);
           while (seen.has(key)) key += "-2";
           seen.add(key);
           return {

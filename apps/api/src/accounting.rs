@@ -568,7 +568,7 @@ async fn reverse_entry(
             booking_id: boo,
         })
         .collect();
-    let today = Utc::now().date_naive();
+    let today = crate::paris_today();
     let rid = insert_entry(
         &mut tx,
         &head.0,
@@ -1281,7 +1281,7 @@ pub async fn sync_ledger(pool: &PgPool) -> Result<i64, AppError> {
         insert_entry(
             &mut tx,
             "VE",
-            b.deposit_paid_at.date_naive(),
+            crate::paris_date(b.deposit_paid_at),
             &format!("Séjour {} — {}", b.reference, who),
             Some(("booking_invoice", b.id.to_string())),
             None,
@@ -1366,7 +1366,7 @@ pub async fn sync_ledger(pool: &PgPool) -> Result<i64, AppError> {
         insert_entry(
             &mut tx,
             "BQ",
-            p.created_at.date_naive(),
+            crate::paris_date(p.created_at),
             &label,
             Some(("payment", p.id.to_string())),
             None,
@@ -1443,7 +1443,7 @@ pub async fn sync_ledger(pool: &PgPool) -> Result<i64, AppError> {
         insert_entry(
             &mut tx,
             "VE",
-            b.cancelled_at.date_naive(),
+            crate::paris_date(b.cancelled_at),
             &format!("Avoir annulation {}", b.reference),
             Some(("booking_cancel", b.id.to_string())),
             None,
@@ -1629,7 +1629,7 @@ async fn report_meta(State(st): State<AppState>) -> Result<Json<ReportMeta>, App
     )
     .fetch_all(&st.pool)
     .await?;
-    let current = Utc::now().date_naive().year();
+    let current = crate::paris_today().year();
     if !years.contains(&current) {
         years.insert(0, current);
     }
