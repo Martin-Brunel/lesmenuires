@@ -3125,7 +3125,7 @@ async fn create_manual_booking(
     );
     let reference = format!(
         "ADR-{}",
-        &Uuid::new_v4().simple().to_string()[..6].to_uppercase()
+        Uuid::new_v4().simple().to_string()[..6].to_uppercase()
     );
 
     let mut tx = st.pool.begin().await?;
