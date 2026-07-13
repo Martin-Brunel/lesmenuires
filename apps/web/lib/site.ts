@@ -44,12 +44,26 @@ export const site = {
   legalUpdatedAt: val(process.env.NEXT_PUBLIC_LEGAL_DATE, "2026-07-13"),
 } as const;
 
-/** True while the legal identity still holds placeholder values. */
-export const legalIncomplete =
-  site.editor.name.startsWith("[À compléter") ||
-  site.editor.address.startsWith("[À compléter") ||
-  site.host.name.startsWith("[À compléter") ||
-  site.mediator.name.startsWith("[À compléter");
+const isPlaceholder = (value: string) => value.startsWith("[À compléter");
+
+/** Missing legal configuration, split by section so the admin warning can point
+ *  to the variables that actually need attention. */
+export const legalConfigMissing = {
+  editor:
+    isPlaceholder(site.editor.name) ||
+    isPlaceholder(site.editor.address) ||
+    !site.editor.siret ||
+    !site.editor.phone ||
+    site.editor.email === "contact@example.fr",
+  host: isPlaceholder(site.host.name) || isPlaceholder(site.host.address),
+  mediator:
+    isPlaceholder(site.mediator.name) ||
+    isPlaceholder(site.mediator.address) ||
+    !site.mediator.website,
+} as const;
+
+/** True while at least one legal section is incomplete. */
+export const legalIncomplete = Object.values(legalConfigMissing).some(Boolean);
 
 /** Version of the contract/CGV text presented in the funnel. Bump when the
  *  contract wording changes so each booking records which version was signed. */

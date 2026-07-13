@@ -24,7 +24,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { adminApi, type Me } from "@/lib/admin-api";
-import { site, legalIncomplete } from "@/lib/site";
+import { legalConfigMissing, legalIncomplete, site } from "@/lib/site";
 import { Avatar } from "@/components/admin/Avatar";
 import { Button } from "@/components/ui/button";
 import { DialogProvider } from "@/components/admin/dialogs";
@@ -75,6 +75,18 @@ const NAV_GROUPS: { title: string | null; items: NavItem[] }[] = [
     ],
   },
 ];
+
+const missingLegalSections = [
+  legalConfigMissing.editor ? "éditeur" : null,
+  legalConfigMissing.host ? "hébergeur" : null,
+  legalConfigMissing.mediator ? "médiateur" : null,
+].filter((section): section is string => section !== null);
+
+const missingLegalEnvGroups = [
+  legalConfigMissing.editor ? "NEXT_PUBLIC_EDITOR_*" : null,
+  legalConfigMissing.host ? "NEXT_PUBLIC_HOST_*" : null,
+  legalConfigMissing.mediator ? "NEXT_PUBLIC_MEDIATOR_*" : null,
+].filter((group): group is string => group !== null);
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -219,11 +231,11 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       <main className="flex-1 min-w-0">
         {legalIncomplete && (
           <div className="sticky top-0 z-40 border-b border-amber-300 bg-amber-50 px-8 py-2.5 text-sm text-amber-900 print:hidden">
-            <strong>Mentions légales incomplètes</strong> — l&apos;identité de
-            l&apos;éditeur/hébergeur du site n&apos;est pas renseignée (variables{" "}
-            <code className="text-xs">NEXT_PUBLIC_EDITOR_*</code> /{" "}
-            <code className="text-xs">NEXT_PUBLIC_HOST_*</code> au build, cf.
-            checklist DEPLOY.md). Les pages publiques affichent « à compléter ».
+            <strong>Mentions légales incomplètes</strong> — configuration à
+            renseigner pour : {missingLegalSections.join(", ")} (variables{" "}
+            <code className="text-xs">{missingLegalEnvGroups.join(" / ")}</code>{" "}
+            au build, cf. checklist DEPLOY.md). Les pages publiques affichent « à
+            compléter » pour ces informations.
           </div>
         )}
         <div className="mx-auto max-w-5xl p-8 print:max-w-none print:p-0">{children}</div>
