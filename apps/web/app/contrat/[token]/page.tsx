@@ -165,7 +165,6 @@ export default function ContratPage() {
           contractVersion: CONTRACT_VERSION,
           signaturePng: png,
           accepted: true,
-          contractText: buildText(data, locale),
         }),
       });
       if (!res.ok) {

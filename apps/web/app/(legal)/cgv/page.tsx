@@ -107,8 +107,9 @@ export default async function Cgv() {
         <p>
           Any complaint may be sent to{" "}
           <a href={`mailto:${site.contactEmail}`}>{site.contactEmail}</a>. Failing resolution, you
-          may use the consumer mediator free of charge (article L.612-1 of the French Consumer
-          Code).
+          may use {site.mediator.name} free of charge (article L.612-1 of the French Consumer
+          Code), {site.mediator.address}
+          {site.mediator.website ? <> — <a href={site.mediator.website}>{site.mediator.website}</a></> : null}.
         </p>
       </Prose>
     );
@@ -195,8 +196,9 @@ export default async function Cgv() {
       <p>
         Toute réclamation peut être adressée à{" "}
         <a href={`mailto:${site.contactEmail}`}>{site.contactEmail}</a>. À défaut de résolution,
-        vous pouvez recourir gratuitement au médiateur de la consommation (article L.612-1 du Code
-        de la consommation).
+        vous pouvez recourir gratuitement à {site.mediator.name} (article L.612-1 du Code
+        de la consommation), {site.mediator.address}
+        {site.mediator.website ? <> — <a href={site.mediator.website}>{site.mediator.website}</a></> : null}.
       </p>
     </Prose>
   );

@@ -42,7 +42,7 @@ const isActive = (b: AdminBooking) =>
 
 function paxLabel(b: AdminBooking): string {
   const parts = [`${b.adults} adulte${b.adults > 1 ? "s" : ""}`];
-  if (b.children > 0) parts.push(`${b.children} enfant${b.children > 1 ? "s" : ""}`);
+  if (b.children > 0) parts.push(`${b.children} mineur${b.children > 1 ? "s" : ""}`);
   return parts.join(" + ");
 }
 

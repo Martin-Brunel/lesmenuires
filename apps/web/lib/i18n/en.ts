@@ -135,6 +135,8 @@ export const en: typeof fr = {
     address: "Address",
     postalCode: "Postcode",
     city: "City",
+    marketingConsent:
+      "I agree to occasionally receive offers from L’Adret. I can unsubscribe at any time.",
     completeInfos: "Complete your details",
     contractHeading: "SEASONAL RENTAL CONTRACT",
     contractTitle: "Contract & signature",
@@ -224,13 +226,13 @@ export const en: typeof fr = {
   guests: {
     adults: "Adults",
     adultsHint: (capacity: number) => `Up to ${capacity} guests in total`,
-    children: "Children",
-    childrenHint: "Under 12",
+    children: "Minors",
+    childrenHint: "Under 18 · exempt from tourist tax",
     remove: (label: string) => `Remove ${label}`,
     add: (label: string) => `Add ${label}`,
     partyLabel: (adults: number, children: number) =>
       `${adults} adult${adults > 1 ? "s" : ""}` +
-      (children > 0 ? ` · ${children} child${children > 1 ? "ren" : ""}` : ""),
+      (children > 0 ? ` · ${children} minor${children > 1 ? "s" : ""}` : ""),
   },
 
   reviews: {

@@ -76,6 +76,7 @@ async fn resolve_recipients(
                     c.id as customer_id, c.email, c.first_name, c.last_name \
              from customer c \
              where c.id = any($1) and coalesce(trim(c.email), '') <> '' \
+               and c.marketing_consent and c.marketing_opted_out_at is null \
              order by lower(c.email), c.created_at desc",
         )
         .bind(ids)
@@ -92,6 +93,7 @@ async fn resolve_recipients(
                 c.id as customer_id, c.email, c.first_name, c.last_name \
          from customer c \
          where coalesce(trim(c.email), '') <> '' \
+           and c.marketing_consent and c.marketing_opted_out_at is null \
            and (coalesce($2, '') = '' or c.city ilike '%' || $2 || '%') \
            and (case $1 \
                   when 'clients' then exists (select 1 from booking b where b.customer_id = c.id \
@@ -370,13 +372,23 @@ async fn send_campaign(
     .fetch_optional(&st.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("campagne".into()))?;
+    // A failed delivery is explicitly retryable on the next click. A worker that
+    // crashed mid-send releases its claim after 15 minutes.
+    sqlx::query(
+        "update email_campaign_recipient set status='pending', processing_at=null \
+         where campaign_id=$1 and (status='failed' \
+           or (status='processing' and processing_at < now() - interval '15 minutes'))",
+    )
+    .bind(id)
+    .execute(&st.pool)
+    .await?;
     // Réclamation atomique des destinataires : deux requêtes concurrentes
     // (double-clic, rejeu) ne peuvent pas envoyer aux mêmes contacts — la
     // seconde ne récupère aucune ligne.
-    let pending = sqlx::query_as::<_, (Uuid, String, String, String)>(
-        "update email_campaign_recipient set status = 'sent', sent_at = now() \
+    let pending = sqlx::query_as::<_, (Uuid, Option<Uuid>, String, String, String)>(
+        "update email_campaign_recipient set status = 'processing', processing_at=now(), error = null \
          where campaign_id = $1 and status = 'pending' \
-         returning id, email, first_name, last_name",
+         returning id, customer_id, email, first_name, last_name",
     )
     .bind(id)
     .fetch_all(&st.pool)
@@ -389,18 +401,70 @@ async fn send_campaign(
 
     let (site, location) = email::brand(&st.pool).await;
     let mut sent = 0i64;
-    for (_rid, to, first_name, last_name) in pending {
+    let mut failed = 0i64;
+    for (rid, customer_id, to, first_name, last_name) in pending {
+        let Some(customer_id) = customer_id else {
+            sqlx::query(
+                "update email_campaign_recipient set status='failed', processing_at=null, error='contact supprimé' where id=$1",
+            )
+            .bind(rid)
+            .execute(&st.pool)
+            .await?;
+            failed += 1;
+            continue;
+        };
+        let permission: Option<String> = sqlx::query_scalar(
+            "select unsubscribe_token from customer \
+             where id=$1 and marketing_consent and marketing_opted_out_at is null",
+        )
+        .bind(customer_id)
+        .fetch_optional(&st.pool)
+        .await?;
+        let Some(unsubscribe_token) = permission else {
+            sqlx::query(
+                "update email_campaign_recipient set status='failed', processing_at=null, error='consentement retiré' where id=$1",
+            )
+            .bind(rid)
+            .execute(&st.pool)
+            .await?;
+            failed += 1;
+            continue;
+        };
         let vars: Vec<(&str, String)> = vec![
             ("bonjour", email::bonjour(Some(&first_name))),
             ("prenom", first_name.clone()),
             ("nom", last_name.clone()),
         ];
         let subject = email::render_template(&campaign.0, &vars, false);
-        let body_html = email::render_email_body(&campaign.1, &vars);
+        let mut body_html = email::render_email_body(&campaign.1, &vars);
+        body_html.push_str(&format!(
+            "<p style=\"margin-top:28px;font-size:12px;color:#777\">Vous recevez ce message car vous avez accepté nos actualités. <a href=\"{}/api/unsubscribe/{}\">Se désinscrire</a>.</p>",
+            email::api_url(),
+            unsubscribe_token
+        ));
         let heading = subject.clone();
         let html = email::template(&site, &location, &heading, &body_html, "", "");
-        email::spawn(st.pool.clone(), None, "campaign", to, subject, html);
-        sent += 1;
+        match email::send_and_log(&st.pool, None, "campaign", &to, &subject, &html).await {
+            Ok(()) => {
+                sqlx::query(
+                    "update email_campaign_recipient set status='sent', sent_at=now(), processing_at=null, error=null where id=$1",
+                )
+                .bind(rid)
+                .execute(&st.pool)
+                .await?;
+                sent += 1;
+            }
+            Err(error) => {
+                sqlx::query(
+                    "update email_campaign_recipient set status='failed', processing_at=null, error=$2 where id=$1",
+                )
+                .bind(rid)
+                .bind(error)
+                .execute(&st.pool)
+                .await?;
+                failed += 1;
+            }
+        }
     }
     sqlx::query(
         "update email_campaign set status = 'sent', sent_at = coalesce(sent_at, now()) \
@@ -409,5 +473,5 @@ async fn send_campaign(
     .bind(id)
     .execute(&st.pool)
     .await?;
-    Ok(Json(serde_json::json!({ "sent": sent })))
+    Ok(Json(serde_json::json!({ "sent": sent, "failed": failed })))
 }

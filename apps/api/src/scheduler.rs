@@ -642,29 +642,37 @@ async fn notify_payment_issue(
 #[derive(sqlx::FromRow)]
 struct CartRow {
     id: Uuid,
-    reference: String,
     email: String,
     first_name: String,
     locale: String,
 }
 
 async fn remind_abandoned_carts(pool: &PgPool, r: &mut TickReport) -> Result<(), sqlx::Error> {
-    // Mark all stale carts as reminded; only those with a contact e-mail get one.
+    // Select stale carts first. Each reminder rotates the 256-bit capability, so
+    // an older URL from browser history or logs immediately stops working.
     let carts: Vec<CartRow> = sqlx::query_as(
-        "with updated as ( \
-            update booking set cart_reminder_sent_at = now(), updated_at = now() \
-            where status = 'cart' and cart_reminder_sent_at is null \
-              and not emails_muted \
-              and created_at < now() - interval '1 hour' \
-            returning id, reference, customer_id ) \
-         select u.id, u.reference, c.email, c.first_name, c.locale \
-         from updated u join customer c on c.id = u.customer_id \
-         where coalesce(c.email, '') <> ''",
+        "select b.id, c.email, c.first_name, c.locale \
+         from booking b join customer c on c.id = b.customer_id \
+         where b.status = 'cart' and b.cart_reminder_sent_at is null \
+           and not b.emails_muted and b.created_at < now() - interval '1 hour' \
+           and coalesce(c.email, '') <> ''",
     )
     .fetch_all(pool)
     .await?;
 
     for cart in carts {
+        let token = crate::admin::new_token();
+        let claimed = sqlx::query(
+            "update booking set public_token = $2, cart_reminder_sent_at = now(), updated_at = now() \
+             where id = $1 and status = 'cart' and cart_reminder_sent_at is null",
+        )
+        .bind(cart.id)
+        .bind(&token)
+        .execute(pool)
+        .await?;
+        if claimed.rows_affected() == 0 {
+            continue;
+        }
         let lang = Lang::from_param(Some(&cart.locale));
         let vars = vec![
             ("bonjour", email::bonjour_lang(Some(&cart.first_name), lang)),
@@ -678,11 +686,7 @@ async fn remind_abandoned_carts(pool: &PgPool, r: &mut TickReport) -> Result<(),
             &vars,
             // Lien de reprise : le funnel restaure la sélection et les
             // coordonnées du panier (voir resume_booking dans main.rs).
-            &format!(
-                "{}/reserver?ref={}",
-                email::front_url_lang(lang),
-                cart.reference
-            ),
+            &format!("{}/reserver?token={}", email::front_url_lang(lang), token),
             lang,
         )
         .await?;

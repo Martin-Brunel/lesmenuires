@@ -19,14 +19,13 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function ReserverPage({
   searchParams,
 }: {
-  searchParams: Promise<{ ref?: string }>;
+  searchParams: Promise<{ token?: string }>;
 }) {
   const locale = await requestLocale();
   const t = getDict(locale);
-  // Reprise de panier depuis l'e-mail de relance : /reserver?ref=ADR-XXXXXX.
-  const rawRef = (await searchParams).ref;
-  const resumeRef =
-    rawRef && /^[A-Z]{2,6}-[0-9A-Fa-f]{4,12}$/.test(rawRef) ? rawRef : null;
+  // Reprise de panier par capability 256 bits : la référence métier n'autorise rien.
+  const rawToken = (await searchParams).token;
+  const resumeToken = rawToken && /^[0-9a-f]{64}$/i.test(rawToken) ? rawToken : null;
   let ctx;
   try {
     ctx = await getBookingContext("ladret", locale);
@@ -40,5 +39,5 @@ export default async function ReserverPage({
       </div>
     );
   }
-  return <BookingFunnel ctx={ctx} resumeRef={resumeRef} />;
+  return <BookingFunnel ctx={ctx} resumeToken={resumeToken} />;
 }

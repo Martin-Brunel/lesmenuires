@@ -134,26 +134,44 @@ pub fn spawn(
 ) {
     let kind = kind.to_string();
     tokio::spawn(async move {
-        let outcome = do_send(&to, &subject, &html).await;
-        let (status, provider_id, error) = match outcome {
-            SendOutcome::Sent(id) => ("sent", id, None),
-            SendOutcome::Failed(e) => ("failed", None, Some(e)),
-        };
-        let _ = sqlx::query(
-            "insert into email_log \
-                (booking_id, recipient, kind, subject, provider_id, status, error, sent_at) \
-             values ($1, $2, $3, $4, $5, $6, $7, case when $6 = 'sent' then now() else null end)",
-        )
-        .bind(booking_id)
-        .bind(&to)
-        .bind(&kind)
-        .bind(&subject)
-        .bind(&provider_id)
-        .bind(status)
-        .bind(&error)
-        .execute(&pool)
-        .await;
+        let _ = send_and_log(&pool, booking_id, &kind, &to, &subject, &html).await;
     });
+}
+
+/// Awaited variant used when the caller must know whether delivery was accepted
+/// by the provider (campaign recipient state, operational retries).
+pub(crate) async fn send_and_log(
+    pool: &PgPool,
+    booking_id: Option<Uuid>,
+    kind: &str,
+    to: &str,
+    subject: &str,
+    html: &str,
+) -> Result<(), String> {
+    let outcome = do_send(to, subject, html).await;
+    let (status, provider_id, error) = match &outcome {
+        SendOutcome::Sent(id) => ("sent", id.clone(), None),
+        SendOutcome::Failed(e) => ("failed", None, Some(e.clone())),
+    };
+    sqlx::query(
+        "insert into email_log \
+            (booking_id, recipient, kind, subject, provider_id, status, error, sent_at) \
+         values ($1, $2, $3, $4, $5, $6, $7, case when $6 = 'sent' then now() else null end)",
+    )
+    .bind(booking_id)
+    .bind(to)
+    .bind(kind)
+    .bind(subject)
+    .bind(&provider_id)
+    .bind(status)
+    .bind(&error)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    match outcome {
+        SendOutcome::Sent(_) => Ok(()),
+        SendOutcome::Failed(e) => Err(e),
+    }
 }
 
 /// Branded HTML wrapper with an optional call-to-action button.

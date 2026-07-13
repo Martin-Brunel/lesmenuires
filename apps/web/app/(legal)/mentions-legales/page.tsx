@@ -79,8 +79,9 @@ export default async function MentionsLegales() {
         <h2>Consumer mediation</h2>
         <p>
           In accordance with article L.612-1 of the French Consumer Code, in the event of an
-          unresolved dispute, you may use a consumer mediator free of charge. The contact details
-          of the competent mediator will be provided on request at the address above.
+          unresolved dispute, you may use the following consumer mediator free of charge:
+          <br /><strong>{site.mediator.name}</strong><br />{site.mediator.address}
+          {site.mediator.website ? <><br /><a href={site.mediator.website}>{site.mediator.website}</a></> : null}
         </p>
       </Prose>
     );
@@ -122,8 +123,9 @@ export default async function MentionsLegales() {
       <h2>Médiation de la consommation</h2>
       <p>
         Conformément à l’article L.612-1 du Code de la consommation, en cas de litige non résolu,
-        vous pouvez recourir gratuitement à un médiateur de la consommation. Les coordonnées du
-        médiateur compétent seront communiquées sur demande à l’adresse ci-dessus.
+        vous pouvez recourir gratuitement au médiateur de la consommation suivant :
+        <br /><strong>{site.mediator.name}</strong><br />{site.mediator.address}
+        {site.mediator.website ? <><br /><a href={site.mediator.website}>{site.mediator.website}</a></> : null}
       </p>
     </Prose>
   );

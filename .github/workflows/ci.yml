@@ -2,17 +2,14 @@ name: CI
 
 on:
   push:
-    branches: [main]
   pull_request:
 
-# Annule les runs précédents d'une même branche/PR.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   api:
-    name: API (Rust)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -25,17 +22,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/api
-      - name: Format
-        run: cargo fmt --check
-      - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
-      - name: Tests
-        run: cargo test
-      - name: Build (release)
-        run: cargo build --release
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --locked
 
   web:
-    name: Web (Next.js)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -47,9 +38,6 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
-      - name: Install
-        run: npm ci
-      - name: Typecheck
-        run: npm run typecheck
-      - name: Build
-        run: npm run build
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build

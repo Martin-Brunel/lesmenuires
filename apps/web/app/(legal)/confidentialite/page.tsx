@@ -68,6 +68,10 @@ export default async function Confidentialite() {
             possibility to object at any time.
           </li>
           <li>
+            Commercial offers — <strong>consent</strong>, which may be withdrawn at any time using
+            the unsubscribe link in every message.
+          </li>
+          <li>
             Compliance with accounting and tax obligations — <strong>legal obligation</strong>.
           </li>
         </ul>
@@ -144,6 +148,10 @@ export default async function Confidentialite() {
         <li>
           Relance d’un panier non finalisé — <strong>intérêt légitime</strong>, avec possibilité de
           s’y opposer à tout moment.
+        </li>
+        <li>
+          Offres commerciales — <strong>consentement</strong>, retirable à tout moment grâce au
+          lien de désinscription présent dans chaque message.
         </li>
         <li>Respect des obligations comptables et fiscales — <strong>obligation légale</strong>.</li>
       </ul>

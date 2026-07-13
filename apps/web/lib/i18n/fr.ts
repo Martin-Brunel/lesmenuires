@@ -138,6 +138,8 @@ export const fr = {
     address: "Adresse",
     postalCode: "Code postal",
     city: "Ville",
+    marketingConsent:
+      "J’accepte de recevoir occasionnellement les offres de l’Adret. Désinscription possible à tout moment.",
     completeInfos: "Complétez vos informations",
     contractHeading: "CONTRAT DE LOCATION SAISONNIÈRE",
     contractTitle: "Contrat & signature",
@@ -227,13 +229,13 @@ export const fr = {
   guests: {
     adults: "Adultes",
     adultsHint: (capacity: number) => `Jusqu'à ${capacity} voyageurs au total`,
-    children: "Enfants",
-    childrenHint: "Moins de 12 ans",
+    children: "Mineurs",
+    childrenHint: "Moins de 18 ans · exonérés de taxe de séjour",
     remove: (label: string) => `Retirer ${label}`,
     add: (label: string) => `Ajouter ${label}`,
     partyLabel: (adults: number, children: number) =>
       `${adults} adulte${adults > 1 ? "s" : ""}` +
-      (children > 0 ? ` · ${children} enfant${children > 1 ? "s" : ""}` : ""),
+      (children > 0 ? ` · ${children} mineur${children > 1 ? "s" : ""}` : ""),
   },
 
   reviews: {

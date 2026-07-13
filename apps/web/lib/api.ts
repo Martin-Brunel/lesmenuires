@@ -106,6 +106,11 @@ export type BookingResult = {
   createdAt: string;
 };
 
+export type CreatedBooking = BookingResult & {
+  /** 256-bit capability authorising this checkout; never use the booking reference. */
+  checkoutToken: string;
+};
+
 export type CreateBookingInput = {
   propertySlug: string;
   weekId: string;
@@ -123,6 +128,8 @@ export type CreateBookingInput = {
     country?: string;
     /** Langue du client (fr/en) — détermine la langue des e-mails. */
     locale?: string;
+    /** Opt-in explicite et facultatif aux offres commerciales. */
+    marketingConsent?: boolean;
   };
 };
 
@@ -210,7 +217,7 @@ export async function getBookingContext(
 
 export async function createBooking(
   input: CreateBookingInput,
-): Promise<BookingResult> {
+): Promise<CreatedBooking> {
   const res = await fetch(`${API_URL}/api/bookings`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -225,6 +232,7 @@ export async function createBooking(
 
 export type ResumeData = {
   reference: string;
+  checkoutToken: string;
   weekId: string;
   adults: number;
   children: number;
@@ -240,10 +248,10 @@ export type ResumeData = {
   };
 };
 
-/** Restore an abandoned cart (reminder e-mail link `/reserver?ref=…`).
+/** Restore an abandoned cart (reminder e-mail link `/reserver?token=…`).
  *  Only works while the booking is still a cart; 404 otherwise. */
-export async function resumeBooking(reference: string): Promise<ResumeData> {
-  const res = await fetch(`${API_URL}/api/bookings/${reference}/resume`);
+export async function resumeBooking(token: string): Promise<ResumeData> {
+  const res = await fetch(`${API_URL}/api/checkout/${token}/resume`);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error ?? `resume: HTTP ${res.status}`);
@@ -253,15 +261,14 @@ export async function resumeBooking(reference: string): Promise<ResumeData> {
 
 /** Persist the signed contract (version + drawn signature) before payment. */
 export async function saveContract(
-  reference: string,
+  checkoutToken: string,
   input: {
     contractVersion: string;
     signaturePng: string;
     accepted: boolean;
-    contractText: string;
   },
 ): Promise<void> {
-  const res = await fetch(`${API_URL}/api/bookings/${reference}/contract`, {
+  const res = await fetch(`${API_URL}/api/checkout/${checkoutToken}/contract`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
@@ -280,8 +287,8 @@ export type PayDepositResult = {
 };
 
 /** Create the deposit PaymentIntent for a booking. */
-export async function payDeposit(reference: string): Promise<PayDepositResult> {
-  const res = await fetch(`${API_URL}/api/bookings/${reference}/pay-deposit`, {
+export async function payDeposit(checkoutToken: string): Promise<PayDepositResult> {
+  const res = await fetch(`${API_URL}/api/checkout/${checkoutToken}/pay-deposit`, {
     method: "POST",
   });
   if (!res.ok) {
@@ -296,10 +303,10 @@ export type OfflineMethod = "cheque" | "virement";
 /** Finalise sans paiement en ligne (chèque/virement) : la semaine est retenue,
  *  la réservation passe en `pending_payment` jusqu'au pointage de l'acompte. */
 export async function reserveOffline(
-  reference: string,
+  checkoutToken: string,
   method: OfflineMethod,
 ): Promise<{ status: string; reference: string }> {
-  const res = await fetch(`${API_URL}/api/bookings/${reference}/reserve-offline`, {
+  const res = await fetch(`${API_URL}/api/checkout/${checkoutToken}/reserve-offline`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ method }),
@@ -315,10 +322,10 @@ export async function reserveOffline(
  *  client_secret is sent as proof of ownership: the server only mints the session
  *  cookie for a caller that presents it (the booking reference alone is public). */
 export async function confirmDeposit(
-  reference: string,
+  checkoutToken: string,
   clientSecret?: string,
 ): Promise<BookingResult> {
-  const res = await fetch(`${API_URL}/api/bookings/${reference}/confirm-deposit`, {
+  const res = await fetch(`${API_URL}/api/checkout/${checkoutToken}/confirm-deposit`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },

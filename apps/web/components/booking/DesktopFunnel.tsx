@@ -23,10 +23,10 @@ type Screen = "booking" | "checkout" | "done";
 
 export function DesktopFunnel({
   ctx,
-  resumeRef,
+  resumeToken,
 }: {
   ctx: BookingContext;
-  resumeRef?: string | null;
+  resumeToken?: string | null;
 }) {
   const { property, season, weeks, products, media, reviews } = ctx;
   const { locale, t, href } = useI18n();
@@ -74,9 +74,10 @@ export function DesktopFunnel({
 
   // Shared flow orchestration (cart/payment) — single source of truth with the
   // mobile funnel, see useBookingFlow.
-  const flow = useBookingFlow(ctx, resumeRef);
+  const flow = useBookingFlow(ctx, resumeToken);
   const {
     info, setField, adults, setAdults, children, setChildren, capacity,
+    marketingConsent, setMarketingConsent,
     monthIdx, setMonthIdx, weekIdx, selectWeek, extras, toggleExtra, selectedExtras,
     accepted, setAccepted, sigEmpty, setSigEmpty, sigRef,
     reference, submitting, error, setError, stripeSession, setStripeSession,
@@ -456,6 +457,15 @@ export function DesktopFunnel({
                     <div style={css("grid-column:1/3")}>
                       <GuestPicker adults={adults} children={children} capacity={capacity} setAdults={setAdults} setChildren={setChildren} />
                     </div>
+                    <label style={css("grid-column:1/3;display:flex;align-items:flex-start;gap:10px;font:400 12px/1.45 'Hanken Grotesk';color:#6B6E6B;cursor:pointer")}>
+                      <input
+                        type="checkbox"
+                        checked={marketingConsent}
+                        onChange={(e) => setMarketingConsent(e.target.checked)}
+                        style={css("margin-top:2px;accent-color:#1A1B1A")}
+                      />
+                      <span>{t.checkout.marketingConsent}</span>
+                    </label>
                   </div>
                   {error && <div style={css("margin-top:14px;max-width:280px;font:400 12px 'Hanken Grotesk';color:#B23B3B")}>{error}</div>}
                   <div style={css("margin-top:24px;display:flex;align-items:center;gap:12px")}>

@@ -198,7 +198,14 @@ export default function ReservationDetailPage() {
     try {
       setSig(await adminApi.getSignature(reference));
     } catch {
-      setSig({ signaturePng: null, contractVersion: null, signedAt: null });
+      setSig({
+        signaturePng: null,
+        contractVersion: null,
+        signedAt: null,
+        contractSha256: null,
+        signedIp: null,
+        userAgent: null,
+      });
     }
   };
   const toggleEmailsMuted = async () => {
@@ -408,7 +415,7 @@ export default function ReservationDetailPage() {
           <CardHeader className="pb-2"><CardTitle className="text-base">Récapitulatif</CardTitle></CardHeader>
           <CardContent className="space-y-1.5 text-sm">
             <Row label="Séjour" value={`${b.weekRange} · arrivée ${b.arrival || dd(b.startDate)}`} />
-            <Row label="Voyageurs" value={`${b.adults} adulte(s)${b.children ? ` · ${b.children} enfant(s)` : ""}`} />
+            <Row label="Voyageurs" value={`${b.adults} adulte(s)${b.children ? ` · ${b.children} mineur(s)` : ""}`} />
             {data.lines
               .filter((l) => l.kind === "product")
               .map((l, i) => (

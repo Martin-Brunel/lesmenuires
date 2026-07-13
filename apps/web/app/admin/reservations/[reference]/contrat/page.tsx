@@ -72,7 +72,7 @@ export default function ContratAdminPage() {
           {b.customerAddress ? ` — ${b.customerAddress}` : ""}
           <br />
           <strong>Arrivée :</strong> {b.arrival} · {b.adults} adulte(s)
-          {b.children > 0 ? ` · ${b.children} enfant(s)` : ""}
+          {b.children > 0 ? ` · ${b.children} mineur(s)` : ""}
         </p>
 
         <div className="mt-5 whitespace-pre-line">{b.contractText}</div>
@@ -89,6 +89,13 @@ export default function ContratAdminPage() {
               alt="Signature du preneur"
               className="mt-3 h-24 rounded border bg-white"
             />
+          )}
+          {sig?.contractSha256 && (
+            <div className="mt-4 break-all text-xs text-neutral-500">
+              <strong>Empreinte SHA-256 du texte :</strong> {sig.contractSha256}
+              {sig.signedIp ? <><br /><strong>Adresse IP :</strong> {sig.signedIp}</> : null}
+              {sig.userAgent ? <><br /><strong>Navigateur :</strong> {sig.userAgent}</> : null}
+            </div>
           )}
         </div>
       </div>

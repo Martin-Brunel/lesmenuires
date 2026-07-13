@@ -187,7 +187,10 @@ async fn other_feeds_busy(
         match fetch_busy_ranges(client, &f.url).await {
             Ok(b) => res.push((f.id, b)),
             Err(e) => {
-                tracing::warn!("ical «{}»: lecture pour réaffectation impossible — {e}", f.name)
+                tracing::warn!(
+                    "ical «{}»: lecture pour réaffectation impossible — {e}",
+                    f.name
+                )
             }
         }
     }
@@ -249,13 +252,11 @@ async fn apply_busy_ranges(
                         .any(|(s, e)| *s < w.end_date && w.start_date < *e)
                 });
                 if let Some((other_id, _)) = still_busy_on {
-                    sqlx::query(
-                        "update availability_week set blocked_by_feed = $2 where id = $1",
-                    )
-                    .bind(w.id)
-                    .bind(other_id)
-                    .execute(&mut *tx)
-                    .await?;
+                    sqlx::query("update availability_week set blocked_by_feed = $2 where id = $1")
+                        .bind(w.id)
+                        .bind(other_id)
+                        .execute(&mut *tx)
+                        .await?;
                 } else {
                     sqlx::query(
                         "update availability_week set status = 'available', blocked_by_feed = null \

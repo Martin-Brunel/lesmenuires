@@ -81,6 +81,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/me/password", post(change_my_password))
         .route("/audit", get(list_audit))
         .route("/bookings/:reference/detail", get(booking_detail))
+        .route("/bookings/:reference/invoice", post(issue_invoice))
         .route("/bookings/:reference/clear-flag", post(clear_payment_flag))
         .route("/bookings/:reference/note", post(add_note))
         .route("/bookings/:reference/emails-muted", post(set_emails_muted))
@@ -699,6 +700,18 @@ async fn update_property(
     if p.tourist_tax_cents < 0 {
         return Err(AppError::BadRequest("Taxe de séjour invalide.".into()));
     }
+    let owner_siret: String = p
+        .owner_siret
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    if !owner_siret.is_empty()
+        && (owner_siret.len() != 14 || !owner_siret.chars().all(|c| c.is_ascii_digit()))
+    {
+        return Err(AppError::BadRequest(
+            "Le SIRET doit contenir exactement 14 chiffres.".into(),
+        ));
+    }
     // Sanitize the rich-text fields server-side: they are rendered (site public,
     // espace client, fiches admin) via dangerouslySetInnerHTML, so a compromised
     // admin session must not be able to inject executable HTML/JS. ammonia keeps
@@ -743,7 +756,7 @@ async fn update_property(
     .bind(p.owner_address.trim())
     .bind(p.owner_phone.trim())
     .bind(p.owner_email.trim())
-    .bind(p.owner_siret.trim())
+    .bind(owner_siret)
     .bind(p.contract_template.trim())
     .bind(sqlx::types::Json(amenities))
     .fetch_optional(&st.pool)
@@ -1414,6 +1427,210 @@ struct BookingDetail {
     emails: Vec<EmailDto>,
     notes: Vec<NoteDto>,
     events: Vec<BookingEventDto>,
+}
+
+#[derive(Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+struct SalesInvoiceDto {
+    number: String,
+    issued_at: DateTime<Utc>,
+    seller: serde_json::Value,
+    customer: serde_json::Value,
+    stay: serde_json::Value,
+    lines: serde_json::Value,
+    payment: serde_json::Value,
+    total_cents: i64,
+}
+
+#[derive(FromRow)]
+struct InvoiceSource {
+    id: Uuid,
+    reference: String,
+    status: String,
+    property_name: String,
+    location_label: String,
+    owner_name: String,
+    owner_address: String,
+    owner_siret: String,
+    customer_name: Option<String>,
+    customer_email: Option<String>,
+    customer_phone: Option<String>,
+    customer_address: Option<String>,
+    start_date: NaiveDate,
+    adults: i32,
+    children: i32,
+    total_cents: i64,
+    deposit_cents: i64,
+    balance_cents: i64,
+    caution_cents: i64,
+    tourist_tax_cents: i64,
+    deposit_pct: i32,
+    deposit_paid_at: Option<DateTime<Utc>>,
+    balance_paid_at: Option<DateTime<Utc>>,
+}
+
+/// Émet une facture une seule fois. Tous les champs sont copiés dans des
+/// snapshots JSON ; les appels suivants renvoient strictement le même document.
+async fn issue_invoice(
+    State(st): State<AppState>,
+    Extension(AdminId(admin_id)): Extension<AdminId>,
+    Path(reference): Path<String>,
+) -> Result<Json<SalesInvoiceDto>, AppError> {
+    let mut tx = st.pool.begin().await?;
+    let source = sqlx::query_as::<_, InvoiceSource>(
+        "select b.id, b.reference, b.status, p.name as property_name, p.location_label, \
+                p.owner_name, p.owner_address, p.owner_siret, \
+                nullif(trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')), '') as customer_name, \
+                c.email as customer_email, c.phone as customer_phone, \
+                nullif(trim(coalesce(c.address_line,'') || ' ' || coalesce(c.postal_code,'') || ' ' || coalesce(c.city,'')), '') as customer_address, \
+                aw.start_date, b.adults, b.children, b.total_cents, b.deposit_cents, \
+                b.balance_cents, b.caution_cents, b.tourist_tax_cents, b.deposit_pct, \
+                b.deposit_paid_at, b.balance_paid_at \
+         from booking b join property p on p.id = b.property_id \
+         join availability_week aw on aw.id = b.week_id \
+         left join customer c on c.id = b.customer_id \
+         where b.reference = $1 for update of b",
+    )
+    .bind(&reference)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::NotFound("réservation".into()))?;
+
+    if let Some(existing) = sqlx::query_as::<_, SalesInvoiceDto>(
+        "select number, issued_at, seller_snapshot as seller, customer_snapshot as customer, \
+                stay_snapshot as stay, lines_snapshot as lines, payment_snapshot as payment, \
+                total_cents from sales_invoice where booking_id = $1 and kind = 'invoice'",
+    )
+    .bind(source.id)
+    .fetch_optional(&mut *tx)
+    .await?
+    {
+        tx.commit().await?;
+        return Ok(Json(existing));
+    }
+
+    if !matches!(
+        source.status.as_str(),
+        "pending_payment" | "confirmed" | "balance_paid"
+    ) {
+        return Err(AppError::BadRequest(
+            "La facture ne peut être émise que pour une réservation enregistrée ou confirmée."
+                .into(),
+        ));
+    }
+    if source.owner_name.trim().is_empty()
+        || source.owner_address.trim().is_empty()
+        || source.owner_siret.trim().is_empty()
+    {
+        return Err(AppError::BadRequest(
+            "Complétez le nom légal, l'adresse et le SIRET du propriétaire dans Contenu avant d'émettre une facture."
+                .into(),
+        ));
+    }
+
+    let db_lines = sqlx::query_as::<_, LineDto>(
+        "select kind, label, quantity, unit_price_cents, total_cents \
+         from booking_line where booking_id = $1 order by position, label",
+    )
+    .bind(source.id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let tax_is_extra = source.tourist_tax_cents > 0
+        && source.deposit_cents + source.balance_cents
+            == source.total_cents + source.tourist_tax_cents;
+    let mut lines = serde_json::to_value(db_lines).unwrap_or_else(|_| serde_json::json!([]));
+    if tax_is_extra {
+        if let Some(items) = lines.as_array_mut() {
+            items.push(serde_json::json!({
+                "kind": "tourist_tax",
+                "label": format!("Taxe de séjour ({} adulte(s) × 7 nuits)", source.adults),
+                "quantity": 1,
+                "unitPriceCents": source.tourist_tax_cents,
+                "totalCents": source.tourist_tax_cents
+            }));
+        }
+    }
+    let grand_total = source.total_cents
+        + if tax_is_extra {
+            source.tourist_tax_cents
+        } else {
+            0
+        };
+    let paid_cents = if source.deposit_paid_at.is_some() {
+        source.deposit_cents
+    } else {
+        0
+    } + if source.balance_paid_at.is_some() {
+        source.balance_cents
+    } else {
+        0
+    };
+    let seller = serde_json::json!({
+        "propertyName": source.property_name,
+        "locationLabel": source.location_label,
+        "ownerName": source.owner_name,
+        "ownerAddress": source.owner_address,
+        "ownerSiret": source.owner_siret,
+        "vatMention": "TVA non applicable, art. 293 B du CGI"
+    });
+    let customer = serde_json::json!({
+        "name": source.customer_name,
+        "email": source.customer_email,
+        "phone": source.customer_phone,
+        "address": source.customer_address
+    });
+    let stay = serde_json::json!({
+        "reference": source.reference,
+        "startDate": source.start_date,
+        "nights": 7,
+        "adults": source.adults,
+        "minors": source.children,
+        "touristTaxCents": source.tourist_tax_cents,
+        "touristTaxIncluded": !tax_is_extra,
+        "cautionCents": source.caution_cents
+    });
+    let payment = serde_json::json!({
+        "depositPct": source.deposit_pct,
+        "depositCents": source.deposit_cents,
+        "balanceCents": source.balance_cents,
+        "depositPaidAt": source.deposit_paid_at,
+        "balancePaidAt": source.balance_paid_at,
+        "paidCents": paid_cents,
+        "remainingCents": (grand_total - paid_cents).max(0),
+        "settled": paid_cents >= grand_total
+    });
+
+    let year = crate::paris_today().year();
+    let seq: i32 = sqlx::query_scalar(
+        "insert into sales_invoice_counter(year, last_value) values ($1, 1) \
+         on conflict (year) do update set last_value = sales_invoice_counter.last_value + 1 \
+         returning last_value",
+    )
+    .bind(year)
+    .fetch_one(&mut *tx)
+    .await?;
+    let number = format!("FAC-{year}-{seq:06}");
+    let invoice = sqlx::query_as::<_, SalesInvoiceDto>(
+        "insert into sales_invoice \
+            (booking_id, kind, number, seller_snapshot, customer_snapshot, stay_snapshot, \
+             lines_snapshot, payment_snapshot, total_cents, created_by) \
+         values ($1, 'invoice', $2, $3, $4, $5, $6, $7, $8, $9) \
+         returning number, issued_at, seller_snapshot as seller, customer_snapshot as customer, \
+                   stay_snapshot as stay, lines_snapshot as lines, payment_snapshot as payment, total_cents",
+    )
+    .bind(source.id)
+    .bind(number)
+    .bind(seller)
+    .bind(customer)
+    .bind(stay)
+    .bind(lines)
+    .bind(payment)
+    .bind(grand_total)
+    .bind(admin_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(Json(invoice))
 }
 
 async fn booking_detail(
@@ -3389,6 +3606,9 @@ struct ContactDto {
     total_paid_cents: i64,
     last_activity: DateTime<Utc>,
     created_at: DateTime<Utc>,
+    marketing_consent: bool,
+    marketing_consented_at: Option<DateTime<Utc>>,
+    marketing_opted_out_at: Option<DateTime<Utc>>,
 }
 
 /// Tous les contacts (clients + prospects), avec agrégats et dernière activité.
@@ -3405,7 +3625,7 @@ async fn list_contacts(State(st): State<AppState>) -> Result<Json<Vec<ContactDto
                 (coalesce(sum(b.deposit_cents) filter (where b.deposit_paid_at is not null),0) \
                  + coalesce(sum(b.balance_cents) filter (where b.balance_paid_at is not null),0))::bigint as total_paid_cents, \
                 coalesce(max(b.updated_at), c.created_at) as last_activity, \
-                c.created_at \
+                c.created_at, c.marketing_consent, c.marketing_consented_at, c.marketing_opted_out_at \
          from customer c \
          left join booking b on b.customer_id = c.id \
          left join availability_week aw on aw.id = b.week_id \
@@ -3601,6 +3821,9 @@ struct SignatureDto {
     signature_png: Option<String>,
     contract_version: Option<String>,
     signed_at: Option<DateTime<Utc>>,
+    contract_sha256: Option<String>,
+    signed_ip: Option<String>,
+    user_agent: Option<String>,
 }
 
 /// Signature du contrat (preuve) pour une réservation.
@@ -3609,7 +3832,8 @@ async fn get_signature(
     Path(reference): Path<String>,
 ) -> Result<Json<SignatureDto>, AppError> {
     let row = sqlx::query_as::<_, SignatureDto>(
-        "select signature_png, contract_version, contract_accepted_at as signed_at \
+        "select signature_png, contract_version, contract_accepted_at as signed_at, \
+                contract_sha256, contract_signed_ip as signed_ip, contract_user_agent as user_agent \
          from booking where reference = $1",
     )
     .bind(&reference)

@@ -15,10 +15,10 @@ import { MobileFunnel } from "./MobileFunnel";
  */
 export function BookingFunnel({
   ctx,
-  resumeRef,
+  resumeToken,
 }: {
   ctx: BookingContext;
-  resumeRef?: string | null;
+  resumeToken?: string | null;
 }) {
   const [isMobile, setIsMobile] = useState(false);
 
@@ -31,8 +31,8 @@ export function BookingFunnel({
   }, []);
 
   return isMobile ? (
-    <MobileFunnel ctx={ctx} resumeRef={resumeRef} />
+    <MobileFunnel ctx={ctx} resumeToken={resumeToken} />
   ) : (
-    <DesktopFunnel ctx={ctx} resumeRef={resumeRef} />
+    <DesktopFunnel ctx={ctx} resumeToken={resumeToken} />
   );
 }

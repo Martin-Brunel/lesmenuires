@@ -251,8 +251,9 @@ Volumes persistants : `pgdata` (base), `media` (photos), `backups` (sauvegardes)
       l'onglet Conversations de l'admin.
 
 ### Identité légale & contenu (inlinés au build du front → reconstruire `web`)
-- [ ] Renseigner `NEXT_PUBLIC_EDITOR_*` et `NEXT_PUBLIC_HOST_*` (mentions légales)
-      et `NEXT_PUBLIC_CONTACT_EMAIL` — sinon les pages affichent « à compléter ».
+- [ ] Renseigner `NEXT_PUBLIC_EDITOR_*`, `NEXT_PUBLIC_HOST_*` et
+      `NEXT_PUBLIC_MEDIATOR_*` (mentions légales et médiation), ainsi que
+      `NEXT_PUBLIC_CONTACT_EMAIL` — sinon les pages affichent « à compléter ».
 - [ ] `NEXT_PUBLIC_SITE_NAME` : nom du site affiché sur le front (défaut
       « L'Adret ») — le back-office et les e-mails utilisent le nom de la
       propriété en base.

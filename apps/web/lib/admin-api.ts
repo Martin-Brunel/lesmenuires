@@ -174,6 +174,9 @@ export type SignatureInfo = {
   signaturePng: string | null;
   contractVersion: string | null;
   signedAt: string | null;
+  contractSha256: string | null;
+  signedIp: string | null;
+  userAgent: string | null;
 };
 
 export type FinanceSummary = {
@@ -314,6 +317,42 @@ export type BookingDetail = {
   events: BookingEventEntry[];
 };
 
+export type SalesInvoice = {
+  number: string;
+  issuedAt: string;
+  seller: {
+    propertyName: string;
+    locationLabel: string;
+    ownerName: string;
+    ownerAddress: string;
+    ownerSiret: string;
+    vatMention: string;
+  };
+  customer: { name: string | null; email: string | null; phone: string | null; address: string | null };
+  stay: {
+    reference: string;
+    startDate: string;
+    nights: number;
+    adults: number;
+    minors: number;
+    touristTaxCents: number;
+    touristTaxIncluded: boolean;
+    cautionCents: number;
+  };
+  lines: Array<{ kind: string; label: string; quantity: number; unitPriceCents: number; totalCents: number }>;
+  payment: {
+    depositPct: number;
+    depositCents: number;
+    balanceCents: number;
+    depositPaidAt: string | null;
+    balancePaidAt: string | null;
+    paidCents: number;
+    remainingCents: number;
+    settled: boolean;
+  };
+  totalCents: number;
+};
+
 export type ContactInfo = {
   id: string;
   firstName: string;
@@ -377,6 +416,9 @@ export type Contact = {
   totalPaidCents: number;
   lastActivity: string;
   createdAt: string;
+  marketingConsent: boolean;
+  marketingConsentedAt: string | null;
+  marketingOptedOutAt: string | null;
 };
 
 export type EmailAutomation = {
@@ -780,6 +822,8 @@ export const adminApi = {
   listBookings: () => req<AdminBooking[]>("/bookings"),
   bookingDetail: (reference: string) =>
     req<BookingDetail>(`/bookings/${reference}/detail`),
+  issueInvoice: (reference: string) =>
+    req<SalesInvoice>(`/bookings/${reference}/invoice`, { method: "POST" }),
   clearFlag: (reference: string) =>
     req<void>(`/bookings/${reference}/clear-flag`, { method: "POST" }),
   sendContract: (reference: string) =>

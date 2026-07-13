@@ -11,7 +11,7 @@ import { useI18n } from "./I18nProvider";
 export function LangSwitcher({ compact = false }: { compact?: boolean }) {
   const { englishEnabled, locale } = useI18n();
   const pathname = usePathname() ?? "/";
-  // Preserve the query string (e.g. /reserver?ref=… cart-resume link) when switching
+  // Preserve the query string (e.g. /reserver?token=… cart-resume link) when switching
   // language. Read it after mount rather than via useSearchParams, which would force a
   // Suspense boundary / dynamic rendering on the static pages that host this switcher.
   const [search, setSearch] = useState("");

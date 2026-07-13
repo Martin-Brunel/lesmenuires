@@ -92,7 +92,17 @@ export default function ReservationsPage() {
     try {
       setSigTarget({ ref, info: await adminApi.getSignature(ref) });
     } catch {
-      setSigTarget({ ref, info: { signaturePng: null, contractVersion: null, signedAt: null } });
+      setSigTarget({
+        ref,
+        info: {
+          signaturePng: null,
+          contractVersion: null,
+          signedAt: null,
+          contractSha256: null,
+          signedIp: null,
+          userAgent: null,
+        },
+      });
     }
   };
 
@@ -305,7 +315,7 @@ export default function ReservationsPage() {
             onClick={() =>
               downloadCsv(
                 "reservations.csv",
-                ["Référence", "Statut", "Canal", "Semaine", "Arrivée", "Départ", "Client", "E-mail", "Téléphone", "Adultes", "Enfants", "Total (€)", "Acompte (€)", "Solde (€)", "Acompte payé le", "Solde payé le", "Créée le"],
+                ["Référence", "Statut", "Canal", "Semaine", "Arrivée", "Départ", "Client", "E-mail", "Téléphone", "Adultes", "Mineurs (< 18 ans)", "Total (€)", "Acompte (€)", "Solde (€)", "Acompte payé le", "Solde payé le", "Créée le"],
                 filtered.map((b) => [
                   b.reference,
                   STATUS_LABEL[b.status] ?? b.status,
@@ -778,7 +788,7 @@ function ManualBookingDialog({
                 <Input type="number" min={1} value={adults} onChange={(e) => setAdults(Number(e.target.value))} />
               </div>
               <div>
-                <label className="text-xs text-muted-foreground">Enfants</label>
+                <label className="text-xs text-muted-foreground">Mineurs (moins de 18 ans)</label>
                 <Input type="number" min={0} value={children} onChange={(e) => setChildren(Number(e.target.value))} />
               </div>
             </div>

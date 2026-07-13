@@ -1,7 +1,15 @@
 # Plan technique — Plateforme de gestion locative « Les Ménuires »
 
-> Statut : **plan figé, en attente de validation avant développement.**
-> Dernière mise à jour : 2026-06-30
+> Statut : **produit implémenté et en consolidation avant mise en production.**
+> Dernière mise à jour : 2026-07-13
+
+> Le schéma ci-dessous conserve les décisions historiques. L'implémentation
+> actuelle regroupe l'API et les tâches planifiées dans `apps/api`, utilise une
+> signature électronique interne avec preuve SHA-256/IP/navigateur, et maintient
+> le client TypeScript à la main. Les liens publics de checkout sont protégés par
+> des jetons de capacité 256 bits ; les campagnes exigent un opt-in horodaté et
+> proposent un désabonnement en un clic ; les factures émises sont numérotées et
+> figées sous forme de snapshots.
 
 ## 1. Décisions verrouillées
 

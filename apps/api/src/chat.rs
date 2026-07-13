@@ -195,13 +195,21 @@ async fn build_grounding(pool: &PgPool, lang: i18n::Lang) -> Result<Grounding, A
 
     let mut pay_methods: Vec<&str> = Vec::new();
     if p.pay_card_enabled {
-        pay_methods.push(if en { "credit card (online)" } else { "carte bancaire (en ligne)" });
+        pay_methods.push(if en {
+            "credit card (online)"
+        } else {
+            "carte bancaire (en ligne)"
+        });
     }
     if p.pay_cheque_enabled {
         pay_methods.push(if en { "cheque" } else { "chèque" });
     }
     if p.pay_virement_enabled {
-        pay_methods.push(if en { "bank transfer" } else { "virement bancaire" });
+        pay_methods.push(if en {
+            "bank transfer"
+        } else {
+            "virement bancaire"
+        });
     }
 
     let weeks_section = if weeks.is_empty() {
@@ -220,7 +228,13 @@ async fn build_grounding(pool: &PgPool, lang: i18n::Lang) -> Result<Grounding, A
                     (true, true) => "available",
                     (false, true) => "already booked",
                 };
-                format!("{} → {} : {} — {}", w.start, w.end, euros(w.price_cents), status)
+                format!(
+                    "{} → {} : {} — {}",
+                    w.start,
+                    w.end,
+                    euros(w.price_cents),
+                    status
+                )
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -260,13 +274,21 @@ async fn build_grounding(pool: &PgPool, lang: i18n::Lang) -> Result<Grounding, A
             format!(
                 "Tourist tax: {} per adult per night (minors exempt){}.",
                 euros(p.tourist_tax_cents),
-                if p.tourist_tax_included { ", included in the quoted total" } else { ", added to the balance" }
+                if p.tourist_tax_included {
+                    ", included in the quoted total"
+                } else {
+                    ", added to the balance"
+                }
             )
         } else {
             format!(
                 "Taxe de séjour : {} par adulte et par nuit (mineurs exonérés){}.",
                 euros(p.tourist_tax_cents),
-                if p.tourist_tax_included { ", incluse dans le total affiché" } else { ", ajoutée au solde" }
+                if p.tourist_tax_included {
+                    ", incluse dans le total affiché"
+                } else {
+                    ", ajoutée au solde"
+                }
             )
         }
     } else {
@@ -339,9 +361,19 @@ async fn build_grounding(pool: &PgPool, lang: i18n::Lang) -> Result<Grounding, A
     };
 
     let (h_lodging, h_practical, h_extras, h_weeks) = if en {
-        ("THE ACCOMMODATION", "PRACTICAL INFO", "OPTIONAL EXTRAS", "AVAILABILITY AND PRICES (per week)")
+        (
+            "THE ACCOMMODATION",
+            "PRACTICAL INFO",
+            "OPTIONAL EXTRAS",
+            "AVAILABILITY AND PRICES (per week)",
+        )
     } else {
-        ("LE LOGEMENT", "INFOS PRATIQUES", "PRESTATIONS EN OPTION", "DISPONIBILITÉS ET TARIFS (à la semaine)")
+        (
+            "LE LOGEMENT",
+            "INFOS PRATIQUES",
+            "PRESTATIONS EN OPTION",
+            "DISPONIBILITÉS ET TARIFS (à la semaine)",
+        )
     };
 
     // Contexte libre saisi par le gestionnaire (recommandations locales…),
@@ -394,15 +426,27 @@ async fn build_grounding(pool: &PgPool, lang: i18n::Lang) -> Result<Grounding, A
         rules = p.house_rules.trim(),
         booking_line = booking_line,
         deposit_line = if en {
-            format!("Deposit at booking: {}% of the total; balance due before arrival.", p.deposit_pct)
+            format!(
+                "Deposit at booking: {}% of the total; balance due before arrival.",
+                p.deposit_pct
+            )
         } else {
-            format!("Acompte à la réservation : {} % du total ; solde avant l'arrivée.", p.deposit_pct)
+            format!(
+                "Acompte à la réservation : {} % du total ; solde avant l'arrivée.",
+                p.deposit_pct
+            )
         },
         caution_line = if p.caution_cents > 0 {
             if en {
-                format!("Security deposit: {} (not cashed unless damage).", euros(p.caution_cents))
+                format!(
+                    "Security deposit: {} (not cashed unless damage).",
+                    euros(p.caution_cents)
+                )
             } else {
-                format!("Caution : {} (non encaissée sauf dégradation).", euros(p.caution_cents))
+                format!(
+                    "Caution : {} (non encaissée sauf dégradation).",
+                    euros(p.caution_cents)
+                )
             }
         } else {
             String::new()
@@ -485,12 +529,16 @@ fn run_quote_tool(g: &Grounding, input: &Value) -> Result<String, String> {
     if let Some(arr) = input.get("extras").and_then(|v| v.as_array()) {
         for e in arr {
             let key = e.as_str().unwrap_or("");
-            let p = g
-                .products
-                .iter()
-                .find(|p| p.key == key)
-                .ok_or_else(|| format!("Prestation inconnue « {key} ». Clés valides : {}.",
-                    g.products.iter().map(|p| p.key.as_str()).collect::<Vec<_>>().join(", ")))?;
+            let p = g.products.iter().find(|p| p.key == key).ok_or_else(|| {
+                format!(
+                    "Prestation inconnue « {key} ». Clés valides : {}.",
+                    g.products
+                        .iter()
+                        .map(|p| p.key.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })?;
             extras_cents.push(p.price_cents);
             extras_labels.push(p.label.clone());
         }
@@ -605,8 +653,12 @@ async fn run_model(
     let tools = quote_tool_def();
 
     for _ in 0..TOOL_LOOP_MAX {
-        let resp = call_anthropic(&client, key, &grounding.system_prompt, &messages, &tools).await?;
-        let stop = resp.get("stop_reason").and_then(|s| s.as_str()).unwrap_or("");
+        let resp =
+            call_anthropic(&client, key, &grounding.system_prompt, &messages, &tools).await?;
+        let stop = resp
+            .get("stop_reason")
+            .and_then(|s| s.as_str())
+            .unwrap_or("");
         let content = resp.get("content").cloned().unwrap_or(Value::Null);
         if stop != "tool_use" {
             return Ok(extract_text(&content));
@@ -697,14 +749,17 @@ pub(crate) async fn chat_message(
 ) -> Result<Json<ChatReply>, AppError> {
     let ip = rate::client_ip(&headers);
     st.rate.check("chat", &ip, 10, Duration::from_secs(60))?;
-    st.rate.check("chat-day", &ip, 100, Duration::from_secs(86_400))?;
+    st.rate
+        .check("chat-day", &ip, 100, Duration::from_secs(86_400))?;
 
     let message = body.message.trim().to_string();
     if message.is_empty() {
         return Err(AppError::BadRequest("Message vide.".into()));
     }
     if message.chars().count() > 1500 {
-        return Err(AppError::BadRequest("Message trop long (1500 caractères max).".into()));
+        return Err(AppError::BadRequest(
+            "Message trop long (1500 caractères max).".into(),
+        ));
     }
 
     let enabled = sqlx::query_scalar::<_, bool>("select chatbot_enabled from property limit 1")
@@ -713,7 +768,9 @@ pub(crate) async fn chat_message(
         .unwrap_or(false);
     let key = anthropic_key();
     if !enabled || key.is_none() {
-        return Err(AppError::BadRequest("Assistant indisponible pour le moment.".into()));
+        return Err(AppError::BadRequest(
+            "Assistant indisponible pour le moment.".into(),
+        ));
     }
     let key = key.unwrap();
 
@@ -740,7 +797,10 @@ pub(crate) async fn chat_message(
         };
         insert_message(&st.pool, conv_id, "user", &message).await?;
         insert_message(&st.pool, conv_id, "assistant", canned).await?;
-        return Ok(Json(ChatReply { session_token: token, reply: canned.to_string() }));
+        return Ok(Json(ChatReply {
+            session_token: token,
+            reply: canned.to_string(),
+        }));
     }
 
     insert_message(&st.pool, conv_id, "user", &message).await?;
@@ -757,7 +817,11 @@ pub(crate) async fn chat_message(
     .await?;
     history.reverse();
     // Le premier message envoyé à l'API doit être un tour « user ».
-    while history.first().map(|(r, _)| r == "assistant").unwrap_or(false) {
+    while history
+        .first()
+        .map(|(r, _)| r == "assistant")
+        .unwrap_or(false)
+    {
         history.remove(0);
     }
     let messages: Vec<Value> = history
@@ -787,7 +851,10 @@ pub(crate) async fn chat_message(
         .execute(&st.pool)
         .await?;
 
-    Ok(Json(ChatReply { session_token: token, reply }))
+    Ok(Json(ChatReply {
+        session_token: token,
+        reply,
+    }))
 }
 
 async fn insert_message(
@@ -830,7 +897,8 @@ pub(crate) async fn chat_contact(
     Json(body): Json<ChatContactInput>,
 ) -> Result<StatusCode, AppError> {
     let ip = rate::client_ip(&headers);
-    st.rate.check("chat-contact", &ip, 3, Duration::from_secs(3600))?;
+    st.rate
+        .check("chat-contact", &ip, 3, Duration::from_secs(3600))?;
 
     let name = body.name.trim().to_string();
     let email_addr = body.email.trim().to_lowercase();
@@ -842,7 +910,9 @@ pub(crate) async fn chat_contact(
         return Err(AppError::BadRequest("E-mail invalide.".into()));
     }
     if message.is_empty() || message.chars().count() > 3000 {
-        return Err(AppError::BadRequest("Message vide ou trop long (3000 caractères max).".into()));
+        return Err(AppError::BadRequest(
+            "Message vide ou trop long (3000 caractères max).".into(),
+        ));
     }
 
     let lang = i18n::Lang::from_param(body.locale.as_deref());
@@ -878,7 +948,10 @@ pub(crate) async fn chat_contact(
                 .rev()
                 .map(|(role, content)| {
                     let who = if role == "user" { "Visiteur" } else { "Léa" };
-                    format!("<p style=\"margin:4px 0\"><strong>{who} :</strong> {}</p>", escape_html(content))
+                    format!(
+                        "<p style=\"margin:4px 0\"><strong>{who} :</strong> {}</p>",
+                        escape_html(content)
+                    )
                 })
                 .collect::<Vec<_>>()
                 .join("");
@@ -954,7 +1027,8 @@ pub(crate) async fn admin_list_conversations(
                                  order by m.created_at desc limit 1), '') as last_message \
                 from chat_conversation c";
     // Les messages laissés à l'équipe non traités passent en tête de liste.
-    let order = "order by (c.contact_left_at is not null and c.contact_processed_at is null) desc, \
+    let order =
+        "order by (c.contact_left_at is not null and c.contact_processed_at is null) desc, \
                           c.updated_at desc limit 200";
     let rows = match q.email.as_deref().map(str::trim).filter(|e| !e.is_empty()) {
         Some(email) => {
@@ -996,7 +1070,9 @@ pub(crate) async fn admin_set_conversation_processed(
     .await?
     .rows_affected();
     if n == 0 {
-        return Err(AppError::NotFound("conversation avec message laissé".into()));
+        return Err(AppError::NotFound(
+            "conversation avec message laissé".into(),
+        ));
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1030,7 +1106,9 @@ pub(crate) async fn admin_reply_conversation(
     .ok_or_else(|| AppError::NotFound("conversation".into()))?;
     let to = visitor_email
         .filter(|e| !e.trim().is_empty())
-        .ok_or_else(|| AppError::BadRequest("Cette conversation n'a pas d'e-mail visiteur.".into()))?;
+        .ok_or_else(|| {
+            AppError::BadRequest("Cette conversation n'a pas d'e-mail visiteur.".into())
+        })?;
 
     let safe = escape_html(message).replace('\n', "<br>");
     let (site, location) = crate::email::brand(&st.pool).await;
@@ -1045,12 +1123,10 @@ pub(crate) async fn admin_reply_conversation(
     );
     crate::email::spawn(st.pool.clone(), None, "chat_reply", to, subject, html);
 
-    sqlx::query(
-        "update chat_conversation set contact_processed_at = now() where id = $1",
-    )
-    .bind(id)
-    .execute(&st.pool)
-    .await?;
+    sqlx::query("update chat_conversation set contact_processed_at = now() where id = $1")
+        .bind(id)
+        .execute(&st.pool)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1094,7 +1170,10 @@ pub(crate) async fn admin_conversation_detail(
     .fetch_all(&st.pool)
     .await?;
 
-    Ok(Json(ConversationDetail { conversation, messages }))
+    Ok(Json(ConversationDetail {
+        conversation,
+        messages,
+    }))
 }
 
 #[cfg(test)]

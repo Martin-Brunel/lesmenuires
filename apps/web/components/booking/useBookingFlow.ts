@@ -17,7 +17,6 @@ import {
   saveContract,
 } from "@/lib/api";
 import { CONTRACT_VERSION } from "@/lib/site";
-import { contractText } from "@/lib/contract";
 import { track } from "@/lib/analytics";
 import { useI18n } from "@/components/I18nProvider";
 import {
@@ -52,7 +51,7 @@ const EMPTY_INFO: ContactInfo = {
   city: "",
 };
 
-export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
+export function useBookingFlow(ctx: BookingContext, resumeToken?: string | null) {
   const { property, weeks, products } = ctx;
   const { locale, t } = useI18n();
 
@@ -64,9 +63,14 @@ export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
   const capacity = Math.max(1, property.capacity || 1);
   const [adults, setAdultsRaw] = useState(2);
   const [children, setChildrenRaw] = useState(0);
+  const [marketingConsent, setMarketingConsent] = useState(false);
   // Selection changes invalidate the pending cart so totals/party stay correct.
   const [reference, setReference] = useState<string | null>(null);
-  const invalidate = () => setReference(null);
+  const [checkoutToken, setCheckoutToken] = useState<string | null>(null);
+  const invalidate = () => {
+    setReference(null);
+    setCheckoutToken(null);
+  };
   const setAdults = (n: number) => {
     setAdultsRaw(Math.min(capacity, Math.max(1, n)));
     invalidate();
@@ -104,19 +108,20 @@ export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
     clientSecret: string;
     pk: string;
     reference: string;
+    checkoutToken: string;
   } | null>(null);
   const sigRef = useRef<SignaturePadHandle>(null);
 
-  // Reprise de panier (`/reserver?ref=…`, lien de l'e-mail de relance) :
+  // Reprise de panier (`/reserver?token=…`, lien de l'e-mail de relance) :
   // restaure la sélection, les coordonnées et la référence du panier, puis les
   // funnels sautent à l'étape « Vos infos ». Si la semaine n'est plus en vente
   // (réservée/bloquée entre-temps), on prévient et on repart de zéro.
   const [resumed, setResumed] = useState<"restored" | "unavailable" | null>(null);
   const resumeTried = useRef(false);
   useEffect(() => {
-    if (!resumeRef || resumeTried.current) return;
+    if (!resumeToken || resumeTried.current) return;
     resumeTried.current = true;
-    resumeBooking(resumeRef)
+    resumeBooking(resumeToken)
       .then((r) => {
         const idx = weeks.findIndex((w) => w.id === r.weekId);
         if (idx < 0 || weeks[idx].booked) {
@@ -133,13 +138,14 @@ export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
         setChildrenRaw(Math.min(capacity, Math.max(0, r.children)));
         setInfo(r.customer);
         setReference(r.reference);
+        setCheckoutToken(r.checkoutToken);
         setResumed("restored");
         track("panier_repris");
       })
       .catch(() => setResumed("unavailable"));
     // Restauration one-shot au montage — les états listés sont des setters stables.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resumeRef]);
+  }, [resumeToken]);
 
   const week = weeks[weekIdx];
   const months = monthsOf(weeks);
@@ -178,8 +184,8 @@ export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
 
   // Create the cart booking once the contact info is entered, so an abandoned
   // cart keeps the coordonnées for the relance.
-  const ensureBooking = async (): Promise<string> => {
-    if (reference) return reference;
+  const ensureBooking = async (): Promise<{ reference: string; token: string }> => {
+    if (reference && checkoutToken) return { reference, token: checkoutToken };
     if (!week) throw new Error(t.errors.noWeekSelected);
     const res = await createBooking({
       propertySlug: property.slug,
@@ -187,11 +193,12 @@ export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
       extras: selectedExtras.map((p) => p.key),
       adults,
       children,
-      customer: { ...info, country: "FR", locale },
+      customer: { ...info, country: "FR", locale, marketingConsent },
     });
     setReference(res.reference);
+    setCheckoutToken(res.checkoutToken);
     track("panier_cree");
-    return res.reference;
+    return { reference: res.reference, token: res.checkoutToken };
   };
 
   /** Ensure the cart exists; manages submitting/error. Returns success. */
@@ -225,26 +232,11 @@ export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
     setSubmitting(true);
     setError(null);
     try {
-      const ref = await ensureBooking();
-      await saveContract(ref, {
+      const access = await ensureBooking();
+      await saveContract(access.token, {
         contractVersion: CONTRACT_VERSION,
         signaturePng,
         accepted,
-        // Exact text the buyer signs — archived server-side as legal proof.
-        // Le texte signé est archivé dans la langue du client (le gabarit
-        // renvoyé par l'API est déjà localisé quand une traduction existe).
-        contractText: contractText(
-          {
-            propertyName: property.name,
-            locationLabel: property.locationLabel,
-            cautionCents: property.cautionCents,
-            capacity,
-            ownerName: property.ownerName,
-            ownerAddress: property.ownerAddress,
-            template: property.contractTemplate,
-          },
-          locale,
-        ),
       });
       track("contrat_signe");
       return true;
@@ -265,13 +257,18 @@ export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
     setSubmitting(true);
     setError(null);
     try {
-      const ref = await ensureBooking();
-      const p = await payDeposit(ref);
+      const access = await ensureBooking();
+      const p = await payDeposit(access.token);
       if (p.provider === "stripe" && p.publishableKey) {
-        setStripeSession({ clientSecret: p.clientSecret, pk: p.publishableKey, reference: ref });
+        setStripeSession({
+          clientSecret: p.clientSecret,
+          pk: p.publishableKey,
+          reference: access.reference,
+          checkoutToken: access.token,
+        });
         return;
       }
-      await confirmDeposit(ref, p.clientSecret);
+      await confirmDeposit(access.token, p.clientSecret);
       track("acompte_paye", { mode: "direct" });
       onDone();
     } catch (e) {
@@ -290,8 +287,8 @@ export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
     setSubmitting(true);
     setError(null);
     try {
-      const ref = await ensureBooking();
-      await reserveOfflineApi(ref, payMethod);
+      const access = await ensureBooking();
+      await reserveOfflineApi(access.token, payMethod);
       track("reservation_offline", { mode: payMethod });
       onDone();
     } catch (e) {
@@ -309,7 +306,7 @@ export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
   const finishStripe = async (onDone: () => void): Promise<void> => {
     if (!stripeSession) return;
     try {
-      await confirmDeposit(stripeSession.reference, stripeSession.clientSecret);
+      await confirmDeposit(stripeSession.checkoutToken, stripeSession.clientSecret);
       track("acompte_paye", { mode: "stripe" });
       onDone();
     } catch (e) {
@@ -332,6 +329,8 @@ export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
     setSigEmpty(true);
     setError(null);
     setReference(null);
+    setCheckoutToken(null);
+    setMarketingConsent(false);
     setStripeSession(null);
     sigRef.current?.clear();
   };
@@ -339,6 +338,7 @@ export function useBookingFlow(ctx: BookingContext, resumeRef?: string | null) {
   return {
     info, setField, setInfo,
     adults, setAdults, children, setChildren, capacity,
+    marketingConsent, setMarketingConsent,
     monthIdx, setMonthIdx, weekIdx, selectWeek,
     extras, toggleExtra, selectedExtras,
     accepted, setAccepted, sigEmpty, setSigEmpty, sigRef,

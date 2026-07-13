@@ -16,7 +16,7 @@ use axum::{
     body::Bytes,
     extract::{Path, Query, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
-    response::{IntoResponse, Response},
+    response::{Html, IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -141,24 +141,23 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/chat", post(chat::chat_message))
         .route("/api/chat/contact", post(chat::chat_contact))
         .route("/api/bookings", post(create_booking))
-        .route("/api/bookings/:reference", get(get_booking))
-        .route("/api/bookings/:reference/resume", get(resume_booking))
+        .route("/api/checkout/:token/resume", get(resume_booking))
         .route("/api/me", get(customer_me))
         .route("/api/espace/request-link", post(request_link))
         .route("/api/espace/login", get(espace_login))
         .route("/api/espace/logout", post(espace_logout))
-        .route("/api/bookings/:reference/contract", post(sign_contract))
+        .route("/api/checkout/:token/contract", post(sign_contract))
         .route(
             "/api/contract/:token",
             get(contract_link_view).post(contract_link_sign),
         )
-        .route("/api/bookings/:reference/pay-deposit", post(pay_deposit))
+        .route("/api/checkout/:token/pay-deposit", post(pay_deposit))
         .route(
-            "/api/bookings/:reference/reserve-offline",
+            "/api/checkout/:token/reserve-offline",
             post(reserve_offline),
         )
         .route(
-            "/api/bookings/:reference/confirm-deposit",
+            "/api/checkout/:token/confirm-deposit",
             post(confirm_deposit),
         )
         .route("/api/bookings/:reference/pay-balance", post(pay_balance))
@@ -173,6 +172,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/calendar/:token", get(ical_feed))
         .route("/api/payments/webhook", post(stripe_webhook))
         .route("/api/emails/webhook", post(resend_webhook))
+        .route("/api/unsubscribe/:token", get(unsubscribe))
         .with_state(state.clone())
         .nest("/api/admin", admin::routes(state.clone()))
         // Serve uploaded photos.
@@ -233,6 +233,27 @@ async fn health(State(st): State<AppState>) -> Response {
                 .into_response()
         }
     }
+}
+
+/// Désinscription commerciale en un clic. La réponse reste volontairement
+/// identique pour un jeton inconnu afin de ne pas permettre l'énumération des
+/// contacts. Les e-mails transactionnels liés aux réservations restent actifs.
+async fn unsubscribe(
+    State(st): State<AppState>,
+    Path(token): Path<String>,
+) -> Result<Html<&'static str>, AppError> {
+    sqlx::query(
+        "update customer set marketing_consent = false, \
+                marketing_opted_out_at = coalesce(marketing_opted_out_at, now()) \
+         where unsubscribe_token = $1",
+    )
+    .bind(token)
+    .execute(&st.pool)
+    .await?;
+
+    Ok(Html(
+        "<!doctype html><html lang=\"fr\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>Désinscription confirmée</title><body style=\"font-family:system-ui;max-width:42rem;margin:10vh auto;padding:2rem;color:#292b29\"><h1>Désinscription confirmée</h1><p>Vous ne recevrez plus nos offres commerciales. Les messages indispensables à une réservation en cours restent actifs.</p></body></html>",
+    ))
 }
 
 #[derive(Serialize)]
@@ -580,6 +601,9 @@ struct CustomerInput {
     /// Langue du parcours (fr/en) — pilote la langue des e-mails du client.
     #[serde(default)]
     locale: String,
+    /// Consentement libre et facultatif aux offres commerciales.
+    #[serde(default)]
+    marketing_consent: bool,
 }
 
 #[derive(FromRow)]
@@ -626,11 +650,19 @@ struct BookingDto {
     created_at: DateTime<Utc>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateBookingDto {
+    #[serde(flatten)]
+    booking: BookingDto,
+    checkout_token: String,
+}
+
 async fn create_booking(
     State(st): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<CreateBooking>,
-) -> Result<Json<BookingDto>, AppError> {
+) -> Result<Json<CreateBookingDto>, AppError> {
     // Anti-spam: cap cart creation per client IP.
     st.rate.check(
         "bookings",
@@ -746,14 +778,23 @@ async fn create_booking(
             // all their bookings instead of a fragment per attempt.
             let row = sqlx::query_as::<_, (Uuid,)>(
                 "insert into customer \
-                    (email, first_name, last_name, phone, address_line, postal_code, city, country, locale) \
-                 values ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+                    (email, first_name, last_name, phone, address_line, postal_code, city, country, locale, \
+                     marketing_consent, marketing_consented_at, marketing_consent_source) \
+                 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, \
+                         case when $10 then now() end, case when $10 then 'booking_checkout' end) \
                  on conflict (lower(email)) where coalesce(email, '') <> '' \
                  do update set \
                     first_name = excluded.first_name, last_name = excluded.last_name, \
                     phone = excluded.phone, address_line = excluded.address_line, \
                     postal_code = excluded.postal_code, city = excluded.city, \
-                    country = excluded.country, locale = excluded.locale \
+                    country = excluded.country, locale = excluded.locale, \
+                    marketing_consent = customer.marketing_consent or excluded.marketing_consent, \
+                    marketing_consented_at = case when excluded.marketing_consent then now() \
+                                                   else customer.marketing_consented_at end, \
+                    marketing_consent_source = case when excluded.marketing_consent then 'booking_checkout' \
+                                                     else customer.marketing_consent_source end, \
+                    marketing_opted_out_at = case when excluded.marketing_consent then null \
+                                                   else customer.marketing_opted_out_at end \
                  returning id",
             )
             .bind(&c.email)
@@ -765,6 +806,7 @@ async fn create_booking(
             .bind(&c.city)
             .bind(&c.country)
             .bind(i18n::Lang::from_param(Some(&c.locale)).as_str())
+            .bind(c.marketing_consent)
             .fetch_one(&mut *tx)
             .await?;
             Some(row.0)
@@ -772,12 +814,13 @@ async fn create_booking(
         _ => None,
     };
 
-    let booking_id: Uuid = sqlx::query_as::<_, (Uuid,)>(
+    let (booking_id, checkout_token): (Uuid, String) = sqlx::query_as(
         "insert into booking \
             (reference, property_id, customer_id, week_id, status, adults, children, \
              week_price_cents, extras_total_cents, total_cents, deposit_pct, \
              deposit_cents, balance_cents, caution_cents, tourist_tax_cents) \
-         values ($1, $2, $3, $4, 'cart', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) returning id",
+         values ($1, $2, $3, $4, 'cart', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) \
+         returning id, public_token",
     )
     .bind(&reference)
     .bind(prop.id)
@@ -794,8 +837,7 @@ async fn create_booking(
     .bind(prop.caution_cents)
     .bind(totals.tourist_tax_cents)
     .fetch_one(&mut *tx)
-    .await?
-    .0;
+    .await?;
 
     sqlx::query(
         "insert into booking_line \
@@ -826,31 +868,18 @@ async fn create_booking(
     tx.commit().await?;
 
     let dto = fetch_booking(&st.pool, &reference).await?;
-    Ok(Json(dto))
-}
-
-async fn get_booking(
-    State(st): State<AppState>,
-    headers: HeaderMap,
-    Path(reference): Path<String>,
-) -> Result<Json<BookingDto>, AppError> {
-    // The reference (6 hex) is a public identifier, not a secret, and this endpoint
-    // leaks a booking's existence/status. Throttle per IP so it can't be used as an
-    // unbounded enumeration oracle to find confirmed references to target.
-    st.rate.check(
-        "get_booking",
-        &rate::client_ip(&headers),
-        30,
-        std::time::Duration::from_secs(600),
-    )?;
-    Ok(Json(fetch_booking(&st.pool, &reference).await?))
+    Ok(Json(CreateBookingDto {
+        booking: dto,
+        checkout_token,
+    }))
 }
 
 /// Reprise de panier : l'e-mail de relance renvoie vers
-/// `/reserver?ref=<reference>` et le funnel restaure la sélection + les
+/// `/reserver?token=<capability>` et le funnel restaure la sélection + les
 /// coordonnées via cet endpoint. Uniquement pour un panier (`status='cart'`,
 /// expiré au bout de 48 h) ; toute autre référence → 404 indistinct. Rate-limité
-/// sévèrement : la référence (6 hex) est le seul secret de l'URL.
+/// sévèrement. Le jeton de 256 bits est la capability d'autorisation ; la
+/// référence métier lisible ne donne jamais accès aux coordonnées.
 #[derive(FromRow)]
 struct ResumeRow {
     id: Uuid,
@@ -870,7 +899,7 @@ struct ResumeRow {
 async fn resume_booking(
     State(st): State<AppState>,
     headers: HeaderMap,
-    Path(reference): Path<String>,
+    Path(token): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     st.rate.check(
         "resume",
@@ -883,9 +912,9 @@ async fn resume_booking(
                 c.first_name, c.last_name, c.email, c.phone, \
                 c.address_line, c.postal_code, c.city \
          from booking b join customer c on c.id = b.customer_id \
-         where b.reference = $1 and b.status = 'cart'",
+         where b.public_token = $1 and b.status = 'cart'",
     )
-    .bind(&reference)
+    .bind(&token)
     .fetch_optional(&st.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("réservation".into()))?;
@@ -900,6 +929,7 @@ async fn resume_booking(
 
     Ok(Json(serde_json::json!({
         "reference": row.reference,
+        "checkoutToken": token,
         "weekId": row.week_id,
         "adults": row.adults,
         "children": row.children,
@@ -936,6 +966,7 @@ async fn fetch_booking(pool: &PgPool, reference: &str) -> Result<BookingDto, App
 #[derive(FromRow)]
 struct PayRow {
     id: Uuid,
+    reference: String,
     deposit_cents: i64,
     status: String,
     week_status: String,
@@ -948,8 +979,99 @@ struct ContractInput {
     contract_version: String,
     signature_png: String,
     accepted: bool,
-    #[serde(default)]
-    contract_text: String,
+}
+
+#[derive(FromRow)]
+struct ContractSource {
+    property_name: String,
+    location_label: String,
+    capacity: i32,
+    caution_cents: i64,
+    owner_name: String,
+    owner_address: String,
+    contract_template: String,
+    translations: serde_json::Value,
+    locale: Option<String>,
+}
+
+fn canonical_contract_text(mut source: ContractSource) -> String {
+    let lang = i18n::Lang::from_param(source.locale.as_deref());
+    if lang != i18n::Lang::Fr {
+        source.location_label = i18n::tr_field(
+            &source.translations,
+            lang,
+            "locationLabel",
+            &source.location_label,
+        );
+        source.contract_template = i18n::tr_field(
+            &source.translations,
+            lang,
+            "contractTemplate",
+            &source.contract_template,
+        );
+    }
+    let owner = source.owner_name.trim();
+    let address = source.owner_address.trim();
+    let lessor = match lang {
+        i18n::Lang::Fr if !owner.is_empty() => format!(
+            "{}{}, propriétaire de {}",
+            owner,
+            if address.is_empty() {
+                String::new()
+            } else {
+                format!(", demeurant {address}")
+            },
+            source.property_name
+        ),
+        i18n::Lang::En if !owner.is_empty() => format!(
+            "{}{}, owner of {}",
+            owner,
+            if address.is_empty() {
+                String::new()
+            } else {
+                format!(", residing at {address}")
+            },
+            source.property_name
+        ),
+        i18n::Lang::Fr => format!("le propriétaire de {}", source.property_name),
+        i18n::Lang::En => format!("the owner of {}", source.property_name),
+    };
+    let caution = i18n::eur(source.caution_cents, lang);
+    if !source.contract_template.trim().is_empty() {
+        return source
+            .contract_template
+            .trim()
+            .replace("{{bailleur}}", &lessor)
+            .replace("{{nom}}", &source.property_name)
+            .replace("{{localisation}}", &source.location_label)
+            .replace("{{capacite}}", &source.capacity.to_string())
+            .replace("{{caution}}", &caution);
+    }
+    match lang {
+        i18n::Lang::En => format!(
+            "Between {lessor}, hereinafter \"the Lessor\", and the undersigned, hereinafter \"the Tenant\". The purpose of this contract is the furnished seasonal rental located in {}, for the period stated in the booking summary.\n\nThe Tenant undertakes to occupy the premises peacefully, with a maximum of {} guests, and to return the accommodation in good condition. The deposit paid upon signature constitutes a firm booking. The balance is charged two weeks before arrival. A security deposit of {caution} is requested as a guarantee: no amount is blocked or charged — the registered card would only be charged in case of damage recorded at the check-out inspection. Any cancellation is governed by the general terms appended to this contract.",
+            source.location_label, source.capacity
+        ),
+        i18n::Lang::Fr => format!(
+            "Entre {lessor}, ci-après « le Bailleur », et le signataire, ci-après « le Preneur ». Le présent contrat a pour objet la location meublée à usage saisonnier située à {}, pour la période indiquée dans le récapitulatif.\n\nLe Preneur s'engage à occuper les lieux paisiblement, à hauteur de {} personnes maximum, et à restituer le logement en bon état. L'acompte versé à la signature vaut réservation ferme. Le solde est prélevé deux semaines avant l'arrivée. Une caution de {caution} est demandée à titre de garantie : aucun montant n'est bloqué ni débité — la carte enregistrée ne serait débitée qu'en cas de dégâts constatés à l'état des lieux de sortie. Toute annulation est régie par les conditions générales annexées au présent contrat.",
+            source.location_label, source.capacity
+        ),
+    }
+}
+
+fn sha256_hex(value: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(value.as_bytes()))
+}
+
+fn evidence_user_agent(headers: &HeaderMap) -> String {
+    headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .chars()
+        .take(500)
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1055,18 +1177,36 @@ async fn contract_link_sign(
     if body.signature_png.len() > 1_000_000 {
         return Err(AppError::BadRequest("Signature trop volumineuse.".into()));
     }
-    let contract_text =
-        (!body.contract_text.trim().is_empty()).then_some(body.contract_text.as_str());
+    let source = sqlx::query_as::<_, ContractSource>(
+        "select p.name as property_name, p.location_label, p.capacity, b.caution_cents, \
+                p.owner_name, p.owner_address, p.contract_template, p.translations, c.locale \
+         from booking b join property p on p.id = b.property_id \
+         left join customer c on c.id = b.customer_id \
+         where b.contract_sign_token = $1 and b.contract_accepted_at is null \
+           and b.status in ('confirmed','balance_paid')",
+    )
+    .bind(&token)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::BadRequest("Contrat introuvable ou déjà signé.".into()))?;
+    let contract_text = canonical_contract_text(source);
+    let contract_sha256 = sha256_hex(&contract_text);
+    let signed_ip = rate::client_ip(&headers);
+    let user_agent = evidence_user_agent(&headers);
     let updated = sqlx::query(
         "update booking set contract_version = $2, signature_png = $3, \
-            contract_text = $4, contract_accepted_at = now(), updated_at = now() \
+            contract_text = $4, contract_sha256 = $5, contract_signed_ip = $6, \
+            contract_user_agent = $7, contract_accepted_at = now(), updated_at = now() \
          where contract_sign_token = $1 and contract_accepted_at is null \
            and status in ('confirmed','balance_paid')",
     )
     .bind(&token)
     .bind(&body.contract_version)
     .bind(&body.signature_png)
-    .bind(contract_text)
+    .bind(&contract_text)
+    .bind(&contract_sha256)
+    .bind(&signed_ip)
+    .bind(&user_agent)
     .execute(&st.pool)
     .await?;
     if updated.rows_affected() == 0 {
@@ -1240,7 +1380,7 @@ fn ical_escape(s: &str) -> String {
 async fn sign_contract(
     State(st): State<AppState>,
     headers: HeaderMap,
-    Path(reference): Path<String>,
+    Path(token): Path<String>,
     Json(body): Json<ContractInput>,
 ) -> Result<StatusCode, AppError> {
     // Unauthenticated write on a public cart reference: throttle per IP so it can't be
@@ -1266,17 +1406,34 @@ async fn sign_contract(
     if body.signature_png.len() > 1_000_000 {
         return Err(AppError::BadRequest("Signature trop volumineuse.".into()));
     }
-    let contract_text =
-        (!body.contract_text.trim().is_empty()).then_some(body.contract_text.as_str());
+    let source = sqlx::query_as::<_, ContractSource>(
+        "select p.name as property_name, p.location_label, p.capacity, b.caution_cents, \
+                p.owner_name, p.owner_address, p.contract_template, p.translations, c.locale \
+         from booking b join property p on p.id = b.property_id \
+         left join customer c on c.id = b.customer_id \
+         where b.public_token = $1 and b.status = 'cart'",
+    )
+    .bind(&token)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(|| AppError::BadRequest("Réservation introuvable ou déjà réglée.".into()))?;
+    let contract_text = canonical_contract_text(source);
+    let contract_sha256 = sha256_hex(&contract_text);
+    let signed_ip = rate::client_ip(&headers);
+    let user_agent = evidence_user_agent(&headers);
     let updated = sqlx::query(
         "update booking set contract_version = $2, signature_png = $3, \
-            contract_text = $4, contract_accepted_at = now(), updated_at = now() \
-         where reference = $1 and status = 'cart'",
+            contract_text = $4, contract_sha256 = $5, contract_signed_ip = $6, \
+            contract_user_agent = $7, contract_accepted_at = now(), updated_at = now() \
+         where public_token = $1 and status = 'cart'",
     )
-    .bind(&reference)
+    .bind(&token)
     .bind(&body.contract_version)
     .bind(&body.signature_png)
-    .bind(contract_text)
+    .bind(&contract_text)
+    .bind(&contract_sha256)
+    .bind(&signed_ip)
+    .bind(&user_agent)
     .execute(&st.pool)
     .await?;
     if updated.rows_affected() == 0 {
@@ -1299,7 +1456,7 @@ struct PayDepositResponse {
 async fn pay_deposit(
     State(st): State<AppState>,
     headers: HeaderMap,
-    Path(reference): Path<String>,
+    Path(token): Path<String>,
 ) -> Result<Json<PayDepositResponse>, AppError> {
     // Unauthenticated: creates a payment intent per call. Throttle per IP so guessed
     // references can't be used to spin up Stripe intents in bulk.
@@ -1310,12 +1467,12 @@ async fn pay_deposit(
         std::time::Duration::from_secs(600),
     )?;
     let b = sqlx::query_as::<_, PayRow>(
-        "select b.id, b.deposit_cents, b.status, aw.status as week_status, \
+        "select b.id, b.reference, b.deposit_cents, b.status, aw.status as week_status, \
                 b.contract_accepted_at \
          from booking b join availability_week aw on aw.id = b.week_id \
-         where b.reference = $1",
+         where b.public_token = $1",
     )
-    .bind(&reference)
+    .bind(&token)
     .fetch_optional(&st.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("réservation".into()))?;
@@ -1325,9 +1482,9 @@ async fn pay_deposit(
     }
     let online_enabled: bool = sqlx::query_scalar(
         "select p.online_booking_enabled from property p \
-         join booking b on b.property_id = p.id where b.reference = $1",
+         join booking b on b.property_id = p.id where b.id = $1",
     )
-    .bind(&reference)
+    .bind(b.id)
     .fetch_one(&st.pool)
     .await?;
     if !online_enabled {
@@ -1349,7 +1506,7 @@ async fn pay_deposit(
 
     let intent = st
         .payments
-        .create_deposit_intent(&reference, b.deposit_cents)
+        .create_deposit_intent(&b.reference, b.deposit_cents)
         .await?;
     let provider = st.payments.name().to_string();
 
@@ -1393,6 +1550,7 @@ struct ReserveOfflineInput {
 #[derive(FromRow)]
 struct OfflineRow {
     id: Uuid,
+    reference: String,
     status: String,
     payment_method: Option<String>,
     deposit_cents: i64,
@@ -1417,7 +1575,7 @@ struct OfflineRow {
 async fn reserve_offline(
     State(st): State<AppState>,
     headers: HeaderMap,
-    Path(reference): Path<String>,
+    Path(token): Path<String>,
     Json(input): Json<ReserveOfflineInput>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     // Unauthenticated: claims the week and e-mails the real customer. Throttle per IP so
@@ -1432,7 +1590,7 @@ async fn reserve_offline(
         return Err(AppError::BadRequest("Moyen de règlement invalide.".into()));
     }
     let b = sqlx::query_as::<_, OfflineRow>(
-        "select b.id, b.status, b.payment_method, b.deposit_cents, b.contract_accepted_at, \
+        "select b.id, b.reference, b.status, b.payment_method, b.deposit_cents, b.contract_accepted_at, \
                 b.emails_muted, \
                 p.online_booking_enabled, p.pay_cheque_enabled, p.pay_virement_enabled, \
                 p.instructions_cheque, p.instructions_virement, p.translations, \
@@ -1441,9 +1599,9 @@ async fn reserve_offline(
          from booking b \
          join property p on p.id = b.property_id \
          left join customer c on c.id = b.customer_id \
-         where b.reference = $1",
+         where b.public_token = $1",
     )
-    .bind(&reference)
+    .bind(&token)
     .fetch_optional(&st.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("réservation".into()))?;
@@ -1451,7 +1609,7 @@ async fn reserve_offline(
     // Idempotent : re-soumission du même choix → même réponse, pas de double e-mail.
     if b.status == "pending_payment" && b.payment_method.as_deref() == Some(&input.method) {
         return Ok(Json(
-            serde_json::json!({ "status": "pending_payment", "reference": reference }),
+            serde_json::json!({ "status": "pending_payment", "reference": b.reference }),
         ));
     }
     if b.status != "cart" {
@@ -1533,7 +1691,7 @@ async fn reserve_offline(
                     email::bonjour_lang(b.customer_first_name.as_deref(), lang),
                 ),
                 ("prenom", b.customer_first_name.clone().unwrap_or_default()),
-                ("reference", reference.clone()),
+                ("reference", b.reference.clone()),
                 ("montant", i18n::eur(b.deposit_cents, lang)),
                 ("methode", methode),
                 ("instructions", instructions),
@@ -1556,13 +1714,14 @@ async fn reserve_offline(
     }
 
     Ok(Json(
-        serde_json::json!({ "status": "pending_payment", "reference": reference }),
+        serde_json::json!({ "status": "pending_payment", "reference": b.reference }),
     ))
 }
 
 #[derive(FromRow)]
 struct ConfirmRow {
     id: Uuid,
+    reference: String,
     status: String,
     deposit_intent_id: Option<String>,
     customer_id: Option<Uuid>,
@@ -1684,7 +1843,7 @@ struct ConfirmDepositInput {
     /// The deposit PaymentIntent client_secret, returned to the buyer's browser by
     /// `pay-deposit`. Presenting it proves the caller initiated this payment and gates
     /// issuance of the session cookie: the booking reference alone is public (it appears
-    /// in e-mails, URLs and `get_booking`), so without this a session could be minted for
+    /// in e-mails and documents), so without this a session could be minted for
     /// anyone's confirmed booking from its reference (account takeover).
     client_secret: Option<String>,
 }
@@ -1701,14 +1860,15 @@ fn deposit_secret_matches(provided: &Option<String>, intent_id: &Option<String>)
 
 async fn confirm_deposit(
     State(st): State<AppState>,
-    Path(reference): Path<String>,
+    Path(token): Path<String>,
     body: Option<Json<ConfirmDepositInput>>,
 ) -> Result<Response, AppError> {
     let provided_secret = body.map(|Json(b)| b.client_secret).unwrap_or_default();
     let b = sqlx::query_as::<_, ConfirmRow>(
-        "select id, status, deposit_intent_id, customer_id from booking where reference = $1",
+        "select id, reference, status, deposit_intent_id, customer_id \
+         from booking where public_token = $1",
     )
-    .bind(&reference)
+    .bind(&token)
     .fetch_optional(&st.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("réservation".into()))?;
@@ -1725,7 +1885,7 @@ async fn confirm_deposit(
         // Idempotent: re-establish the session cookie (so a lost-response retry still
         // logs the buyer in) but don't re-run the claim or re-send the welcome e-mail.
         "confirmed" | "balance_paid" => {
-            return confirmed_session_response(&st, &reference, b.customer_id, authed).await
+            return confirmed_session_response(&st, &b.reference, b.customer_id, authed).await
         }
         "cancelled" => {
             return Err(AppError::BadRequest(
@@ -1776,9 +1936,9 @@ async fn confirm_deposit(
     tx.commit().await?;
 
     // Fresh confirmation: open the session (cookie) and send the welcome e-mail once.
-    let resp = confirmed_session_response(&st, &reference, b.customer_id, authed).await?;
+    let resp = confirmed_session_response(&st, &b.reference, b.customer_id, authed).await?;
     if let Some(cid) = b.customer_id {
-        send_welcome_email(&st.pool, b.id, cid, &reference).await;
+        send_welcome_email(&st.pool, b.id, cid, &b.reference).await;
     }
     Ok(resp)
 }
@@ -3061,5 +3221,48 @@ mod tests {
         let good = sign(payload, &t, "whsec_test");
         let header = format!("t={t},v1=deadbeef,v1={good}");
         assert!(verify_stripe_signature(payload, &header, "whsec_test"));
+    }
+
+    #[test]
+    fn canonical_contract_uses_server_template_and_variables() {
+        let text = canonical_contract_text(ContractSource {
+            property_name: "Le Chalet".into(),
+            location_label: "Les Menuires".into(),
+            capacity: 6,
+            caution_cents: 50_000,
+            owner_name: "Alice Martin".into(),
+            owner_address: "1 rue des Alpes".into(),
+            contract_template:
+                "{{bailleur}} loue {{nom}} à {{localisation}}, capacité {{capacite}}, caution {{caution}}."
+                    .into(),
+            translations: serde_json::json!({}),
+            locale: Some("fr".into()),
+        });
+        assert!(text.contains("Alice Martin, demeurant 1 rue des Alpes"));
+        assert!(text.contains("Le Chalet à Les Menuires"));
+        assert!(text.contains("capacité 6"));
+        assert!(text.contains("500"));
+        assert_eq!(sha256_hex(&text).len(), 64);
+    }
+
+    #[test]
+    fn canonical_contract_uses_requested_server_translation() {
+        let text = canonical_contract_text(ContractSource {
+            property_name: "Le Chalet".into(),
+            location_label: "Les Menuires".into(),
+            capacity: 4,
+            caution_cents: 30_000,
+            owner_name: "".into(),
+            owner_address: "".into(),
+            contract_template: "Texte français".into(),
+            translations: serde_json::json!({
+                "en": {
+                    "locationLabel": "French Alps",
+                    "contractTemplate": "{{nom}} in {{localisation}} — max {{capacite}}"
+                }
+            }),
+            locale: Some("en".into()),
+        });
+        assert_eq!(text, "Le Chalet in French Alps — max 4");
     }
 }

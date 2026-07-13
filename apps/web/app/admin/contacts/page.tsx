@@ -72,8 +72,9 @@ export default function ContactsPage() {
   const clients = contacts.filter((c) => c.confirmedCount > 0).length;
   const prospects = contacts.length - clients;
 
-  // Lignes sélectionnables parmi celles affichées (les contacts sans e-mail sont exclus).
-  const selectableRows = rows.filter((c) => c.email);
+  // Une campagne commerciale ne peut viser que les contacts ayant explicitement
+  // accepté ce canal et ne s'étant pas désinscrits.
+  const selectableRows = rows.filter((c) => c.email && c.marketingConsent && !c.marketingOptedOutAt);
   const allDisplayedSelected =
     selectableRows.length > 0 && selectableRows.every((c) => selected.has(c.id));
 
@@ -187,8 +188,8 @@ export default function ContactsPage() {
                     type="checkbox"
                     aria-label={`Sélectionner ${c.name ?? c.email}`}
                     checked={selected.has(c.id)}
-                    disabled={!c.email}
-                    title={c.email ? undefined : "Pas d'e-mail"}
+                    disabled={!c.email || !c.marketingConsent || !!c.marketingOptedOutAt}
+                    title={!c.email ? "Pas d'e-mail" : !c.marketingConsent || c.marketingOptedOutAt ? "Pas de consentement marketing actif" : undefined}
                     onChange={() => toggleOne(c.id)}
                     onClick={(e) => e.stopPropagation()}
                   />
@@ -229,6 +230,11 @@ export default function ContactsPage() {
                       <Badge variant="muted">Prospect</Badge>
                     )}
                     {needsFollowUp(c) && <Badge variant="warning">À relancer</Badge>}
+                    {c.marketingConsent && !c.marketingOptedOutAt ? (
+                      <Badge variant="success">Opt-in e-mail</Badge>
+                    ) : (
+                      <Badge variant="muted">Pas d’opt-in</Badge>
+                    )}
                   </div>
                 </TableCell>
               </TableRow>
